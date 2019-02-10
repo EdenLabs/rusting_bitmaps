@@ -22,3 +22,4 @@ Rusting Bitmaps is a native rust port of Roaring Bitmaps
     - [] Subset
     - [] Union
     - [] Symmetric Difference (xor)
+ - [] Serialization
