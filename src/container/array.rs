@@ -281,7 +281,7 @@ use std::arch::x86_64::{
     _mm256_alignr_epi8
 };
 
-pub unsafe fn avx_merge(a: &__m256i, b: &__m256i, min: &mut __m256i, max: &mut __m256i) {
+unsafe fn avx_merge(a: &__m256i, b: &__m256i, min: &mut __m256i, max: &mut __m256i) {
     let mut temp = _mm256_min_epu16(*a, *b);
     *max = _mm256_max_epu16(*a, *b);
     temp = _mm256_alignr_epi8(temp, temp, 2);
@@ -295,6 +295,10 @@ pub unsafe fn avx_merge(a: &__m256i, b: &__m256i, min: &mut __m256i, max: &mut _
     *min = _mm256_min_epu16(temp, *max);
     *max = _mm256_max_epu16(temp, *max);
     *min = _mm256_alignr_epi8(*min, *min, 2);
+}
+
+unsafe fn avx_intersect() {
+    
 }
 
 /// Compute the union of of two u16 vectors
