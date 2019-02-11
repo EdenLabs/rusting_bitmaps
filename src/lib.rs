@@ -1,3 +1,5 @@
+#![feature(ptr_offset_from)]
+
 //#![deny(missing_docs)]   TODO: Enable these lints after sketching out the api
 #![deny(bare_trait_objects)]
 

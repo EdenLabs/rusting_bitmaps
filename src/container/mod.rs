@@ -1,5 +1,5 @@
-mod algorithm;
 mod array;
+mod array_simd;
 mod bitset;
 mod run;
 
