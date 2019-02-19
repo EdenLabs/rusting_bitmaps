@@ -2,18 +2,18 @@
 
 ><span style="color:red">WARNING: This software is incomplete and unfit for production</span>
 
-Rusting Bitmaps is a native rust port of Roaring Bitmaps
+Rusting Bitmaps is a native Rust port of Roaring Bitmaps
 
-# Tracking
+# Feature Tracking
  - [] Roaring Array
  - [] Roaring Bitmap
  - [] Containers
-    - [] Trait
+    - [x] Traits
     - [] Array Container
     - [] Bitset Container
     - [] Run Container
  - [] Conversions
- - [] AVX Operations
+ - [] AVX Operations (feature flags?)
  - [] Set Ops
     - [] Difference (andnot in roaring terminology)
     - [] Equals
@@ -22,4 +22,4 @@ Rusting Bitmaps is a native rust port of Roaring Bitmaps
     - [] Subset
     - [] Union
     - [] Symmetric Difference (xor)
- - [] Serialization
+ - [] Serialization (feature flag)

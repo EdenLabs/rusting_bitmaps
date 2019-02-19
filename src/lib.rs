@@ -37,3 +37,23 @@ impl From<Key> for u16 {
         key.0
     }
 }
+
+/// Get the max of two values
+fn max<T: Copy + PartialOrd>(a: T, b: T) -> T {
+    if a < b {
+        b
+    }
+    else {
+        a
+    }
+}
+
+// Get the min of two values
+fn min<T: Copy + PartialOrd>(a: T, b: T) -> T {
+    if a < b {
+        a
+    }
+    else {
+        b
+    }
+}

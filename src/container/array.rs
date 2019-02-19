@@ -1,5 +1,9 @@
 use std::fmt;
+use std::ops::{Deref};
+
+use crate::min;
 use crate::container::*;
+use crate::container::array_simd::*;
 
 const DEFAULT_MAX_SIZE: usize = 4096;
 
@@ -55,6 +59,11 @@ impl ArrayContainer {
     #[inline]
     pub fn shrink_to_fit(&mut self) {
         self.array.shrink_to_fit();
+    }
+
+    #[inline]
+    pub fn reserve(&mut self, additional: usize) {
+        self.array.reserve(additional);
     }
 
     pub fn copy_into(&self, target: &mut ArrayContainer) {
@@ -145,6 +154,14 @@ impl fmt::Debug for ArrayContainer {
     }
 }
 
+impl Deref for ArrayContainer {
+    type Target = [u16];
+
+    fn deref(&self) -> &[u16] {
+        &self.array
+    }
+}
+
 impl From<BitsetContainer> for ArrayContainer {
     fn from(container: BitsetContainer) -> Self {
         unimplemented!()
@@ -160,73 +177,91 @@ impl From<RunContainer> for ArrayContainer {
 impl Container for ArrayContainer { }
 
 impl Difference<Self> for ArrayContainer {
-    fn difference_with(&self, other: &Self) -> ContainerType {
+    fn difference_with(&self, other: &Self, out: &mut Self) {
         unimplemented!()
     }
 }
 
 impl Difference<BitsetContainer> for ArrayContainer {
-    fn difference_with(&self, other: &BitsetContainer) -> ContainerType {
+    fn difference_with(&self, other: &BitsetContainer, out: &mut BitsetContainer) {
         unimplemented!()
     }
 }
 
 impl Difference<RunContainer> for ArrayContainer {
-    fn difference_with(&self, other: &RunContainer) -> ContainerType {
+    fn difference_with(&self, other: &RunContainer, out: &mut RunContainer) {
         unimplemented!()
     }
 }
 
 impl SymmetricDifference<Self> for ArrayContainer {
-    fn symmetric_difference_with(&self, other: &Self) -> ContainerType {
+    fn symmetric_difference_with(&self, other: &Self, out: &mut Self) {
         unimplemented!()
     }
 }
 
 impl SymmetricDifference<BitsetContainer> for ArrayContainer {
-    fn symmetric_difference_with(&self, other: &BitsetContainer) -> ContainerType {
+    fn symmetric_difference_with(&self, other: &BitsetContainer, out: &mut BitsetContainer) {
         unimplemented!()
     }
 }
 
 impl SymmetricDifference<RunContainer> for ArrayContainer {
-    fn symmetric_difference_with(&self, other: &RunContainer) -> ContainerType {
+    fn symmetric_difference_with(&self, other: &RunContainer, out: &mut RunContainer) {
         unimplemented!()
     }
 }
 
 impl Union<Self> for ArrayContainer {
-    fn union_with(&self, other: &Self) -> ContainerType {
-        unimplemented!()
+    fn union_with(&self, other: &Self, out: &mut Self) {
+        // Reserve enough capacity to fit the contents into the output
+        let max_len = self.len() + other.len();
+        if out.capacity() < max_len {
+            out.reserve(max_len - out.len());
+        }
+
+        unsafe {
+            avx_union(self, other, &mut out.array);
+        }
     }
 }
 
 impl Union<BitsetContainer> for ArrayContainer {
-    fn union_with(&self, other: &BitsetContainer) -> ContainerType {
+    fn union_with(&self, other: &BitsetContainer, out: &mut BitsetContainer) {
         unimplemented!()
     }
 }
 
 impl Union<RunContainer> for ArrayContainer {
-    fn union_with(&self, other: &RunContainer) -> ContainerType {
+    fn union_with(&self, other: &RunContainer, out: &mut RunContainer) {
         unimplemented!()
     }
 }
 
 impl Intersection<Self> for ArrayContainer {
-    fn intersect_with(&self, other: &Self) -> ContainerType {
-        unimplemented!()
+    fn intersect_with(&self, other: &Self, out: &mut Self) {
+        // Pick the smallest length as the max potential length of the result
+        let max_len = min(self.len(), other.len());
+
+        // Reserve capacity for the output
+        if out.capacity() < max_len {
+            out.reserve(max_len - out.len());
+        }
+        
+        unsafe {
+            avx_intersect(self, other, &mut out.array);
+        }
     }
 }
 
 impl Intersection<BitsetContainer> for ArrayContainer {
-    fn intersect_with(&self, other: &BitsetContainer) -> ContainerType {
+    fn intersect_with(&self, other: &BitsetContainer, out: &mut BitsetContainer) {
         unimplemented!()
     }
 }
 
 impl Intersection<RunContainer> for ArrayContainer {
-    fn intersect_with(&self, other: &RunContainer) -> ContainerType {
+    fn intersect_with(&self, other: &RunContainer, out: &mut RunContainer) {
         unimplemented!()
     }
 }

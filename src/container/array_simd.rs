@@ -30,15 +30,23 @@ use std::arch::x86_64::{
     _mm256_storeu_si256
 };
 
-// TODO: Go through and verify that the array accesses are in fact valid
+// TODO: Check if we properly initialize the lengths of the outputs
 
 const CMPESTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
+
+pub unsafe fn avx_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
+    unimplemented!()
+}
+
+pub unsafe fn avx_symmetric_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
+    unimplemented!()
+}
 
 /// Compute the intersection of two u16 vectors using simd acceleration if possible
 /// 
 /// # Safety
-/// This function assumes that target has enough space to fit the entire result
-pub unsafe fn avx_intersect(a: &[u16], b: &[u16], target: &mut Vec<u16>) {
+/// This function assumes that out has enough space to fit the entire result
+pub unsafe fn avx_intersect(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     // TODO: Find an alternative way to do this that takes advantage of the wider AVX registers
     let end_a = (a.len() / 8) * 8;
     let end_b = (b.len() / 8) * 8;
@@ -57,7 +65,7 @@ pub unsafe fn avx_intersect(a: &[u16], b: &[u16], target: &mut Vec<u16>) {
             let sm16 = _mm_load_si128(&SHUFFLE_MASK16[r as usize] as *const u8 as *const __m128i);
             let p = _mm_shuffle_epi8(v_a, sm16);
 
-            _mm_storeu_si128(&mut target[count] as *mut u16 as *mut __m128i, p);
+            _mm_storeu_si128(&mut out[count] as *mut u16 as *mut __m128i, p);
 
             count += _popcnt32(r) as usize;
 
@@ -92,7 +100,7 @@ pub unsafe fn avx_intersect(a: &[u16], b: &[u16], target: &mut Vec<u16>) {
                 let sm16 = _mm_load_si128(&SHUFFLE_MASK16[r as usize] as *const u8 as *const __m128i);
                 let p = _mm_shuffle_epi8(v_a, sm16);
 
-                _mm_storeu_si128(&mut target[count] as *mut u16 as *mut __m128i, p);
+                _mm_storeu_si128(&mut out[count] as *mut u16 as *mut __m128i, p);
 
                 count += _popcnt32(r) as usize;
 
@@ -122,9 +130,9 @@ pub unsafe fn avx_intersect(a: &[u16], b: &[u16], target: &mut Vec<u16>) {
         }
     }
 
-    target.set_len(count);
+    out.set_len(count);
 
-    scalar_intersect(&a[i_a..a.len()], &b[i_b..b.len()], target);
+    scalar_intersect(&a[i_a..a.len()], &b[i_b..b.len()], out);
 }
 
 /// Compute the union of of two u16 vectors using simd acceleration if possible
@@ -132,11 +140,11 @@ pub unsafe fn avx_intersect(a: &[u16], b: &[u16], target: &mut Vec<u16>) {
 /// # Safety
 /// This function assumes the following:
 /// 
-///  - There is enough space reserved in `target` to fit the result
-pub unsafe fn avx_union(a: &[u16], b: &[u16], target: &mut Vec<u16>) {
+///  - There is enough space reserved in `out` to fit the result
+pub unsafe fn avx_union(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     // Length is too short to bother with avx, just use the scalar version
     if a.len() < 16 || b.len() < 16 {
-        scalar_union(a, b, target);
+        scalar_union(a, b, out);
 
         return;
     }
@@ -148,7 +156,7 @@ pub unsafe fn avx_union(a: &[u16], b: &[u16], target: &mut Vec<u16>) {
     let mut v_max: __m256i = mem::uninitialized();// but need initialized to something to please the compiler
     let mut v_last: __m256i;
 
-    let initial_output = target.as_mut_ptr().offset(target.len() as isize);
+    let initial_output = out.as_mut_ptr().offset(out.len() as isize);
     let mut output = initial_output;
     let len_1 = a.len() / 16;
     let len_2 = b.len() / 16;
@@ -202,10 +210,10 @@ pub unsafe fn avx_union(a: &[u16], b: &[u16], target: &mut Vec<u16>) {
         output = output.offset(avx_store_unique(&v_last, &v_min, output));
     }
 
-    let len = target.len() + output.offset_from(initial_output) as usize;
-    target.set_len(len);
+    let len = out.len() + output.offset_from(initial_output) as usize;
+    out.set_len(len);
 
-    scalar_union(&a[16 * pos_1..a.len()], &b[16 * pos_2..b.len()], target);
+    scalar_union(&a[16 * pos_1..a.len()], &b[16 * pos_2..b.len()], out);
 }
 
 /// Avx merge operation
@@ -249,30 +257,30 @@ unsafe fn avx_store_unique(old: &__m256i, new: &__m256i, output: *mut u16) -> is
 }
 
 
-/// Calculate the union of two slices using scalar ops and append the result into `target`
+/// Calculate the union of two slices using scalar ops and append the result into `out`
 ///
 /// # Notes
 /// Assumes the following:
-///  - `target` has enough capacity for the max number of elements if you want to avoid memory churn
+///  - `out` has enough capacity for the max number of elements if you want to avoid memory churn
 ///  - The contents are sorted
 /// 
 /// Unsorted contents will result in garbage output
-fn scalar_union<T>(a: &[T], b: &[T], target: &mut Vec<T>)
+fn scalar_union<T>(a: &[T], b: &[T], out: &mut Vec<T>)
     where T: Copy + Ord + Eq
 {
-    // Second operand is empty, just copy into target
+    // Second operand is empty, just copy into out
     if b.len() == 0 {
-        target.extend_from_slice(a);
+        out.extend_from_slice(a);
         return;
     }
 
-    // First operand is empty, copy into target
+    // First operand is empty, copy into out
     if a.len() == 0 {
-        target.extend_from_slice(b);
+        out.extend_from_slice(b);
         return;
     }
 
-    // Perform union of both operands and append the result into target
+    // Perform union of both operands and append the result into out
     let mut iter_a = a.iter().peekable();
     let mut iter_b = b.iter().peekable();
     let mut val_a = iter_a.next().unwrap();
@@ -280,7 +288,7 @@ fn scalar_union<T>(a: &[T], b: &[T], target: &mut Vec<T>)
     loop {
         // B is greater; append A and advance the iterator
         if val_a < val_b {
-            target.push(*val_a);
+            out.push(*val_a);
             
             match iter_a.next() {
                 Some(v) => val_a = v,
@@ -289,7 +297,7 @@ fn scalar_union<T>(a: &[T], b: &[T], target: &mut Vec<T>)
         }
         // A is greater; append b and advance the iterator
         else if val_b < val_a {
-            target.push(*val_b);
+            out.push(*val_b);
 
             match iter_b.next() {
                 Some(v) => val_b = v,
@@ -298,7 +306,7 @@ fn scalar_union<T>(a: &[T], b: &[T], target: &mut Vec<T>)
         }
         // A and B are equal; append one and advance the iterators
         else {
-            target.push(*val_a);
+            out.push(*val_a);
 
             match iter_a.next() {
                 Some(v) => val_a = v,
@@ -313,15 +321,15 @@ fn scalar_union<T>(a: &[T], b: &[T], target: &mut Vec<T>)
     }
 
     if iter_a.peek().is_some() {
-        target.extend(iter_a);
+        out.extend(iter_a);
     }
     else if iter_b.peek().is_some() {
-        target.extend(iter_b);
+        out.extend(iter_b);
     }
 }
 
-/// Calculate the intersection of two slices using scalar ops and append the result into `target`
-fn scalar_intersect<T>(a: &[T], b: &[T], target: &mut Vec<T>)
+/// Calculate the intersection of two slices using scalar ops and append the result into `out`
+fn scalar_intersect<T>(a: &[T], b: &[T], out: &mut Vec<T>)
     where T: Copy + Ord + Eq
 {
     if a.len() == 0 || b.len() == 0 {
@@ -352,7 +360,7 @@ fn scalar_intersect<T>(a: &[T], b: &[T], target: &mut Vec<T>)
             }
 
             if *a_ptr == *b_ptr {
-                target.push(*a_ptr);
+                out.push(*a_ptr);
 
                 a_ptr = a_ptr.offset(1);
                 b_ptr = b_ptr.offset(1);
