@@ -15,6 +15,50 @@ use std::arch::x86_64::{
     _popcnt32
 };
 
+pub unsafe fn avx_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
+    // A is the empty set therefore there are no elements in A not in B
+    if a.len() == 0 {
+        return;
+    }
+    
+    // All elements of A are not in B
+    if b.len() == 0 {
+        out.extend_from_slice(a);        
+        return;        
+    }
+    
+    let len_a = a.len();
+    let len_b = b.len();
+    let i_a = 0;
+    let i_b = 0;
+    
+    // Handle any leading 0s so we can effectively use the sse instructions
+    // This is necessary other wise it'll terminate the comparison on a 0 byte
+    // TODO: Figure out if there's a faster way to do this without using cmpistrm
+    if a.get_unchecked(0) == 0 || b.get_unchecked(0) == 0 {
+        if a.get_unchecked(0) == b.get_unchecked(0) {
+            i_a += 1;
+            i_b += 1;
+            
+            len_a -= 1;
+            len_b -= 1;
+        }
+        else if a.get_unchecked(0) == 0 {
+            out.push(0);
+            i_a += 1;
+        }
+        else {
+            i_b += 1;
+        }
+    }
+    
+    let end_a = a.len() - 
+}
+
+pub unsafe fn avx_symmetric_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
+    
+} 
+
 pub unsafe fn avx_intersect() {
     
 }
@@ -96,6 +140,14 @@ pub unsafe fn avx_union(a: &[u16], b: &[u16], target: &mut Vec<u16>) -> usize {
     len += scalar_union(&a[16 * pos_1..a.len()], &b[16 * pos_2..b.len()], target);
 
     len
+}
+
+fn difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
+    
+}
+
+fn symmetric_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
+    
 }
 
 /// Calculate the union of two slices using scalar ops and append the result into `target`
