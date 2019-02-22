@@ -116,11 +116,11 @@ impl ArrayContainer {
     }
 
     pub fn min(&self) -> u16 {
-        unimplemented!();
+        return self.array[0];
     }
 
     pub fn max(&self) -> u16 {
-        unimplemented!()
+        return self.array[self.array().len() - 1];
     }
 
     pub fn rank(&self) -> u16 {
@@ -143,8 +143,8 @@ impl ArrayContainer {
         num_runs
     }
 
-    pub fn iter(&self) -> RoaringIter<Self> {
-        unimplemented!()
+    pub fn iter(&self) -> Iter<u16> {
+        self.array.iter()
     }
 }
 
@@ -178,7 +178,7 @@ impl Container for ArrayContainer { }
 
 impl Difference<Self> for ArrayContainer {
     fn difference_with(&self, other: &Self, out: &mut Self) {
-        unimplemented!()
+        difference(self, other, out);
     }
 }
 
@@ -196,7 +196,7 @@ impl Difference<RunContainer> for ArrayContainer {
 
 impl SymmetricDifference<Self> for ArrayContainer {
     fn symmetric_difference_with(&self, other: &Self, out: &mut Self) {
-        unimplemented!()
+        symmetric_difference(self, other, out);
     }
 }
 
@@ -214,15 +214,7 @@ impl SymmetricDifference<RunContainer> for ArrayContainer {
 
 impl Union<Self> for ArrayContainer {
     fn union_with(&self, other: &Self, out: &mut Self) {
-        // Reserve enough capacity to fit the contents into the output
-        let max_len = self.len() + other.len();
-        if out.capacity() < max_len {
-            out.reserve(max_len - out.len());
-        }
-
-        unsafe {
-            avx_union(self, other, &mut out.array);
-        }
+        union(self, other, &mut out.array);
     }
 }
 
@@ -240,17 +232,7 @@ impl Union<RunContainer> for ArrayContainer {
 
 impl Intersection<Self> for ArrayContainer {
     fn intersect_with(&self, other: &Self, out: &mut Self) {
-        // Pick the smallest length as the max potential length of the result
-        let max_len = min(self.len(), other.len());
-
-        // Reserve capacity for the output
-        if out.capacity() < max_len {
-            out.reserve(max_len - out.len());
-        }
-        
-        unsafe {
-            avx_intersect(self, other, &mut out.array);
-        }
+        intersect(self, other, &mut out.array);
     }
 }
 
