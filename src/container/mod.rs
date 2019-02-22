@@ -15,7 +15,7 @@ pub trait Container: Any {
 }
 
 /// Enum with the type of container an operation resulted in
-pub enum ContainerType {
+pub enum ContainerType {// Is this necessary anymore?
     None,
     Array(ArrayContainer),
     Bitset(BitsetContainer),
@@ -23,23 +23,23 @@ pub enum ContainerType {
 }
 
 pub trait Difference<T: Container> {
-    fn difference_with(&self, other: &T) -> ContainerType;
+    fn difference_with(&self, other: &T, out: &mut T);
 }
 
 pub trait SymmetricDifference<T: Container> {
-    fn symmetric_difference_with(&self, other: &T) -> ContainerType;
+    fn symmetric_difference_with(&self, other: &T, out: &mut T);
 }
 
 pub trait Intersection<T: Container> {
-    fn intersect_with(&self, other: &T) -> ContainerType;
+    fn intersect_with(&self, other: &T, out: &mut T);
 }
 
 pub trait Union<T: Container> {
-    fn union_with(&self, other: &T) -> ContainerType;
+    fn union_with(&self, other: &T, out: &mut T);
 }
 
 pub trait Negation<T: Container> {
-    fn negate_with(&self, other: &T) -> ContainerType;
+    fn negate_with(&self, other: &T, out: &mut T);
 }
 
 pub trait Equality<T: Container> {

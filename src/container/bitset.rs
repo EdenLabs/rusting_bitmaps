@@ -18,6 +18,7 @@ impl From<RunContainer> for BitsetContainer {
 
 impl Container for BitsetContainer { }
 
+/*
 impl Difference<Self> for BitsetContainer {
     fn difference_with(&self, other: &Self) -> ContainerType {
         unimplemented!()
@@ -89,6 +90,7 @@ impl Intersection<RunContainer> for BitsetContainer {
         unimplemented!()
     }
 }
+*/
 
 impl Subset<Self> for BitsetContainer {
     fn subset_of(&self, other: &Self) -> bool {

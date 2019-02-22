@@ -1,5 +1,22 @@
 use std::mem;
 use std::arch::x86_64::{
+    _SIDD_UWORD_OPS,
+    _SIDD_CMP_EQUAL_ANY,
+    _SIDD_BIT_MASK,
+    _popcnt32,
+
+    // SIMD
+    __m128i,
+    _mm_lddqu_si128,
+    _mm_cmpestrm,
+    _mm_cmpistrm,
+    _mm_extract_epi32,
+    _mm_load_si128,
+    _mm_shuffle_epi8,
+    _mm_storeu_si128,
+    _mm_setzero_si128,
+
+    // AVX
     __m256i,
     _mm256_min_epu16,
     _mm256_max_epu16,
@@ -11,11 +28,24 @@ use std::arch::x86_64::{
     _mm256_cmpeq_epi16,
     _mm256_setzero_si256,
     _mm256_shuffle_epi8,
-    _mm256_storeu_si256,
-    _popcnt32
+    _mm256_storeu_si256
 };
 
+const CMPESTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
+
+// TODO: Check if we properly initialize the lengths of the outputs
+// TODO: Check that all the functions use a similar approach to accessing content (consistency)
+// TODO: Check that all bounds are correct
+// TODO: See about moving to aligned loads and having some way to enforce that
+// TODO: Make the avx functions safe and the primary interface
+
+/// Calculate the difference between A and B
 pub unsafe fn avx_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
+    // Ensure that out has enough space to hold the contents
+    if out.capacity() < a.len() {
+        out.reserve(a.len() - out.len());
+    }
+    
     // A is the empty set therefore there are no elements in A not in B
     if a.len() == 0 {
         return;
@@ -29,8 +59,10 @@ pub unsafe fn avx_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     
     let len_a = a.len();
     let len_b = b.len();
-    let i_a = 0;
-    let i_b = 0;
+    let mut i_a = 0;
+    let mut i_b = 0;
+    
+    let mut count = 0;
     
     // Handle any leading 0s so we can effectively use the sse instructions
     // This is necessary other wise it'll terminate the comparison on a 0 byte
@@ -46,21 +78,183 @@ pub unsafe fn avx_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
         else if a.get_unchecked(0) == 0 {
             out.push(0);
             i_a += 1;
+            count += 1;
         }
         else {
             i_b += 1;
         }
     }
     
-    let end_a = a.len() - 
+    let end_a = ((a.len() - i_a) / 8) * 8;
+    let end_b = ((b.len() - i_b) / 8) * 8;
+    
+    if i_a < end_a && i_b < end_b {
+        let mut v_a = _mm_lddqu_si128(&a.get_unchecked(i_a) as *const u16 as *const __m128i);
+        let mut v_b = _mm_lddqu_si128(&b.get_unchecked(i_b) as *const u16 as *const __m128i);
+        
+        let mut a_in_b_runningmask = _mm_setzero_si128();
+        
+        loop {
+            let a_in_b = _mm_cmpistrm(v_b, v_a, CMPESTRM_ARGS);
+            a_in_b_runningmask = _mm_or_si128(a_in_b_runningmask, a_in_b);
+        
+            let a_max = a.get_unchecked(i_a + 7);
+            let b_max = b.get_unchecked(i_b + 7);
+            
+            if a_max <= b_max {
+                let mask_difference = _mm_extract_epi32(a_in_b_runningmask, 0) ^ 0xFF;
+                let shuffle_mask = _mm_load_si128(
+                    &SHUFFLE_MASK16[mask_difference] as *const u16 as *const __m128i
+                );
+                let p = _mm_shuffle_epi8(v_a, shuffle_mask);
+                
+                _mm_storeu_si128(&c.get_unchecked(count), p);
+                
+                count += _popcnt32(mask_difference);
+                
+                i_a += 8;
+                
+                if i_a == end_a {
+                    break;
+                }
+                
+                a_in_b_runningmask = _mm_setzero_si128();
+                v_a = _mm_lddqu_si128(&a.get_unchecked(i_a), as *const u16 as *const __m128i);
+            }
+            
+            if b_max <= a_max {
+                i_b += 8;
+
+                if i_b == end_b {
+                    break;
+                }
+                
+                v_b = _mm_lddqu_si128(&b.get_unchecked(i_a) as *const u16 as *const __m128i);
+            }
+        }
+        
+        // Either A or B is at their end, If b is the finished one then finish processing A
+        
+        // TODO: Potentially handle the case of which finishes the comparison
+        //       with a single vector pass on the remainder of B. Probably not worth handling
+        //       till this algorithm is ported to a wider register size
+        if i_a < end_a {
+            i_a -= 8;// Back up since these were never handled due to B terminating early
+        }
+    }
+    
+    out.set_len(count);
+    
+    // Finish out with scalar version for any elements that
+    // didn't fit in the vectorizedversion
+    scalar_difference(&a[i_a..a.len()], &b[i_b..b.len()], out);
 }
 
 pub unsafe fn avx_symmetric_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
+    // Ensure that out has enough space to hold the contents
+    if out.capacity() < a.len() + b.len() {
+        out.reserve((a.len() + b.len()) - out.len());
+    }
     
+    unimplemented!()
 } 
 
-pub unsafe fn avx_intersect() {
+/// Compute the intersection of two u16 vectors using simd acceleration if possible
+/// 
+/// # Safety
+/// This function assumes that out has enough space to fit the entire result
+pub unsafe fn avx_intersect(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
+    // Ensure that out has enough space to hold the contents
+    let max_len = min(a.len(), b.len());
+    if out.capacity() < max_len {
+        out.reserve(max_len - out.len());
+    }
     
+    let end_a = (a.len() / 8) * 8;
+    let end_b = (b.len() / 8) * 8;
+
+    let mut i_a = 0;
+    let mut i_b = 0;
+    let mut count = 0;
+
+    if i_a < end_a && i_b < end_b {
+        let mut v_a = _mm_lddqu_si128(&a[i_a] as *const u16 as *const __m128i);
+        let mut v_b = _mm_lddqu_si128(&b[i_a] as *const u16 as *const __m128i);
+
+        while a[i_a] == 0 || b[i_b] == 0 {
+            let res_v = _mm_cmpestrm(v_b, 8, v_a, 8, CMPESTRM_ARGS);
+            let r = _mm_extract_epi32(res_v, 0);
+            let sm16 = _mm_load_si128(&SHUFFLE_MASK16[r as usize] as *const u8 as *const __m128i);
+            let p = _mm_shuffle_epi8(v_a, sm16);
+
+            _mm_storeu_si128(&mut out[count] as *mut u16 as *mut __m128i, p);
+
+            count += _popcnt32(r) as usize;
+
+            let max_a = a[i_a + 7];
+            let max_b = b[i_a + 7];
+
+            if max_a <= max_b {
+                i_a += 8;
+
+                if i_a == end_a {
+                    break;
+                }
+
+                v_a = _mm_lddqu_si128(&a[i_a] as *const u16 as *const __m128i);
+            }
+
+            if max_b <= max_a {
+                i_b += 8;
+
+                if i_b == end_b {
+                    break;
+                }
+
+                v_b = _mm_lddqu_si128(&b[i_b] as *const u16 as *const __m128i);
+            }
+        }
+
+        if i_a < end_a && i_b < end_b {
+            loop {
+                let res_v = _mm_cmpistrm(v_b, v_a, CMPESTRM_ARGS);
+                let r = _mm_extract_epi32(res_v, 0);
+                let sm16 = _mm_load_si128(&SHUFFLE_MASK16[r as usize] as *const u8 as *const __m128i);
+                let p = _mm_shuffle_epi8(v_a, sm16);
+
+                _mm_storeu_si128(&mut out[count] as *mut u16 as *mut __m128i, p);
+
+                count += _popcnt32(r) as usize;
+
+                let max_a = a[i_a + 7];
+                let max_b = b[i_a + 7];
+
+                if max_a <= max_b {
+                    i_a += 8;
+
+                    if i_a == end_a {
+                        break;
+                    }
+
+                    v_a = _mm_lddqu_si128(&a[i_a] as *const u16 as *const __m128i);
+                }
+
+                if max_b <= max_a {
+                    i_b += 8;
+
+                    if i_b == end_b {
+                        break;
+                    }
+
+                    v_b = _mm_lddqu_si128(&b[i_b] as *const u16 as *const __m128i);
+                }
+            }
+        }
+    }
+
+    out.set_len(count);
+
+    scalar_intersect(&a[i_a..a.len()], &b[i_b..b.len()], out);
 }
 
 /// Compute the union of of two u16 vectors using simd acceleration if possible
@@ -68,11 +262,17 @@ pub unsafe fn avx_intersect() {
 /// # Safety
 /// This function assumes the following:
 /// 
-///  - There is enough space reserved in `target` to fit the result
-pub unsafe fn avx_union(a: &[u16], b: &[u16], target: &mut Vec<u16>) -> usize {
+///  - There is enough space reserved in `out` to fit the result
+pub unsafe fn avx_union(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
+    let max_len = a.len() + b.len();
+    if out.len() < max_len {
+        out.reserve(max_len - out.len());
+    }
+    
     // Length is too short to bother with avx, just use the scalar version
     if a.len() < 16 || b.len() < 16 {
-        return scalar_union(a, b, target);
+        scalar_union(a, b, out);
+        return;
     }
 
     let mut v: __m256i;
@@ -82,7 +282,7 @@ pub unsafe fn avx_union(a: &[u16], b: &[u16], target: &mut Vec<u16>) -> usize {
     let mut v_max: __m256i = mem::uninitialized();// but need initialized to something to please the compiler
     let mut v_last: __m256i;
 
-    let initial_output = target.as_mut_ptr().offset(target.len() as isize);
+    let initial_output = out.as_mut_ptr().offset(out.len() as isize);
     let mut output = initial_output;
     let len_1 = a.len() / 16;
     let len_2 = b.len() / 16;
@@ -99,7 +299,7 @@ pub unsafe fn avx_union(a: &[u16], b: &[u16], target: &mut Vec<u16>) -> usize {
     avx_merge(v_a, v_b, &mut v_min, &mut v_max);
     v_last = _mm256_set1_epi16(-1);
 
-    output = output.offset(store_unique(&v_last, &v_min, output));
+    output = output.offset(avx_store_unique(&v_last, &v_min, output));
     v_last = v_min;
 
     if pos_1 < len_1 && pos_2 < len_2 {
@@ -128,101 +328,21 @@ pub unsafe fn avx_union(a: &[u16], b: &[u16], target: &mut Vec<u16>) -> usize {
             }
 
             avx_merge(v, v_max, &mut v_min, &mut v_max);
-            output = output.offset(store_unique(&v_last, &v_min, output));
+            output = output.offset(avx_store_unique(&v_last, &v_min, output));
             v_last = v_min;
         }
 
         avx_merge(v, v_max, &mut v_min, &mut v_max);
-        output = output.offset(store_unique(&v_last, &v_min, output));
+        output = output.offset(avx_store_unique(&v_last, &v_min, output));
     }
 
-    let mut len = output.offset_from(initial_output) as usize;
-    len += scalar_union(&a[16 * pos_1..a.len()], &b[16 * pos_2..b.len()], target);
+    let len = out.len() + output.offset_from(initial_output) as usize;
+    out.set_len(len);
 
-    len
-}
-
-fn difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
-    
-}
-
-fn symmetric_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
-    
+    scalar_union(&a[16 * pos_1..a.len()], &b[16 * pos_2..b.len()], out);
 }
 
 /// Calculate the union of two slices using scalar ops and append the result into `target`
-///
-/// # Notes
-/// Assumes the following:
-///  - `target` has enough capacity for the max number of elements if you want to avoid memory churn
-///  - The contents are sorted
-/// 
-/// Unsorted contents will result in garbage output
-fn scalar_union(a: &[u16], b: &[u16], target: &mut Vec<u16>) -> usize {
-    // Second operand is empty, just copy into target
-    if b.len() == 0 {
-        target.extend_from_slice(a);
-        return a.len();
-    }
-
-    // First operand is empty, copy into target
-    if a.len() == 0 {
-        target.extend_from_slice(b);
-        return b.len();
-    }
-
-    // Perform union of both operands and append the result into target
-    let count = 0;
-
-    let mut iter_a = a.iter().peekable();
-    let mut iter_b = b.iter().peekable();
-    let mut val_a = iter_a.next().unwrap();
-    let mut val_b = iter_b.next().unwrap();
-    loop {
-        // B is greater; append A and advance the iterator
-        if val_a < val_b {
-            target.push(*val_a);
-            
-            match iter_a.next() {
-                Some(v) => val_a = v,
-                None => break
-            };
-        }
-        // A is greater; append b and advance the iterator
-        else if val_b < val_a {
-            target.push(*val_b);
-
-            match iter_b.next() {
-                Some(v) => val_b = v,
-                None => break
-            };
-        }
-        // A and B are equal; append one and advance the iterators
-        else {
-            target.push(*val_a);
-
-            match iter_a.next() {
-                Some(v) => val_a = v,
-                None => break
-            };
-
-            match iter_b.next() {
-                Some(v) => val_b = v,
-                None => break
-            };
-        }
-    }
-
-    if iter_a.peek().is_some() {
-        target.extend(iter_a);
-    }
-    else if iter_b.peek().is_some() {
-        target.extend(iter_b);
-    }
-
-    count
-}
-
 /// Avx merge operation
 ///
 /// # Safety
@@ -243,7 +363,7 @@ unsafe fn avx_merge(a: __m256i, b: __m256i, min: &mut __m256i, max: &mut __m256i
     *min = _mm256_alignr_epi8(*min, *min, 2);
 }
 
-unsafe fn store_unique(old: &__m256i, new: &__m256i, output: *mut u16) -> isize {
+unsafe fn avx_store_unique(old: &__m256i, new: &__m256i, output: *mut u16) -> isize {
     let temp = _mm256_alignr_epi8(*new, *old, 14); // 16-2
     let mask = _mm256_movemask_epi8(
         _mm256_packs_epi16(
@@ -253,7 +373,7 @@ unsafe fn store_unique(old: &__m256i, new: &__m256i, output: *mut u16) -> isize 
     );
 
     let num_values = 16 - _popcnt32(mask);
-    let shuffle = &mut unique_shuffle[mask as usize] as *mut u8 as *mut __m256i;
+    let shuffle = &mut UNIQUE_SHUFFLE[mask as usize] as *mut u8 as *mut __m256i;
 
     let key = _mm256_lddqu_si256(shuffle);
     let val = _mm256_shuffle_epi8(*new, key);
@@ -263,7 +383,225 @@ unsafe fn store_unique(old: &__m256i, new: &__m256i, output: *mut u16) -> isize 
     num_values as isize
 }
 
-const unique_shuffle: [u8; 4096] = [
+/// Calculate the symmetric difference (`A \ B`) between two slices using scalar instructions
+///
+/// # Assumptions
+///  - The contents of `a` and `b` are sorted
+fn scalar_difference<T>(a: &[T], b: &[T], out: &mut Vec<T>)
+    where T: Copy + Ord + Eq
+{
+    if a.len() == 0 {
+        return;
+    }
+    
+    if b.len() == 0 {
+        out.append_from_slice(b);
+    }
+    
+    let mut i_a = 0;
+    let mut i_b = 0;
+    
+    let mut val_a = a.get_unchecked(i_a);
+    let mut val_b = b.get_unchecked(i_b);
+    
+    loop {
+        if val_a < val_b {
+            out.push(val_a);
+            
+            i_a += 1;
+            if i_a >= a.len() {
+                break;
+            }
+            
+            val_a = a.get_unchecked(i_a);
+        }
+        else if val_a == val_b {
+            i_a += 1;
+            i_b += 1;
+            
+            if i_a >= a.len() {
+                break;
+            }
+            
+            // End of B, Append the remainder of A
+            if i_b >= b.len() {
+                out.extend_from_slice(&a[i_a..a.len()]);
+                return;
+            }
+        }
+        else {
+            i_b += 1;
+            
+            // End of B, append remainder of A
+            if i_b > b.len() {
+                out.extend_from_slice(&a[i_a..a.len()]);
+                return;
+            }
+            
+            val_b = b.get_unchecked(i_b);
+        }
+    }
+}
+
+/// Calculate the symmetric difference (`(A \ B) U (B \ A)`) between two slices using scalar instructions
+/// 
+/// # Assumptions
+///  - The contents of `a` and `b` are sorted
+fn scalar_symmetric_difference(a: &[T], b: &[T], out: &mut Vec<T>)
+    where T: Copy + Ord + Eq
+{
+    unsafe {
+        let mut i_a = 0;
+        let mut i_b = 0;
+        
+        while i_a < a.len() && i_b < b.len() {
+            let v_a = a.get_unchecked(i_a);
+            let v_b = b.get_unchecked(i_b);
+            
+            if v_a == v_b {
+                i_a += 1;
+                i_b += 1;
+                continue;
+            }
+            
+            if v_a < v_b {
+                out.push(v_a);
+                
+                i_a += 1;
+            }
+            else {
+                out.push(v_b);
+                i_b += 1;
+            }
+        }
+        
+        if i_a < a.len() {
+            out.extend_from_slice(&a[i_a..a.len()]);
+        }
+        
+        if i_b < b.len() {
+            out.extend_from_slice(&b[i_b..b.len()]);
+        }
+    }
+}
+
+/// Calculate the union (`A ∪ B`) of two slices using scalar instructions
+///
+/// # Assumptions
+///  - The contents of `a` and `b` are sorted
+fn scalar_union<T>(a: &[T], b: &[T], out: &mut Vec<T>)
+    where T: Copy + Ord + Eq
+{
+    // TODO: Refactor to use unchecked indexes
+    
+    // Second operand is empty, just copy into out
+    if b.len() == 0 {
+        out.extend_from_slice(a);
+        return;
+    }
+
+    // First operand is empty, copy into out
+    if a.len() == 0 {
+        out.extend_from_slice(b);
+        return;
+    }
+
+    // Perform union of both operands and append the result into out
+    let mut iter_a = a.iter().peekable();
+    let mut iter_b = b.iter().peekable();
+    let mut val_a = iter_a.next().unwrap();
+    let mut val_b = iter_b.next().unwrap();
+    loop {
+        // B is greater; append A and advance the iterator
+        if val_a < val_b {
+            out.push(*val_a);
+            
+            match iter_a.next() {
+                Some(v) => val_a = v,
+                None => break
+            };
+        }
+        // A is greater; append b and advance the iterator
+        else if val_b < val_a {
+            out.push(*val_b);
+
+            match iter_b.next() {
+                Some(v) => val_b = v,
+                None => break
+            };
+        }
+        // A and B are equal; append one and advance the iterators
+        else {
+            out.push(*val_a);
+
+            match iter_a.next() {
+                Some(v) => val_a = v,
+                None => break
+            };
+
+            match iter_b.next() {
+                Some(v) => val_b = v,
+                None => break
+            };
+        }
+    }
+
+    if iter_a.peek().is_some() {
+        out.extend(iter_a);
+    }
+    else if iter_b.peek().is_some() {
+        out.extend(iter_b);
+    }
+}
+
+/// Calculate the intersection (`A ∩ B`) of two slices using scalar instructions
+///
+/// # Assumptions
+///  - The contents of `a` and `b` are sorted
+fn scalar_intersect<T>(a: &[T], b: &[T], out: &mut Vec<T>)
+    where T: Copy + Ord + Eq
+{
+    if a.len() == 0 || b.len() == 0 {
+        return;
+    }
+
+    let a_end = *a.last().unwrap();
+    let b_end = *b.last().unwrap();
+
+    unsafe {
+        let mut a_ptr = a.as_ptr();
+        let mut b_ptr = b.as_ptr();
+
+        loop {
+            // TODO: Check if this needs to be bypassed to match the original code
+            while *a_ptr < *b_ptr {
+                a_ptr = a_ptr.offset(1);
+                if *a_ptr == a_end {
+                    return;
+                }
+            }
+
+            while *a_ptr > *b_ptr {
+                b_ptr = b_ptr.offset(1);
+                if *b_ptr == b_end {
+                    return;
+                }
+            }
+
+            if *a_ptr == *b_ptr {
+                out.push(*a_ptr);
+
+                a_ptr = a_ptr.offset(1);
+                b_ptr = b_ptr.offset(1);
+                if *a_ptr == a_end || *b_ptr == b_end {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+const UNIQUE_SHUFFLE: [u8; 4096] = [
     0x0,  0x1,  0x2,  0x3,  0x4,  0x5,  0x6,  0x7,  0x8,  0x9,  0xa,  0xb,
     0xc,  0xd,  0xe,  0xf,  0x2,  0x3,  0x4,  0x5,  0x6,  0x7,  0x8,  0x9,
     0xa,  0xb,  0xc,  0xd,  0xe,  0xf,  0xFF, 0xFF, 0x0,  0x1,  0x4,  0x5,
@@ -606,4 +944,349 @@ const unique_shuffle: [u8; 4096] = [
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF
+];
+
+const SHUFFLE_MASK16: [u8; 4096] = [
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    4,    5,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    4,    5,    0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 6,    7,    0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    6,    7,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    6,    7,    0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    6,    7,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    4,    5,    6,    7,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,    6,    7,    0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,
+    6,    7,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    4,    5,    6,    7,    0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 8,    9,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    8,    9,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    8,    9,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    8,    9,    0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    8,    9,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    4,    5,    8,    9,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,    8,    9,    0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    4,    5,    8,    9,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    6,    7,    8,    9,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    6,    7,    8,    9,    0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    6,    7,
+    8,    9,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    6,    7,    8,    9,    0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    6,    7,    8,    9,    0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,
+    6,    7,    8,    9,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    4,    5,    6,    7,    8,    9,    0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    4,    5,    6,    7,
+    8,    9,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 10,   11,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    10,   11,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    10,   11,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    10,   11,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    4,    5,    10,   11,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,    10,   11,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,
+    10,   11,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    4,    5,    10,   11,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 6,    7,    10,   11,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    6,    7,
+    10,   11,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    6,    7,    10,   11,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    6,    7,    10,   11,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    6,    7,
+    10,   11,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    4,    5,    6,    7,    10,   11,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,    6,    7,    10,   11,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    4,    5,    6,    7,    10,   11,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    8,    9,    10,   11,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    8,    9,    10,   11,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    8,    9,
+    10,   11,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    8,    9,    10,   11,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    8,    9,    10,   11,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,
+    8,    9,    10,   11,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    4,    5,    8,    9,    10,   11,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    4,    5,    8,    9,
+    10,   11,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 6,    7,    8,    9,
+    10,   11,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    6,    7,    8,    9,    10,   11,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    6,    7,    8,    9,    10,   11,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    6,    7,    8,    9,    10,   11,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    4,    5,    6,    7,    8,    9,    10,   11,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,    6,    7,    8,    9,
+    10,   11,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,
+    6,    7,    8,    9,    10,   11,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    4,    5,    6,    7,    8,    9,    10,   11,
+    0xFF, 0xFF, 0xFF, 0xFF, 12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    12,   13,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    12,   13,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    12,   13,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    4,    5,    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,    12,   13,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    4,    5,    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    6,    7,    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    6,    7,    12,   13,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    6,    7,
+    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    6,    7,    12,   13,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    6,    7,    12,   13,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,
+    6,    7,    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    4,    5,    6,    7,    12,   13,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    4,    5,    6,    7,
+    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 8,    9,    12,   13,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    8,    9,    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    8,    9,    12,   13,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    8,    9,    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    4,    5,    8,    9,    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,    8,    9,    12,   13,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,
+    8,    9,    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    4,    5,    8,    9,    12,   13,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 6,    7,    8,    9,    12,   13,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    6,    7,
+    8,    9,    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    6,    7,    8,    9,    12,   13,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    6,    7,    8,    9,
+    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    6,    7,
+    8,    9,    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    4,    5,    6,    7,    8,    9,    12,   13,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,    6,    7,    8,    9,
+    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    4,    5,    6,    7,    8,    9,    12,   13,   0xFF, 0xFF, 0xFF, 0xFF,
+    10,   11,   12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    10,   11,   12,   13,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    10,   11,
+    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    10,   11,   12,   13,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    10,   11,   12,   13,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,
+    10,   11,   12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    4,    5,    10,   11,   12,   13,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    4,    5,    10,   11,
+    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 6,    7,    10,   11,
+    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    6,    7,    10,   11,   12,   13,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    6,    7,    10,   11,   12,   13,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    6,    7,    10,   11,   12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    4,    5,    6,    7,    10,   11,   12,   13,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,    6,    7,    10,   11,
+    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,
+    6,    7,    10,   11,   12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    4,    5,    6,    7,    10,   11,   12,   13,
+    0xFF, 0xFF, 0xFF, 0xFF, 8,    9,    10,   11,   12,   13,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    8,    9,
+    10,   11,   12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    8,    9,    10,   11,   12,   13,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    8,    9,    10,   11,
+    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    8,    9,
+    10,   11,   12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    4,    5,    8,    9,    10,   11,   12,   13,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,    8,    9,    10,   11,
+    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    4,    5,    8,    9,    10,   11,   12,   13,   0xFF, 0xFF, 0xFF, 0xFF,
+    6,    7,    8,    9,    10,   11,   12,   13,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    6,    7,    8,    9,    10,   11,
+    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    6,    7,
+    8,    9,    10,   11,   12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    6,    7,    8,    9,    10,   11,   12,   13,
+    0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    6,    7,    8,    9,    10,   11,
+    12,   13,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,
+    6,    7,    8,    9,    10,   11,   12,   13,   0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    4,    5,    6,    7,    8,    9,    10,   11,   12,   13,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    4,    5,    6,    7,
+    8,    9,    10,   11,   12,   13,   0xFF, 0xFF, 14,   15,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    4,    5,    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,    14,   15,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    4,    5,    14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 6,    7,    14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    6,    7,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    6,    7,    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    6,    7,    14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    6,    7,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    4,    5,    6,    7,    14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,    6,    7,    14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    4,    5,    6,    7,    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    8,    9,    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    8,    9,    14,   15,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    8,    9,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    8,    9,    14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    8,    9,    14,   15,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,
+    8,    9,    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    4,    5,    8,    9,    14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    4,    5,    8,    9,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 6,    7,    8,    9,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    6,    7,    8,    9,    14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    6,    7,    8,    9,    14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    6,    7,    8,    9,    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    4,    5,    6,    7,    8,    9,    14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,    6,    7,    8,    9,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,
+    6,    7,    8,    9,    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    4,    5,    6,    7,    8,    9,    14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 10,   11,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    10,   11,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    10,   11,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    10,   11,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    10,   11,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    4,    5,    10,   11,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,    10,   11,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    4,    5,    10,   11,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    6,    7,    10,   11,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    6,    7,    10,   11,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    6,    7,
+    10,   11,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    6,    7,    10,   11,   14,   15,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    6,    7,    10,   11,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,
+    6,    7,    10,   11,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    4,    5,    6,    7,    10,   11,   14,   15,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    4,    5,    6,    7,
+    10,   11,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 8,    9,    10,   11,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    8,    9,    10,   11,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    8,    9,    10,   11,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    8,    9,    10,   11,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    4,    5,    8,    9,    10,   11,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,    8,    9,    10,   11,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,
+    8,    9,    10,   11,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    4,    5,    8,    9,    10,   11,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 6,    7,    8,    9,    10,   11,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    6,    7,
+    8,    9,    10,   11,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    6,    7,    8,    9,    10,   11,   14,   15,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    6,    7,    8,    9,
+    10,   11,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    6,    7,
+    8,    9,    10,   11,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    4,    5,    6,    7,    8,    9,    10,   11,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,    6,    7,    8,    9,
+    10,   11,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    4,    5,    6,    7,    8,    9,    10,   11,   14,   15,   0xFF, 0xFF,
+    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    12,   13,   14,   15,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    12,   13,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    12,   13,   14,   15,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,
+    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    4,    5,    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    4,    5,    12,   13,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 6,    7,    12,   13,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    6,    7,    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    6,    7,    12,   13,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    6,    7,    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    4,    5,    6,    7,    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,    6,    7,    12,   13,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,
+    6,    7,    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    4,    5,    6,    7,    12,   13,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 8,    9,    12,   13,   14,   15,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    8,    9,
+    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    8,    9,    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    8,    9,    12,   13,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    8,    9,
+    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    4,    5,    8,    9,    12,   13,   14,   15,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,    8,    9,    12,   13,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    4,    5,    8,    9,    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    6,    7,    8,    9,    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    6,    7,    8,    9,    12,   13,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    6,    7,
+    8,    9,    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    6,    7,    8,    9,    12,   13,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    6,    7,    8,    9,    12,   13,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,
+    6,    7,    8,    9,    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    4,    5,    6,    7,    8,    9,    12,   13,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    4,    5,    6,    7,
+    8,    9,    12,   13,   14,   15,   0xFF, 0xFF, 10,   11,   12,   13,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    10,   11,   12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    10,   11,   12,   13,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    10,   11,   12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    4,    5,    10,   11,   12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,    10,   11,   12,   13,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,
+    10,   11,   12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    4,    5,    10,   11,   12,   13,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 6,    7,    10,   11,   12,   13,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    6,    7,
+    10,   11,   12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    6,    7,    10,   11,   12,   13,   14,   15,   0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    6,    7,    10,   11,
+    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    6,    7,
+    10,   11,   12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    4,    5,    6,    7,    10,   11,   12,   13,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    4,    5,    6,    7,    10,   11,
+    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    4,    5,    6,    7,    10,   11,   12,   13,   14,   15,   0xFF, 0xFF,
+    8,    9,    10,   11,   12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    8,    9,    10,   11,   12,   13,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    8,    9,
+    10,   11,   12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    2,    3,    8,    9,    10,   11,   12,   13,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 4,    5,    8,    9,    10,   11,   12,   13,
+    14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,
+    8,    9,    10,   11,   12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF,
+    2,    3,    4,    5,    8,    9,    10,   11,   12,   13,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,    4,    5,    8,    9,
+    10,   11,   12,   13,   14,   15,   0xFF, 0xFF, 6,    7,    8,    9,
+    10,   11,   12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0,    1,    6,    7,    8,    9,    10,   11,   12,   13,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    6,    7,    8,    9,    10,   11,
+    12,   13,   14,   15,   0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    2,    3,
+    6,    7,    8,    9,    10,   11,   12,   13,   14,   15,   0xFF, 0xFF,
+    4,    5,    6,    7,    8,    9,    10,   11,   12,   13,   14,   15,
+    0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    4,    5,    6,    7,    8,    9,
+    10,   11,   12,   13,   14,   15,   0xFF, 0xFF, 2,    3,    4,    5,
+    6,    7,    8,    9,    10,   11,   12,   13,   14,   15,   0xFF, 0xFF,
+    0,    1,    2,    3,    4,    5,    6,    7,    8,    9,    10,   11,
+    12,   13,   14,   15
 ];
