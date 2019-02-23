@@ -15,7 +15,7 @@ Rusting Bitmaps is a native Rust port of Roaring Bitmaps
  - [x] Traits
  - [-] Array Container
     - [x] Difference
-    - [ ] Equals
+    - [x] Equals
     - [x] Intersect
     - [ ] Negation
     - [x] Subset
