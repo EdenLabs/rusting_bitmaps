@@ -1,7 +1,7 @@
 use std::fmt;
 use std::ops::{Deref};
+use std::slice::Iter;
 
-use crate::min;
 use crate::container::*;
 use crate::container::array_simd::*;
 
@@ -120,7 +120,7 @@ impl ArrayContainer {
     }
 
     pub fn max(&self) -> u16 {
-        return self.array[self.array().len() - 1];
+        return self.array[self.array.len() - 1];
     }
 
     pub fn rank(&self) -> u16 {
@@ -178,7 +178,7 @@ impl Container for ArrayContainer { }
 
 impl Difference<Self> for ArrayContainer {
     fn difference_with(&self, other: &Self, out: &mut Self) {
-        difference(self, other, out);
+        difference(&self.array, &other.array, &mut out.array);
     }
 }
 
@@ -196,7 +196,7 @@ impl Difference<RunContainer> for ArrayContainer {
 
 impl SymmetricDifference<Self> for ArrayContainer {
     fn symmetric_difference_with(&self, other: &Self, out: &mut Self) {
-        symmetric_difference(self, other, out);
+        symmetric_difference(&self.array, &other.array, &mut out.array);
     }
 }
 
@@ -214,7 +214,7 @@ impl SymmetricDifference<RunContainer> for ArrayContainer {
 
 impl Union<Self> for ArrayContainer {
     fn union_with(&self, other: &Self, out: &mut Self) {
-        union(self, other, &mut out.array);
+        union(&self.array, &other.array, &mut out.array);
     }
 }
 
@@ -232,7 +232,7 @@ impl Union<RunContainer> for ArrayContainer {
 
 impl Intersection<Self> for ArrayContainer {
     fn intersect_with(&self, other: &Self, out: &mut Self) {
-        intersect(self, other, &mut out.array);
+        intersect(&self.array, &other.array, &mut out.array);
     }
 }
 
