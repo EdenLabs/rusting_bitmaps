@@ -5,7 +5,7 @@ use std::arch::x86_64::{
     _SIDD_BIT_MASK,
     _popcnt32,
 
-    // SIMD
+    // SSE
     __m128i,
     _mm_lddqu_si128,
     _mm_cmpestrm,
@@ -28,7 +28,8 @@ use std::arch::x86_64::{
     _mm256_cmpeq_epi16,
     _mm256_setzero_si256,
     _mm256_shuffle_epi8,
-    _mm256_storeu_si256
+    _mm256_storeu_si256,
+    _mm256_or_si256
 };
 
 const CMPESTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
@@ -89,8 +90,8 @@ pub fn difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
             }
         }
 
-        let end_a = ((a.len() - i_a) / 8) * 8;
-        let end_b = ((b.len() - i_b) / 8) * 8;
+        let end_a = (a.len() - i_a) / 8;
+        let end_b = (b.len() - i_b) / 8;
 
         if i_a < end_a && i_b < end_b {
             let mut v_a = _mm_lddqu_si128(a.get_unchecked(i_a) as *const u16 as *const __m128i);
@@ -162,7 +163,31 @@ pub fn symmetric_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
         out.reserve((a.len() + b.len()) - out.len());
     }
     
-    unimplemented!()
+    if a.len() < 16 || b.len() < 16 {
+        scalar_symmetric_difference(a, b, out);
+        return;
+    }
+
+    unsafe {
+        let len_a = a.len() / 16;
+        let len_b = b.len() / 16;
+        let mut i_a = 0;
+        let mut i_b = 0;
+        let mut count = 0;
+        
+        let mut v_a = _mm256_lddqu_si256(a.get_unchecked(i_a) as *const u16 as *const __m256i);
+        let mut v_b = _mm256_lddqu_si256(b.get_unchecked(i_b) as *const u16 as *const __m256i);
+        
+        i_a += 1;
+        i_b += 1;
+        
+        let mut v_min = mem::uninitialized();
+        let mut v_max = mem::uninitialized();
+        merge(&v_a, &v_b, &mut v_min, &mut v_max);
+        
+        let last_store = _mm256_set1_epi16(-1);
+        count += store_symmetric(last_store, v_min, v_max);
+    }
 } 
 
 /// Compute the intersection (`A ∩ B`) of two u16 vectors
@@ -183,8 +208,8 @@ pub fn intersect(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     }
     
     unsafe {
-        let end_a = (a.len() / 8) * 8;
-        let end_b = (b.len() / 8) * 8;
+        let end_a = a.len() / 8;
+        let end_b = b.len() / 8;
 
         let mut i_a = 0;
         let mut i_b = 0;
@@ -290,7 +315,7 @@ pub fn union(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     let mut v: __m256i;
     let v_a: __m256i;
     let v_b: __m256i;
-    let mut v_min: __m256i = mem::uninitialized();// These get overwritten in `avx_merge` 
+    let mut v_min: __m256i = mem::uninitialized();// These get overwritten in `merge()` 
     let mut v_max: __m256i = mem::uninitialized();// but need initialized to something to please the compiler
     let mut v_last: __m256i;
 
@@ -308,10 +333,10 @@ pub fn union(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     v_b = _mm256_lddqu_si256(&b[pos_2] as *const u16 as *const __m256i);
     pos_2 += 1;
 
-    avx_merge(v_a, v_b, &mut v_min, &mut v_max);
+    merge(v_a, v_b, &mut v_min, &mut v_max);
     v_last = _mm256_set1_epi16(-1);
 
-    output = output.offset(avx_store_unique(&v_last, &v_min, output));
+    output = output.offset(store_union(&v_last, &v_min, output));
     v_last = v_min;
 
     if pos_1 < len_1 && pos_2 < len_2 {
@@ -339,13 +364,13 @@ pub fn union(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
                 }
             }
 
-            avx_merge(v, v_max, &mut v_min, &mut v_max);
-            output = output.offset(avx_store_unique(&v_last, &v_min, output));
+            merge(v, v_max, &mut v_min, &mut v_max);
+            output = output.offset(store_union(&v_last, &v_min, output));
             v_last = v_min;
         }
 
-        avx_merge(v, v_max, &mut v_min, &mut v_max);
-        output = output.offset(avx_store_unique(&v_last, &v_min, output));
+        merge(v, v_max, &mut v_min, &mut v_max);
+        output = output.offset(store_union(&v_last, &v_min, output));
     }
 
     let len = out.len() + output.offset_from(initial_output) as usize;
@@ -354,7 +379,7 @@ pub fn union(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     scalar_union(&a[16 * pos_1..a.len()], &b[16 * pos_2..b.len()], out);
 }
 
-unsafe fn avx_merge(a: __m256i, b: __m256i, min: &mut __m256i, max: &mut __m256i) {
+unsafe fn merge(a: __m256i, b: __m256i, min: &mut __m256i, max: &mut __m256i) {
     let mut temp = _mm256_min_epu16(a, b);
     *max = _mm256_max_epu16(a, b);
     temp = _mm256_alignr_epi8(temp, temp, 2);
@@ -370,7 +395,7 @@ unsafe fn avx_merge(a: __m256i, b: __m256i, min: &mut __m256i, max: &mut __m256i
     *min = _mm256_alignr_epi8(*min, *min, 2);
 }
 
-unsafe fn avx_store_unique(old: &__m256i, new: &__m256i, output: *mut u16) -> isize {
+unsafe fn store_union(old: &__m256i, new: &__m256i, output: *mut u16) -> isize {
     let temp = _mm256_alignr_epi8(*new, *old, 14); // 16-2
     let mask = _mm256_movemask_epi8(
         _mm256_packs_epi16(
@@ -388,6 +413,28 @@ unsafe fn avx_store_unique(old: &__m256i, new: &__m256i, output: *mut u16) -> is
     _mm256_storeu_si256(output as *mut __m256i, val);
 
     num_values as isize
+}
+
+unsafe fn store_symmetric(old: __m256i, new: __256i, output: *mut u16) -> isize {
+    let temp_0 = _mm256_alignr_epi8(new, old, 16 - 4);
+    let temp_1 = _mm256_alignr_epi8(new, old, 16 - 2);
+    
+    let eq_left = _mm256_cmpeq_epi16(temp_1, temp_2);
+    let eq_right = _mm256_cmpeq_epi16(temp_1, new);
+    let eq_lr = _mm256_cmpeq_epi16(eq_left, eq_right);
+    
+    let move_mask = _mm256_movemask_epi8(
+        _mm256_packs_epi16(eq_lr, _mm_setzero_si128())
+    );
+    
+    let num_new = 16 - _mm_popcnt_32(move_mask);
+    
+    let key = _mm256_lddqu_si256(&UNIQUE_SHUFFLE[move_mask as usize] as *const u8 a *const __m256i);
+    let val = _mm256_shuffle_epi8(temp_1, key);
+    
+    _mm256_storeu_si256(output as *mut __m256i, val);
+    
+    return num_new as isize;
 }
 
 /// Calculate the difference (`A \ B`) between two slices using scalar instructions
