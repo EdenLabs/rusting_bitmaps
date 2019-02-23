@@ -15,6 +15,7 @@ use std::arch::x86_64::{
     _mm_shuffle_epi8,
     _mm_storeu_si128,
     _mm_setzero_si128,
+    _mm_or_si128,
 
     // AVX
     __m256i,
@@ -28,9 +29,10 @@ use std::arch::x86_64::{
     _mm256_cmpeq_epi16,
     _mm256_setzero_si256,
     _mm256_shuffle_epi8,
-    _mm256_storeu_si256,
-    _mm256_or_si256
+    _mm256_storeu_si256
 };
+
+use crate::min;
 
 const CMPESTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
 
@@ -39,9 +41,11 @@ const CMPESTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MAS
 
 /// Compute the difference (`A \ B`) between A and B
 pub fn difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
+    assert!(out.len() == 0);
+
     // Ensure that out has enough space to hold the contents
     if out.capacity() < a.len() {
-        out.reserve(a.len() - out.len());
+        out.reserve(a.len());
     }
     
     // A is the empty set therefore there are no elements in A not in B
@@ -61,26 +65,27 @@ pub fn difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
         return;
     }
     
+    let mut i_a = 0;
+    let mut i_b = 0;
+
     unsafe {
         let len_a = a.len();
         let len_b = b.len();
-        let mut i_a = 0;
-        let mut i_b = 0;
 
         let mut count = 0;
 
         // Handle any leading 0s so we can effectively use the sse instructions
         // This is necessary other wise it'll terminate the comparison on a 0 byte
         // TODO: Figure out if there's a faster way to do this without using cmpistrm
-        if a.get_unchecked(0) == 0 || b.get_unchecked(0) == 0 {
-            if a.get_unchecked(0) == b.get_unchecked(0) {
+        let v_a = *a.get_unchecked(0);
+        let v_b = *b.get_unchecked(0);
+
+        if v_a == 0 || v_b == 0 {
+            if v_a == v_b {
                 i_a += 1;
                 i_b += 1;
-
-                len_a -= 1;
-                len_b -= 1;
             }
-            else if a.get_unchecked(0) == 0 {
+            else if v_a == 0 {
                 out.push(0);
                 i_a += 1;
                 count += 1;
@@ -90,56 +95,56 @@ pub fn difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
             }
         }
 
-        let end_a = (a.len() - i_a) / 8;
-        let end_b = (b.len() - i_b) / 8;
-
+        let end_a = ((a.len() - i_a) / 8) * 8;
+        let end_b = ((b.len() - i_b) / 8) * 8;
+        
         if i_a < end_a && i_b < end_b {
             let mut v_a = _mm_lddqu_si128(a.get_unchecked(i_a) as *const u16 as *const __m128i);
             let mut v_b = _mm_lddqu_si128(b.get_unchecked(i_b) as *const u16 as *const __m128i);
-
+            
             let mut a_in_b_runningmask = _mm_setzero_si128();
-
+            
             loop {
                 let a_in_b = _mm_cmpistrm(v_b, v_a, CMPESTRM_ARGS);
                 a_in_b_runningmask = _mm_or_si128(a_in_b_runningmask, a_in_b);
-
+            
                 let a_max = a.get_unchecked(i_a + 7);
                 let b_max = b.get_unchecked(i_b + 7);
-
+                
                 if a_max <= b_max {
                     let mask_difference = _mm_extract_epi32(a_in_b_runningmask, 0) ^ 0xFF;
                     let shuffle_mask = _mm_load_si128(
-                        &SHUFFLE_MASK16[mask_difference] as *const u16 as *const __m128i
+                        &SHUFFLE_MASK16[mask_difference as usize] as *const u8 as *const __m128i
                     );
                     let p = _mm_shuffle_epi8(v_a, shuffle_mask);
-
-                    _mm_storeu_si128(c.get_unchecked(count), p);
-
-                    count += _popcnt32(mask_difference);
-
+                    
+                    _mm_storeu_si128(out.get_unchecked_mut(count) as *mut u16 as *mut __m128i, p);
+                    
+                    count += _popcnt32(mask_difference) as usize;
+                    
                     i_a += 8;
-
+                    
                     if i_a == end_a {
                         break;
                     }
-
+                    
                     a_in_b_runningmask = _mm_setzero_si128();
-                    v_a = _mm_lddqu_si128(a.get_unchecked(i_a), as *const u16 as *const __m128i);
+                    v_a = _mm_lddqu_si128(a.get_unchecked(i_a) as *const u16 as *const __m128i);
                 }
-
+                
                 if b_max <= a_max {
                     i_b += 8;
 
                     if i_b == end_b {
                         break;
                     }
-
+                    
                     v_b = _mm_lddqu_si128(b.get_unchecked(i_a) as *const u16 as *const __m128i);
                 }
             }
-
+            
             // Either A or B is at their end, If b is the finished one then finish processing A
-
+            
             // TODO: Potentially handle the case of which finishes the comparison
             //       with a single vector pass on the remainder of B. Probably not worth handling
             //       till this algorithm is ported to a wider register size
@@ -158,9 +163,11 @@ pub fn difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
 
 /// Compute the symmetric difference (`(A \ B) ∪ (B \ A)`) between A and B
 pub fn symmetric_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
+    assert!(out.len() == 0);
+
     // Ensure that out has enough space to hold the contents
     if out.capacity() < a.len() + b.len() {
-        out.reserve((a.len() + b.len()) - out.len());
+        out.reserve(a.len() + b.len());
     }
     
     if a.len() < 16 || b.len() < 16 {
@@ -168,11 +175,13 @@ pub fn symmetric_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
         return;
     }
 
+    let mut i_a = 0;
+    let mut i_b = 0;
+
     unsafe {
         let len_a = a.len() / 16;
         let len_b = b.len() / 16;
-        let mut i_a = 0;
-        let mut i_b = 0;
+        
         let mut count = 0;
         
         let mut v_a = _mm256_lddqu_si256(a.get_unchecked(i_a) as *const u16 as *const __m256i);
@@ -183,15 +192,62 @@ pub fn symmetric_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
         
         let mut v_min = mem::uninitialized();
         let mut v_max = mem::uninitialized();
-        merge(&v_a, &v_b, &mut v_min, &mut v_max);
+        merge(v_a, v_b, &mut v_min, &mut v_max);
         
-        let last_store = _mm256_set1_epi16(-1);
-        count += store_symmetric(last_store, v_min, v_max);
+        let mut last_store = _mm256_set1_epi16(-1);
+        count += store_symmetric(last_store, v_min, out.get_unchecked_mut(count) as *mut u16);
+
+        last_store = v_min;
+
+        if i_a < len_a && i_b < len_b {
+            let mut v_a = *a.get_unchecked(i_a * 16);
+            let mut v_b = *b.get_unchecked(i_b * 16);
+            let mut v = mem::uninitialized();
+
+            loop {
+                if v_a < v_b {
+                    v = _mm256_lddqu_si256(a.get_unchecked(i_a) as *const u16 as *const __m256i);
+
+                    i_a += 16;
+                    if i_a >= len_a {
+                        break;
+                    }
+
+                    v_a = *a.get_unchecked(i_a);
+                }
+                else {
+                    v = _mm256_lddqu_si256(b.get_unchecked(i_b) as *const u16 as *const __m256i);
+
+                    i_b += 16;
+                    if i_b >= len_b {
+                        break;
+                    }
+
+                    v_b = *b.get_unchecked(i_b);
+                }
+
+                merge(v, v_max, &mut v_min, &mut v_max);
+                count += store_symmetric(last_store, v_min, out.get_unchecked_mut(count) as *mut u16);
+
+                last_store = v_min;
+            }
+
+            merge(v, v_max, &mut v_min, &mut v_max);
+            count += store_symmetric(last_store, v_min, out.get_unchecked_mut(count) as *mut u16);
+
+            last_store = v_min;
+        }
+
+        out.set_len(count);
     }
+
+    scalar_symmetric_difference(&a[i_a..a.len()], &b[i_b..b.len()], out);
 } 
 
 /// Compute the intersection (`A ∩ B`) of two u16 vectors
 pub fn intersect(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
+    assert!(out.len() == 0);
+
     if a.len() == 0 || b.len() == 0 {
         return;
     }
@@ -199,20 +255,21 @@ pub fn intersect(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     // Ensure that out has enough space to hold the contents
     let max_len = min(a.len(), b.len());
     if out.capacity() < max_len {
-        out.reserve(max_len - out.len());
+        out.reserve(max_len);
     }
     
-    if a.len() < 8 || b.len() < 9 {
+    if a.len() < 8 || b.len() < 8 {
         scalar_intersect(a, b, out);
         return;
     }
+    
+    let mut i_a = 0;
+    let mut i_b = 0;
     
     unsafe {
         let end_a = a.len() / 8;
         let end_b = b.len() / 8;
 
-        let mut i_a = 0;
-        let mut i_b = 0;
         let mut count = 0;
 
         if i_a < end_a && i_b < end_b {
@@ -298,12 +355,12 @@ pub fn intersect(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
 
 /// Compute the union (`A ∪ B`) of of two u16 vectors
 pub fn union(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
-    // TODO: Re-examine this and determine if it's correct
-    
+    assert!(out.len() == 0);
+
     // Ensure that there's enough space in out to fit the result
     let max_len = a.len() + b.len();
     if out.len() < max_len {
-        out.reserve(max_len - out.len());
+        out.reserve(max_len);
     }
     
     // Length is too short to bother with avx, just use the scalar version
@@ -312,71 +369,72 @@ pub fn union(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
         return;
     }
 
-    let mut v: __m256i;
-    let v_a: __m256i;
-    let v_b: __m256i;
-    let mut v_min: __m256i = mem::uninitialized();// These get overwritten in `merge()` 
-    let mut v_max: __m256i = mem::uninitialized();// but need initialized to something to please the compiler
-    let mut v_last: __m256i;
+    let mut i_a = 0;
+    let mut i_b = 0;
 
-    let initial_output = out.as_mut_ptr().offset(out.len() as isize);
-    let mut output = initial_output;
-    let len_1 = a.len() / 16;
-    let len_2 = b.len() / 16;
-    let mut pos_1 = 0;
-    let mut pos_2 = 0;
+    unsafe {
+        let len_a = a.len() / 16;
+        let len_b = b.len() / 16;
 
-    // Setup
-    v_a = _mm256_lddqu_si256(&a[pos_1] as *const u16 as *const __m256i);
-    pos_1 += 1;
+        let mut count = 0;
 
-    v_b = _mm256_lddqu_si256(&b[pos_2] as *const u16 as *const __m256i);
-    pos_2 += 1;
+        let mut v_a = _mm256_lddqu_si256(a.get_unchecked(i_a) as *const u16 as *const __m256i);
+        let mut v_b = _mm256_lddqu_si256(b.get_unchecked(i_b) as *const u16 as *const __m256i);
+        let mut v_min = mem::uninitialized();
+        let mut v_max = mem::uninitialized();
 
-    merge(v_a, v_b, &mut v_min, &mut v_max);
-    v_last = _mm256_set1_epi16(-1);
+        i_a += 16;
+        i_b += 16;
 
-    output = output.offset(store_union(&v_last, &v_min, output));
-    v_last = v_min;
+        merge(v_a, v_b, &mut v_min, &mut v_max);
 
-    if pos_1 < len_1 && pos_2 < len_2 {
-        let mut cur_a = a[16 * pos_1];
-        let mut cur_b = b[16 * pos_2];
+        let mut last_store = _mm256_set1_epi16(-1);
+        count += store_union(last_store, v_min, out.get_unchecked_mut(count) as *mut u16);
+        last_store = v_min;
 
-        loop {
-            if cur_a <= cur_b {
-                v = _mm256_lddqu_si256(&a[pos_1] as *const u16 as *const __m256i);
-                pos_1 += 1;
+        if i_a < len_a && i_b < len_b {
+            let mut cur_a = *a.get_unchecked(i_a);
+            let mut cur_b = *b.get_unchecked(i_b);
+            let mut v = mem::uninitialized();
 
-                if pos_1 < len_1 {
-                    cur_a = a[16 * pos_1];
+            loop {
+                if cur_a <= cur_b {
+                    v = _mm256_lddqu_si256(a.get_unchecked(i_a) as *const u16 as *const __m256i);
+
+                    i_a += 16;
+                    if i_a >= len_a {
+                        break;
+                    }
+
+                    cur_a = *a.get_unchecked(i_a);
                 }
                 else {
-                    break;
-                }
-            }
-            else {
-                v = _mm256_lddqu_si256(&b[pos_2] as *const u16 as *const __m256i);
-                pos_2 += 1;
+                    v = _mm256_lddqu_si256(b.get_unchecked(i_b) as *const u16 as *const __m256i);
 
-                if pos_2 < len_2 {
-                    cur_b = b[16 * pos_2];
+                    i_b += 16;
+                    if i_b >= len_b {
+                        break;
+                    }
+
+                    cur_b = *b.get_unchecked(i_b);
                 }
+
+                merge(v, v_max, &mut v_min, &mut v_max);
+                
+                count += store_union(last_store, v_min, out.get_unchecked_mut(count) as *mut u16);
+                last_store = v_min;
             }
 
             merge(v, v_max, &mut v_min, &mut v_max);
-            output = output.offset(store_union(&v_last, &v_min, output));
-            v_last = v_min;
+                
+            count += store_union(last_store, v_min, out.get_unchecked_mut(count) as *mut u16);
+            last_store = v_min;
         }
 
-        merge(v, v_max, &mut v_min, &mut v_max);
-        output = output.offset(store_union(&v_last, &v_min, output));
+        out.set_len(count);
     }
 
-    let len = out.len() + output.offset_from(initial_output) as usize;
-    out.set_len(len);
-
-    scalar_union(&a[16 * pos_1..a.len()], &b[16 * pos_2..b.len()], out);
+    scalar_union(&a[i_a..a.len()], &b[i_b..b.len()], out);
 }
 
 unsafe fn merge(a: __m256i, b: __m256i, min: &mut __m256i, max: &mut __m256i) {
@@ -395,11 +453,11 @@ unsafe fn merge(a: __m256i, b: __m256i, min: &mut __m256i, max: &mut __m256i) {
     *min = _mm256_alignr_epi8(*min, *min, 2);
 }
 
-unsafe fn store_union(old: &__m256i, new: &__m256i, output: *mut u16) -> isize {
-    let temp = _mm256_alignr_epi8(*new, *old, 14); // 16-2
+unsafe fn store_union(old: __m256i, new: __m256i, output: *mut u16) -> usize {
+    let temp = _mm256_alignr_epi8(new, old, 16 - 2);
     let mask = _mm256_movemask_epi8(
         _mm256_packs_epi16(
-            _mm256_cmpeq_epi16(temp, *new),
+            _mm256_cmpeq_epi16(temp, new),
             _mm256_setzero_si256()
         )
     );
@@ -408,33 +466,33 @@ unsafe fn store_union(old: &__m256i, new: &__m256i, output: *mut u16) -> isize {
     let shuffle = &mut UNIQUE_SHUFFLE[mask as usize] as *mut u8 as *mut __m256i;
 
     let key = _mm256_lddqu_si256(shuffle);
-    let val = _mm256_shuffle_epi8(*new, key);
+    let val = _mm256_shuffle_epi8(new, key);
     
     _mm256_storeu_si256(output as *mut __m256i, val);
 
-    num_values as isize
+    num_values as usize
 }
 
-unsafe fn store_symmetric(old: __m256i, new: __256i, output: *mut u16) -> isize {
+unsafe fn store_symmetric(old: __m256i, new: __m256i, output: *mut u16) -> usize {
     let temp_0 = _mm256_alignr_epi8(new, old, 16 - 4);
     let temp_1 = _mm256_alignr_epi8(new, old, 16 - 2);
     
-    let eq_left = _mm256_cmpeq_epi16(temp_1, temp_2);
-    let eq_right = _mm256_cmpeq_epi16(temp_1, new);
+    let eq_left = _mm256_cmpeq_epi16(temp_0, temp_1);
+    let eq_right = _mm256_cmpeq_epi16(temp_0, new);
     let eq_lr = _mm256_cmpeq_epi16(eq_left, eq_right);
     
     let move_mask = _mm256_movemask_epi8(
-        _mm256_packs_epi16(eq_lr, _mm_setzero_si128())
+        _mm256_packs_epi16(eq_lr, _mm256_setzero_si256())
     );
     
-    let num_new = 16 - _mm_popcnt_32(move_mask);
+    let num_new = 16 - _popcnt32(move_mask);
     
-    let key = _mm256_lddqu_si256(&UNIQUE_SHUFFLE[move_mask as usize] as *const u8 a *const __m256i);
+    let key = _mm256_lddqu_si256(&UNIQUE_SHUFFLE[move_mask as usize] as *const u8 as *const __m256i);
     let val = _mm256_shuffle_epi8(temp_1, key);
     
     _mm256_storeu_si256(output as *mut __m256i, val);
     
-    return num_new as isize;
+    return num_new as usize;
 }
 
 /// Calculate the difference (`A \ B`) between two slices using scalar instructions
@@ -449,50 +507,52 @@ fn scalar_difference<T>(a: &[T], b: &[T], out: &mut Vec<T>)
     }
     
     if b.len() == 0 {
-        out.append_from_slice(b);
+        out.extend_from_slice(b);
     }
     
-    let mut i_a = 0;
-    let mut i_b = 0;
-    
-    let mut val_a = a.get_unchecked(i_a);
-    let mut val_b = b.get_unchecked(i_b);
-    
-    loop {
-        if val_a < val_b {
-            out.push(val_a);
-            
-            i_a += 1;
-            if i_a >= a.len() {
-                break;
+    unsafe {
+        let mut i_a = 0;
+        let mut i_b = 0;
+        
+        let mut val_a = *a.get_unchecked(i_a);
+        let mut val_b = *b.get_unchecked(i_b);
+        
+        loop {
+            if val_a < val_b {
+                out.push(val_a);
+                
+                i_a += 1;
+                if i_a >= a.len() {
+                    break;
+                }
+                
+                val_a = *a.get_unchecked(i_a);
             }
-            
-            val_a = a.get_unchecked(i_a);
-        }
-        else if val_a == val_b {
-            i_a += 1;
-            i_b += 1;
-            
-            if i_a >= a.len() {
-                break;
+            else if val_a == val_b {
+                i_a += 1;
+                i_b += 1;
+                
+                if i_a >= a.len() {
+                    break;
+                }
+                
+                // End of B, Append the remainder of A
+                if i_b >= b.len() {
+                    out.extend_from_slice(&a[i_a..a.len()]);
+                    return;
+                }
             }
-            
-            // End of B, Append the remainder of A
-            if i_b >= b.len() {
-                out.extend_from_slice(&a[i_a..a.len()]);
-                return;
+            else {
+                i_b += 1;
+                
+                // End of B, append remainder of A
+                if i_b > b.len() {
+                    out.extend_from_slice(&a[i_a..a.len()]);
+                    return;
+                }
+                
+                val_b = *b.get_unchecked(i_b);
             }
-        }
-        else {
-            i_b += 1;
-            
-            // End of B, append remainder of A
-            if i_b > b.len() {
-                out.extend_from_slice(&a[i_a..a.len()]);
-                return;
-            }
-            
-            val_b = b.get_unchecked(i_b);
         }
     }
 }
@@ -501,7 +561,7 @@ fn scalar_difference<T>(a: &[T], b: &[T], out: &mut Vec<T>)
 /// 
 /// # Assumptions
 ///  - The contents of `a` and `b` are sorted
-fn scalar_symmetric_difference(a: &[T], b: &[T], out: &mut Vec<T>)
+fn scalar_symmetric_difference<T>(a: &[T], b: &[T], out: &mut Vec<T>)
     where T: Copy + Ord + Eq
 {
     unsafe {
@@ -509,8 +569,8 @@ fn scalar_symmetric_difference(a: &[T], b: &[T], out: &mut Vec<T>)
         let mut i_b = 0;
         
         while i_a < a.len() && i_b < b.len() {
-            let v_a = a.get_unchecked(i_a);
-            let v_b = b.get_unchecked(i_b);
+            let v_a = *a.get_unchecked(i_a);
+            let v_b = *b.get_unchecked(i_b);
             
             if v_a == v_b {
                 i_a += 1;
@@ -546,8 +606,6 @@ fn scalar_symmetric_difference(a: &[T], b: &[T], out: &mut Vec<T>)
 fn scalar_union<T>(a: &[T], b: &[T], out: &mut Vec<T>)
     where T: Copy + Ord + Eq
 {
-    // TODO: Refactor to use unchecked indexes
-    
     // Second operand is empty, just copy into out
     if b.len() == 0 {
         out.extend_from_slice(a);
@@ -560,51 +618,62 @@ fn scalar_union<T>(a: &[T], b: &[T], out: &mut Vec<T>)
         return;
     }
 
-    // Perform union of both operands and append the result into out
-    let mut iter_a = a.iter().peekable();
-    let mut iter_b = b.iter().peekable();
-    let mut val_a = iter_a.next().unwrap();
-    let mut val_b = iter_b.next().unwrap();
-    loop {
-        // B is greater; append A and advance the iterator
-        if val_a < val_b {
-            out.push(*val_a);
-            
-            match iter_a.next() {
-                Some(v) => val_a = v,
-                None => break
-            };
+    unsafe {
+        // Perform union of both operands and append the result into out
+        let mut i_a = 0;
+        let mut i_b = 0;
+        let mut val_a = *a.get_unchecked(i_a);
+        let mut val_b = *b.get_unchecked(i_a);
+
+        loop {
+            // B is greater; append A and advance the iterator
+            if val_a < val_b {
+                out.push(val_a);
+
+                i_a += 1;
+                if i_a >= a.len() {
+                    break;
+                }
+
+                val_a = *a.get_unchecked(i_a);
+            }
+            // A is greater; append b and advance the iterator
+            else if val_b < val_a {
+                out.push(val_b);
+
+                i_b += 1;
+                if i_b >= b.len() {
+                    break;
+                }
+
+                val_b = *b.get_unchecked(i_b);
+            }
+            // A and B are equal; append one and advance the iterators
+            else {
+                out.push(val_a);
+
+                i_a += 1;
+                i_b += 1;
+
+                if i_a >= a.len() {
+                    break;
+                }
+
+                if i_b >= b.len() {
+                    break;
+                }
+
+                val_a = *a.get_unchecked(i_a);
+                val_b = *b.get_unchecked(i_b);
+            }
         }
-        // A is greater; append b and advance the iterator
-        else if val_b < val_a {
-            out.push(*val_b);
 
-            match iter_b.next() {
-                Some(v) => val_b = v,
-                None => break
-            };
+        if i_a < a.len() {
+            out.extend_from_slice(&a[i_a..a.len()]);
         }
-        // A and B are equal; append one and advance the iterators
-        else {
-            out.push(*val_a);
-
-            match iter_a.next() {
-                Some(v) => val_a = v,
-                None => break
-            };
-
-            match iter_b.next() {
-                Some(v) => val_b = v,
-                None => break
-            };
+        else if i_b < b.len() {
+            out.extend_from_slice(&b[i_b..b.len()]);
         }
-    }
-
-    if iter_a.peek().is_some() {
-        out.extend(iter_a);
-    }
-    else if iter_b.peek().is_some() {
-        out.extend(iter_b);
     }
 }
 
@@ -619,35 +688,34 @@ fn scalar_intersect<T>(a: &[T], b: &[T], out: &mut Vec<T>)
         return;
     }
 
-    let a_end = *a.last().unwrap();
-    let b_end = *b.last().unwrap();
-
     unsafe {
-        let mut a_ptr = a.as_ptr();
-        let mut b_ptr = b.as_ptr();
+        let mut i_a = 0;
+        let mut i_b = 0;
+        let mut v_a = *a.get_unchecked(i_a);
+        let mut v_b = *b.get_unchecked(i_b);
 
         loop {
-            // TODO: Check if this needs to be bypassed to match the original code
-            while *a_ptr < *b_ptr {
-                a_ptr = a_ptr.offset(1);
-                if *a_ptr == a_end {
+            while v_a < v_b {
+                i_a += 1;
+                if i_a >= a.len() {
                     return;
                 }
             }
 
-            while *a_ptr > *b_ptr {
-                b_ptr = b_ptr.offset(1);
-                if *b_ptr == b_end {
+            while v_a > v_b {
+                i_b += 1;
+                if i_b >= b.len() {
                     return;
                 }
             }
 
-            if *a_ptr == *b_ptr {
-                out.push(*a_ptr);
+            if v_a == v_b {
+                out.push(v_a);
 
-                a_ptr = a_ptr.offset(1);
-                b_ptr = b_ptr.offset(1);
-                if *a_ptr == a_end || *b_ptr == b_end {
+                i_a += 1;
+                i_b += 1;
+
+                if i_a > a.len() || i_b >= b.len() {
                     return;
                 }
             }
