@@ -11,7 +11,7 @@ use std::any::Any;
 
 /// Marker trait for container types
 pub trait Container: Any {
-    
+    // TODO: See about implementing common container functionality on this trait
 }
 
 /// Enum with the type of container an operation resulted in
@@ -48,10 +48,4 @@ pub trait Equality<T: Container> {
 
 pub trait Subset<T: Container> {
     fn subset_of(&self, other: &T) -> bool;
-}
-
-/// A generic iterator
-pub struct RoaringIter<T: Container> {
-    // TODO: Write the actual implementation
-    container: T
 }

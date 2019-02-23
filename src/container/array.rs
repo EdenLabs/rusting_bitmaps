@@ -7,11 +7,6 @@ use crate::container::array_simd::*;
 
 const DEFAULT_MAX_SIZE: usize = 4096;
 
-pub enum AddError {
-    AlreadyPresent,
-    ExceededCapacity
-}
-
 #[derive(Clone)]
 pub struct ArrayContainer {
     array: Vec<u16>
@@ -47,6 +42,12 @@ impl ArrayContainer {
     }
 
     #[inline]
+    pub fn cardinality(&self) -> usize {
+        // Len is the same as the cardinality for raw sets of integers
+        self.array.len()
+    }
+
+    #[inline]
     pub fn len(&self) -> usize {
         self.array.len()
     }
@@ -79,10 +80,45 @@ impl ArrayContainer {
     }
 
     pub fn add(&mut self, value: u16) -> bool {
-        unimplemented!()
+        self.add_with_cardinality(value, std::usize::MAX)
     }
 
-    pub fn add_from_range(&mut self, min: usize, max: usize, step: usize) {
+    pub fn add_with_cardinality(&mut self, value: u16, max_cardinality: usize) -> bool {
+        let can_append = {
+            let is_max_value = match self.max() {
+                Some(max) => max < value,
+                None => true
+            };
+
+            is_max_value && self.cardinality() < max_cardinality
+        };
+
+        if can_append {
+            self.append(value);
+            return true;
+        }
+
+        match self.array.binary_search(&value) {
+            Ok(_index) => {
+                return true;
+            },
+            Err(index) => {
+                if self.cardinality() < max_cardinality {
+                    self.array.insert(index, value);
+
+                    return true;
+                }
+                else {
+                    return false;
+                }
+            }
+        }
+    }
+
+    /// Add all values within the specified range
+    pub fn add_from_range(&mut self, min: u32, max: u32) {
+        assert!(min < max);
+
         let range = min..max;
 
         // Resize to fit all new elements
@@ -94,37 +130,139 @@ impl ArrayContainer {
         }
 
         // Append new elements
-        for i in (min..max).step_by(step) {
+        for i in range {
             self.array.push(i as u16);
         }
     }
 
     pub fn append(&mut self, value: u16) {
-        unimplemented!()
-    }
+        assert!({
+            // Ensure that value is greater than any element in the set
+            if self.len() > 0 {
+                value > self.max().unwrap()
+            }
+            else {
+                true
+            }
+        });
 
-    pub fn try_add(&mut self, value: u16, max_capacity: usize) -> Result<(), AddError> {
-        unimplemented!()
+        self.array.push(value);
     }
 
     pub fn remove(&mut self, value: u16) -> bool {
-        unimplemented!()
+        match self.array.binary_search(&value) {
+            Ok(index) => {
+                self.array.remove(index);
+
+                true
+            },
+            Err(_index) => false
+        }
     }
 
+    /// Remove all elements within the spefied range, exclusive
+    pub fn remove_range(&mut self, min: usize, max: usize) {
+        assert!(min < max);
+
+        if (min..max).len() == 0 || max > self.len() {
+            return;
+        }
+
+        let range = max..self.array.len();
+
+        self.array.copy_within(range, min);
+    }
+
+    /// Check if the array contains a specified value
     pub fn contains(&self, value: u16) -> bool {
-        unimplemented!()
+        self.array.binary_search(&value).is_ok()
     }
 
-    pub fn min(&self) -> u16 {
-        return self.array[0];
+    /// Check if the array contains all values within [min-max] (exclusive)
+    pub fn contains_range(&self, min: u16, max: u16) -> bool {
+        assert!(min < max);
+
+        let min = min as usize;
+        let max = max as usize;
+
+        if min as usize > self.len() || max as usize > self.len() {
+            return false;
+        }
+
+        let min_val = exponential_search(&self.array, self.len(), min as u16);
+        let max_val = exponential_search(&self.array, self.len(), (max - 1) as u16);
+
+        match (min_val, max_val) {
+            (Ok(min_index), Ok(max_index)) =>  {
+                max_index - min_index == max - min
+            },
+            _ => false
+        }
     }
 
-    pub fn max(&self) -> u16 {
-        return self.array[self.array.len() - 1];
+    pub fn select(&self, rank: usize, start_rank: &mut usize) -> Option<u32> {
+        let cardinality = self.cardinality();
+        if *start_rank + cardinality <= rank {
+            *start_rank += cardinality;
+
+            None
+        }
+        else {
+            unsafe {
+                let index = rank - *start_rank;
+                let element = self.array.get_unchecked(index) as *const u16 as *const u32;
+
+                Some(*element)
+            }
+        }
     }
 
-    pub fn rank(&self) -> u16 {
-        unimplemented!()
+    #[inline]
+    pub fn min(&self) -> Option<u16> {
+        if self.array.len() == 0 {
+            None
+        }
+        else {
+            Some(self.array[0])
+        }
+    }
+
+    #[inline]
+    pub fn max(&self) -> Option<u16> {
+        if self.array.len() == 0 {
+            None
+        }
+        else {
+            Some(self.array[self.array.len() - 1])
+        }
+    }
+
+    /// Return the number of values equal to or smaller than `value`
+    #[inline]
+    pub fn rank(&self, value: u16) -> usize {
+        match self.array.binary_search(&value) {
+            Ok(index) => index + 1,
+            Err(index) => index - 1
+        }
+    }
+
+    /// Return the index of the first value equal to or smaller than x
+    pub fn equal_or_larger(&self, value: u16) -> Option<usize> {
+        if self.len() == 0 {
+            return None;
+        }
+
+        match self.array.binary_search(&value) {
+            Ok(index) => Some(index),
+            Err(index) => {
+                if index == 0 {
+                    Some(index)
+                }
+                else {
+                    Some(index - 1)
+                }
+            }
+        }
     }
 
     /// Compute the number of runs in the array
@@ -161,6 +299,18 @@ impl Deref for ArrayContainer {
         &self.array
     }
 }
+
+impl PartialEq for ArrayContainer {
+    fn eq(&self, other: &Self) -> bool {
+        mem_equals(self, other)
+    }
+
+    fn ne(&self, other: &Self) -> bool {
+        !mem_equals(self, other)
+    }
+}
+
+impl Eq for ArrayContainer { }
 
 impl From<BitsetContainer> for ArrayContainer {
     fn from(container: BitsetContainer) -> Self {

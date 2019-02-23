@@ -4,22 +4,62 @@
 
 Rusting Bitmaps is a native Rust port of Roaring Bitmaps
 
-# Feature Tracking
+# Supported Platforms
+ - x86_64 w/ AVX2
+
+# Feature Implementation Tracking
  - [ ] Roaring Array
+    - [ ] TBD
  - [ ] Roaring Bitmap
- - [ ] Containers
-    - [x] Traits
-    - [ ] Array Container
-    - [ ] Bitset Container
-    - [ ] Run Container
- - [ ] Conversions
- - [ ] AVX Operations (feature flags?)
- - [ ] Set Ops
-    - [ ] Difference (andnot in roaring terminology)
+    - [ ] TBD
+ - [x] Traits
+ - [-] Array Container
+    - [x] Difference
+    - [ ] Equals
+    - [x] Intersect
+    - [ ] Negation
+    - [x] Subset
+    - [x] Union
+    - [x] Symmetric Difference
+    - [ ] Cardinality variants
+    - [ ] Inplace variants
+ - [-] Bitset Container
+    - [ ] Difference
     - [ ] Equals
     - [ ] Intersect
     - [ ] Negation
     - [ ] Subset
     - [ ] Union
-    - [ ] Symmetric Difference (xor)
- - [ ] Serialization (feature flag)
+    - [ ] Symmetric Difference
+    - [ ] Cardinality variants
+    - [ ] Inplace variants
+ - [ ] Run Container
+    - [ ] Difference
+    - [ ] Equals
+    - [ ] Intersect
+    - [ ] Negation
+    - [ ] Subset
+    - [ ] Union
+    - [ ] Symmetric Difference
+    - [ ] Cardinality variants
+    - [ ] Inplace variants
+ - [ ] Conversions
+    - [ ] Array->Bitmap
+    - [ ] Array->Run
+    - [ ] Bitmap->Array
+    - [ ] Bitmap->Run
+    - [ ] Run->Array
+    - [ ] Run->Bitmap
+ - [ ] Mixed Ops
+    - [ ] Difference
+    - [ ] Equals
+    - [ ] Intersect
+    - [ ] Negation
+    - [ ] Subset
+    - [ ] Union
+    - [ ] Symmetric Difference
+    - [ ] Cardinality variants
+    - [ ] Inplace variants (?)
+ - [ ] Serialization (serde w/ feature flag)
+ - [ ] Portability (?)
+ - [ ] COW (?)

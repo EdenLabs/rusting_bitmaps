@@ -1,20 +1,17 @@
-#![feature(ptr_offset_from)]
 #![feature(const_fn)]
+#![feature(copy_within)]
 
-//#![deny(missing_docs)]   TODO: Enable these lints after sketching out the api
+// TODO: Enable these lints after sketching out the api
+//#![deny(missing_docs)]
 #![deny(bare_trait_objects)]
 
 //! A native rust port of Roaring Bitmaps based on CRoaring with some modifications
 //! 
 //! # Differences
-//! - Copy on write is not implemented
+//!  - Copy on write is not implemented (maybe in the future)
+//!  - Only supports x86_64 with AVX2 support
 
-// # Internal notes on alignment
-//
-// >I seem to be struggling to find rust's malloc though.
-// 
-// The typical approach is to use `Vec`. It doesn't currently allow specifying alignment beyond the type, but one can allocate 
-// slightly more space and then shift the start to be aligned, `Vec::with_capacity(num_elements + alignment - 1)`.
+// TODO: Look at using Align<T, A> for enforcing alignment on the internal vecs with aligned loads and see whether that has a performance impact
 
 mod roaring;
 mod roaring_array;
@@ -130,7 +127,7 @@ mod align {
             let a16: Align<u8, A16> = Align::new(0);
             let a32: Align<u8, A32> = Align::new(0);
             let a64: Align<u8, A64> = Align::new(0);
-            
+
             assert_eq!(mem::align_of_val(&a16), 16);
             assert_eq!(mem::align_of_val(&a32), 32);
             assert_eq!(mem::align_of_val(&a64), 64);
