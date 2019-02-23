@@ -33,10 +33,11 @@ use std::arch::x86_64::{
 };
 
 use crate::min;
+use crate::align::{Align, A16, A32};
 
 const CMPESTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
 
-// TODO: Check that all bounds are correct
+// TODO: Enforce alignment on the constant arrays
 // TODO: See about moving to aligned loads and having some way to enforce that
 
 /// Compute the difference (`A \ B`) between A and B
@@ -69,9 +70,6 @@ pub fn difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     let mut i_b = 0;
 
     unsafe {
-        let len_a = a.len();
-        let len_b = b.len();
-
         let mut count = 0;
 
         // Handle any leading 0s so we can effectively use the sse instructions
@@ -95,10 +93,10 @@ pub fn difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
             }
         }
 
-        let end_a = ((a.len() - i_a) / 8) * 8;
-        let end_b = ((b.len() - i_b) / 8) * 8;
+        let len_a = (a.len() - i_a) / 8;
+        let len_b = (b.len() - i_b) / 8;
         
-        if i_a < end_a && i_b < end_b {
+        if i_a < len_a && i_b < len_b {
             let mut v_a = _mm_lddqu_si128(a.get_unchecked(i_a) as *const u16 as *const __m128i);
             let mut v_b = _mm_lddqu_si128(b.get_unchecked(i_b) as *const u16 as *const __m128i);
             
@@ -124,7 +122,7 @@ pub fn difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
                     
                     i_a += 8;
                     
-                    if i_a == end_a {
+                    if i_a == len_a {
                         break;
                     }
                     
@@ -135,7 +133,7 @@ pub fn difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
                 if b_max <= a_max {
                     i_b += 8;
 
-                    if i_b == end_b {
+                    if i_b == len_b {
                         break;
                     }
                     
@@ -148,7 +146,7 @@ pub fn difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
             // TODO: Potentially handle the case of which finishes the comparison
             //       with a single vector pass on the remainder of B. Probably not worth handling
             //       till this algorithm is ported to a wider register size
-            if i_a < end_a {
+            if i_a < len_a {
                 i_a -= 8;// Back up since these were never handled due to B terminating early
             }
         }
@@ -184,8 +182,8 @@ pub fn symmetric_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
         
         let mut count = 0;
         
-        let mut v_a = _mm256_lddqu_si256(a.get_unchecked(i_a) as *const u16 as *const __m256i);
-        let mut v_b = _mm256_lddqu_si256(b.get_unchecked(i_b) as *const u16 as *const __m256i);
+        let v_a = _mm256_lddqu_si256(a.get_unchecked(i_a) as *const u16 as *const __m256i);
+        let v_b = _mm256_lddqu_si256(b.get_unchecked(i_b) as *const u16 as *const __m256i);
         
         i_a += 1;
         i_b += 1;
@@ -202,7 +200,7 @@ pub fn symmetric_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
         if i_a < len_a && i_b < len_b {
             let mut v_a = *a.get_unchecked(i_a * 16);
             let mut v_b = *b.get_unchecked(i_b * 16);
-            let mut v = mem::uninitialized();
+            let mut v;
 
             loop {
                 if v_a < v_b {
@@ -234,8 +232,6 @@ pub fn symmetric_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
 
             merge(v, v_max, &mut v_min, &mut v_max);
             count += store_symmetric(last_store, v_min, out.get_unchecked_mut(count) as *mut u16);
-
-            last_store = v_min;
         }
 
         out.set_len(count);
@@ -378,8 +374,8 @@ pub fn union(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
 
         let mut count = 0;
 
-        let mut v_a = _mm256_lddqu_si256(a.get_unchecked(i_a) as *const u16 as *const __m256i);
-        let mut v_b = _mm256_lddqu_si256(b.get_unchecked(i_b) as *const u16 as *const __m256i);
+        let v_a = _mm256_lddqu_si256(a.get_unchecked(i_a) as *const u16 as *const __m256i);
+        let v_b = _mm256_lddqu_si256(b.get_unchecked(i_b) as *const u16 as *const __m256i);
         let mut v_min = mem::uninitialized();
         let mut v_max = mem::uninitialized();
 
@@ -395,7 +391,7 @@ pub fn union(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
         if i_a < len_a && i_b < len_b {
             let mut cur_a = *a.get_unchecked(i_a);
             let mut cur_b = *b.get_unchecked(i_b);
-            let mut v = mem::uninitialized();
+            let mut v;
 
             loop {
                 if cur_a <= cur_b {
@@ -426,9 +422,7 @@ pub fn union(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
             }
 
             merge(v, v_max, &mut v_min, &mut v_max);
-                
             count += store_union(last_store, v_min, out.get_unchecked_mut(count) as *mut u16);
-            last_store = v_min;
         }
 
         out.set_len(count);
@@ -700,6 +694,8 @@ fn scalar_intersect<T>(a: &[T], b: &[T], out: &mut Vec<T>)
                 if i_a >= a.len() {
                     return;
                 }
+
+                v_a = *a.get_unchecked(i_a);
             }
 
             while v_a > v_b {
@@ -707,6 +703,8 @@ fn scalar_intersect<T>(a: &[T], b: &[T], out: &mut Vec<T>)
                 if i_b >= b.len() {
                     return;
                 }
+
+                v_b = *b.get_unchecked(i_b);
             }
 
             if v_a == v_b {
@@ -723,7 +721,7 @@ fn scalar_intersect<T>(a: &[T], b: &[T], out: &mut Vec<T>)
     }
 }
 
-const UNIQUE_SHUFFLE: [u8; 4096] = [
+const UNIQUE_SHUFFLE: Align<[u8; 4096], A32> = Align::new([
     0x0,  0x1,  0x2,  0x3,  0x4,  0x5,  0x6,  0x7,  0x8,  0x9,  0xa,  0xb,
     0xc,  0xd,  0xe,  0xf,  0x2,  0x3,  0x4,  0x5,  0x6,  0x7,  0x8,  0x9,
     0xa,  0xb,  0xc,  0xd,  0xe,  0xf,  0xFF, 0xFF, 0x0,  0x1,  0x4,  0x5,
@@ -1066,9 +1064,9 @@ const UNIQUE_SHUFFLE: [u8; 4096] = [
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF
-];
+]);
 
-const SHUFFLE_MASK16: [u8; 4096] = [
+const SHUFFLE_MASK16: Align<[u8; 4096], A16> = Align::new([
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    0xFF, 0xFF,
@@ -1411,4 +1409,4 @@ const SHUFFLE_MASK16: [u8; 4096] = [
     6,    7,    8,    9,    10,   11,   12,   13,   14,   15,   0xFF, 0xFF,
     0,    1,    2,    3,    4,    5,    6,    7,    8,    9,    10,   11,
     12,   13,   14,   15
-];
+]);
