@@ -1,6 +1,7 @@
 mod array;
 mod array_simd;
 mod bitset;
+mod bitset_simd;
 mod run;
 
 pub use self::array::ArrayContainer;

@@ -16,6 +16,7 @@
 mod roaring;
 mod roaring_array;
 mod container;
+mod simd;
 
 pub mod prelude {
     // TODO: Write prelude
