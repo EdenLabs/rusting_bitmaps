@@ -1,12 +1,39 @@
 use crate::container::*;
 
+const BITSET_SIZE_IN_WORDS: usize = (1 << 16) / 64;
+
+#[derive(Clone)]
 pub struct BitsetContainer {
     bitset: Vec<u64>
 }
 
 impl BitsetContainer {
-    fn new() -> Self {
-        unimplemented!();
+    pub fn new() -> Self {
+        Self {
+            bitset: Vec::with_capacity(BITSET_SIZE_IN_WORDS)
+        }
+    }
+
+    pub fn add_from_range(&mut self, min: usize, max: usize, step: usize) {
+        unimplemented!()
+    }
+
+    pub fn clear(&mut self) {
+        // TODO: Vectorize
+        for word in &mut self.bitset {
+            *word = 0;
+        }
+    }
+
+    pub fn set_all(&mut self) {
+        // TODO: Vectorize
+        for word in &mut self.bitset {
+            *word = std::u64::MAX;
+        }
+    }
+
+    pub fn set_range(&mut self, start: usize, end: usize) {
+        unimplemented!()
     }
 }
 
