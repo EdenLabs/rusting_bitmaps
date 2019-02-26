@@ -33,7 +33,7 @@ impl ArrayContainer {
             array: Vec::with_capacity(max - min + 1)
         };
 
-        for i in min..max.step_by(step) {
+        for i in (min..max).step_by(step) {
             container.array.push(i as u16);
         }
 

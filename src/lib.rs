@@ -66,15 +66,19 @@ mod align {
     use std::ops::{Deref, DerefMut};
 
     /// 16 byte alignment
-    #[repr(align(16))] pub struct A16; unsafe impl sealed::Aligned for A16 {}
+    #[repr(align(16))] #[derive(Clone)]
+    pub struct A16; unsafe impl sealed::Aligned for A16 {}
 
     /// 32 byte alignment
+    #[repr(align(16))] #[derive(Clone)]
     #[repr(align(32))] pub struct A32; unsafe impl sealed::Aligned for A32 {}
 
     /// 64 byte alignment
+    #[repr(align(16))] #[derive(Clone)]
     #[repr(align(64))] pub struct A64; unsafe impl sealed::Aligned for A64 {}
 
     /// Newtype for ensuring proper alignment of the contained type
+    #[derive(Clone)]
     pub struct Align<T, A>
         where A: sealed::Aligned
     {
