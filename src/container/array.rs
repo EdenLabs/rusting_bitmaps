@@ -25,12 +25,15 @@ impl ArrayContainer {
         }
     }
 
-    pub fn with_range(min: usize, max: usize) -> Self {
+    pub fn with_range(min: usize, max: usize, step: usize) -> Self {
+        assert!(min < max);
+        assert!(step != 0);
+        
         let mut container = Self {
             array: Vec::with_capacity(max - min + 1)
         };
 
-        for i in min..max {
+        for i in min..max.step_by(step) {
             container.array.push(i as u16);
         }
 

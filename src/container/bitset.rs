@@ -4,18 +4,37 @@ const BITSET_SIZE_IN_WORDS: usize = (1 << 16) / 64;
 
 #[derive(Clone)]
 pub struct BitsetContainer {
-    bitset: Vec<u64>
+    bitset: Vec<u64>,
+    cardinality: usize
 }
 
 impl BitsetContainer {
     pub fn new() -> Self {
         Self {
-            bitset: Vec::with_capacity(BITSET_SIZE_IN_WORDS)
+            bitset: Vec::with_capacity(BITSET_SIZE_IN_WORDS),
+            cardinality: 0
         }
     }
 
     pub fn add_from_range(&mut self, min: usize, max: usize, step: usize) {
-        unimplemented!()
+        assert!(step != 0);
+        assert!(min < max);
+        
+        if step % 64 == 0 {
+            let mask: u64 = 0;
+            
+            let value = min % step;
+            while value < 64 {
+                mask |= 1 << value;
+                
+                value += step;
+            }
+            
+            let first_word = min / 64;
+            let last_word = (max - 1) / 64;
+            
+            self.cardinality
+        }
     }
 
     pub fn clear(&mut self) {
@@ -23,6 +42,8 @@ impl BitsetContainer {
         for word in &mut self.bitset {
             *word = 0;
         }
+        
+        self.cardinality = 0;
     }
 
     pub fn set_all(&mut self) {
@@ -30,6 +51,8 @@ impl BitsetContainer {
         for word in &mut self.bitset {
             *word = std::u64::MAX;
         }
+        
+        self.cardinality = 1 << 16;
     }
 
     pub fn set_range(&mut self, start: usize, end: usize) {
