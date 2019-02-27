@@ -37,10 +37,12 @@ impl BitsetContainer {
         self.cardinality += ((word ^ new_word) >> 1) as usize;
     }
 
-    pub fn set_range(&mut self, start: usize, end: usize) {
+    /// Set all the bits within the range denoted by `min`->`max`
+    pub fn set_range(&mut self, min: usize, max: usize) {
         unimplemented!()
     }
 
+    /// Set all the bits in the bitset
     pub fn set_all(&mut self) {
         // TODO: Vectorize
         for word in &mut *self.bitset {
@@ -74,7 +76,7 @@ impl BitsetContainer {
     }
 
     /// Add `value` to the set and return true if it was set
-    pub fn add(&mut self, value: usize) -> bool {
+    pub fn add(&mut self, value: u16) -> bool {
         assert!(value < BITSET_SIZE_IN_WORDS * 64);
         
         let word_index = value >> 6;
@@ -92,7 +94,7 @@ impl BitsetContainer {
     }
 
     /// Add `value` from the set and return true if it was removed
-    pub fn remove(&mut self, index: usize) -> bool {
+    pub fn remove(&mut self, value: u16) -> bool {
         assert!(index < BITSET_SIZE_IN_WORDS * 64);
 
         let word_index = index >> 6;
@@ -109,7 +111,7 @@ impl BitsetContainer {
         return increment > 0;
     }
 
-    pub fn add_from_range(&mut self, min: usize, max: usize, step: usize) {
+    pub fn add_from_range(&mut self, min: u16, max: u16, step: u16) {
         assert!(min < max);
         assert!(step != 0);
 
@@ -117,7 +119,7 @@ impl BitsetContainer {
     }
 
     /// Get the value of the bit at `index`
-    pub fn get(&self, index: usize) -> bool {
+    pub fn get(&self, value: u16) -> bool {
         assert!(index < BITSET_SIZE_IN_WORDS);
 
         let word = self.bitset[index >> 6];
@@ -125,7 +127,7 @@ impl BitsetContainer {
     }
 
     /// Check if all bits within a range are true
-    pub fn get_range(&self, min: usize, max: usize) -> bool {
+    pub fn get_range(&self, min: u16, max: u16) -> bool {
         assert!(min < max);
         assert!(max < BITSET_SIZE_IN_WORDS * 63);
 
@@ -157,17 +159,27 @@ impl BitsetContainer {
         return true;
     }
 
-    pub fn contains(&self, index: usize) -> bool {
+    pub fn contains(&self, value: u16) -> bool {
         self.get(index)
     }
 
-    pub fn contains_range(&self, min: usize, max: usize) -> bool {
+    pub fn contains_range(&self, min: u16, max: u16) -> bool {
         self.get_range(min, max)
     }
 
     pub fn cardinality(&self) -> usize {
         self.cardinality
     }
+    
+    pub fn min(&self) -> u16 {
+        unimplemented!();
+        
+        for word in &*self.bitset {
+            if *word != 0 {
+                
+            }
+        }
+    } 
 }
 
 impl From<ArrayContainer> for BitsetContainer {
