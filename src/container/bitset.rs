@@ -1,3 +1,5 @@
+use std::slice::{Iter, IterMut};
+
 use crate::container::*;
 use crate::align::{Align, A32};
 
@@ -77,9 +79,9 @@ impl BitsetContainer {
 
     /// Add `value` to the set and return true if it was set
     pub fn add(&mut self, value: u16) -> bool {
-        assert!(value < BITSET_SIZE_IN_WORDS * 64);
+        assert!(value < (BITSET_SIZE_IN_WORDS * 64) as u16);
         
-        let word_index = value >> 6;
+        let word_index = (value >> 6) as usize;
         let bit_index = value & 0x3F;
         let word = self.bitset[word_index];
         let new_word = word | (1 << bit_index);
@@ -95,10 +97,10 @@ impl BitsetContainer {
 
     /// Add `value` from the set and return true if it was removed
     pub fn remove(&mut self, value: u16) -> bool {
-        assert!(index < BITSET_SIZE_IN_WORDS * 64);
+        assert!(value < (BITSET_SIZE_IN_WORDS * 64) as u16);
 
-        let word_index = index >> 6;
-        let bit_index = index & 0x3F;
+        let word_index = (value >> 6) as usize;
+        let bit_index = value & 0x3F;
         let word = self.bitset[word_index];
         let new_word = word & (!1 << bit_index);
 
@@ -119,20 +121,20 @@ impl BitsetContainer {
     }
 
     /// Get the value of the bit at `index`
-    pub fn get(&self, value: u16) -> bool {
-        assert!(index < BITSET_SIZE_IN_WORDS);
+    pub fn get(&self, index: u16) -> bool {
+        assert!(index < (BITSET_SIZE_IN_WORDS * 64) as u16);
 
-        let word = self.bitset[index >> 6];
+        let word = self.bitset[(index >> 6) as usize];
         return (word >> (index & 0x3F)) & 1 > 0;
     }
 
     /// Check if all bits within a range are true
     pub fn get_range(&self, min: u16, max: u16) -> bool {
         assert!(min < max);
-        assert!(max < BITSET_SIZE_IN_WORDS * 63);
+        assert!(max < (BITSET_SIZE_IN_WORDS * 64) as u16);
 
-        let start = min >> 6;
-        let end = max >> 6;
+        let start = (min >> 6) as usize;
+        let end = (max >> 6) as usize;
 
         let first = !((1 << (start & 0x3F)) - 1);
         let last = (1 << (end & 0x3F)) - 1;
@@ -160,7 +162,7 @@ impl BitsetContainer {
     }
 
     pub fn contains(&self, value: u16) -> bool {
-        self.get(index)
+        self.get(value)
     }
 
     pub fn contains_range(&self, min: u16, max: u16) -> bool {
@@ -171,15 +173,61 @@ impl BitsetContainer {
         self.cardinality
     }
     
-    pub fn min(&self) -> u16 {
-        unimplemented!();
-        
-        for word in &*self.bitset {
+    pub fn min(&self) -> Option<u16> {
+        for (i, word) in (*self.bitset).iter().enumerate() {
             if *word != 0 {
-                
+                let r = word.trailing_zeros() as u16;
+
+                return Some(r + i as u16 * 64);
             }
         }
-    } 
+
+        None
+    }
+
+    pub fn max(&self) -> Option<u16> {
+        for (i, word) in (*self.bitset).iter().enumerate().rev() {
+            if *word != 0 {
+                let r = word.leading_zeros() as u16;
+
+                return Some(i as u16 * 64 + 63 - r);
+            }
+        }
+
+        None
+    }
+
+    pub fn num_runs(&self) -> usize {
+        let mut num_runs = 0;
+
+        unsafe {
+            let mut next_word = self.bitset[0];
+            let mut i = 0;
+
+            while i < BITSET_SIZE_IN_WORDS {
+                let word = next_word;
+                next_word = *self.bitset.get_unchecked(i);
+                num_runs += (!word & (word << 1) + ((word >> 63) & !next_word)).count_ones();
+            }
+
+            let word = next_word;
+            num_runs += (!word & (word << 1) + ((word >> 63) & !next_word)).count_ones();
+
+            if word & 0x8000000000000000 != 0 {
+                num_runs += 1;
+            }
+        }
+
+        num_runs as usize
+    }
+
+    pub fn iter(&self) -> Iter<u64> {
+        self.bitset.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> IterMut<u64> {
+        self.bitset.iter_mut()
+    }
 }
 
 impl From<ArrayContainer> for BitsetContainer {
@@ -270,7 +318,17 @@ impl Intersection<RunContainer> for BitsetContainer {
 
 impl Subset<Self> for BitsetContainer {
     fn subset_of(&self, other: &Self) -> bool {
-        unimplemented!()
+        if self.cardinality > other.cardinality {
+            return false;
+        }
+
+        for (word_0, word_1) in self.bitset.iter().zip(other.bitset.iter()) {
+            if *word_0 & *word_1 != *word_0 {
+                return false;
+            }
+        }
+
+        return true;
     }
 }
 
