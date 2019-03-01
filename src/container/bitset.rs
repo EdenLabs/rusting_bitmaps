@@ -41,7 +41,24 @@ impl BitsetContainer {
 
     /// Set all the bits within the range denoted by `min`->`max`
     pub fn set_range(&mut self, min: usize, max: usize) {
-        unimplemented!()
+        assert!(min < max);
+        assert!(max < BITSET_SIZE_IN_WORDS * 64);
+
+        let first_index = min >> 6;
+        let last_index = (max >> 6) - 1;
+
+        if first_index == last_index {
+            self.bitset[first_index] |= (!0_u64 << (min as u64 & 0x3F)) & (!0_u64 >> ((!max as u64 + 1) >> & 0x3F));
+            return;
+        }
+
+        self.bitset[first_index] |= !0_u64 << (min as u64 & 0x3F);
+        
+        for i in (first_index + 1)..last_index {
+            self.bitset[i] = !0;
+        }
+
+        self.bitset[last_index] |= !0_u64 >> ((!max as u64 + 1) >> & 0x3F);
     }
 
     /// Set all the bits in the bitset

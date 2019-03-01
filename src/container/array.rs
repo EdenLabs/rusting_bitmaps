@@ -2,8 +2,9 @@ use std::fmt;
 use std::ops::{Deref};
 use std::slice::Iter;
 
+use crate::utils::mem_equals;
 use crate::container::*;
-use crate::container::array_simd::*;
+use crate::container::array_ops::*;
 
 const DEFAULT_MAX_SIZE: usize = 4096;
 
