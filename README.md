@@ -28,7 +28,7 @@ Rusting Bitmaps is a native Rust port of Roaring Bitmaps
     - [ ] Equals
     - [ ] Intersect
     - [ ] Negation
-    - [ ] Subset
+    - [x] Subset
     - [ ] Union
     - [ ] Symmetric Difference
     - [ ] Cardinality variants

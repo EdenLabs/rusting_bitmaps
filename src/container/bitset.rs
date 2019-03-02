@@ -112,6 +112,12 @@ impl BitsetContainer {
         increment > 0
     }
 
+    pub fn add_range(&mut self, min: u16, max: u16) {
+        assert!(min < max);
+        
+        self.set_range(min as usize, max as usize)
+    }
+
     /// Add `value` from the set and return true if it was removed
     pub fn remove(&mut self, value: u16) -> bool {
         assert!(value < (BITSET_SIZE_IN_WORDS * 64) as u16);
@@ -130,12 +136,7 @@ impl BitsetContainer {
         return increment > 0;
     }
 
-    pub fn add_from_range(&mut self, min: u16, max: u16, step: u16) {
-        assert!(min < max);
-        assert!(step != 0);
-
-        unimplemented!()
-    }
+    
 
     /// Get the value of the bit at `index`
     pub fn get(&self, index: u16) -> bool {
