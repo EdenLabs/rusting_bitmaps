@@ -61,5 +61,5 @@ Rusting Bitmaps is a native Rust port of Roaring Bitmaps
     - [ ] Cardinality variants
     - [ ] Inplace variants (?)
  - [ ] Serialization (serde w/ feature flag)
- - [ ] Portability (?)
+ - [x] Portability
  - [ ] COW (?)
