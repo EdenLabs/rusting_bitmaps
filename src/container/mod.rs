@@ -15,14 +15,6 @@ pub trait Container: Any {
     // TODO: See about implementing common container functionality on this trait
 }
 
-/// Enum with the type of container an operation resulted in
-pub enum ContainerType {// Is this necessary anymore?
-    None,
-    Array(ArrayContainer),
-    Bitset(BitsetContainer),
-    Run(RunContainer)
-}
-
 pub trait Difference<T: Container> {
     fn difference_with(&self, other: &T, out: &mut T);
 }

@@ -5,6 +5,7 @@ use crate::min;
 // TODO: See about moving to aligned loads and having some way to enforce that
 // TODO: Implement the cardinality ops for arrays (is this even necessary with pure vecs?)
 
+#[inline(always)]
 pub fn union(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
         simd::union(a, b, out);
@@ -15,6 +16,7 @@ pub fn union(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     }
 }
 
+#[inline(always)]
 pub fn intersect(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
         simd::intersect(a, b, out);
@@ -25,6 +27,7 @@ pub fn intersect(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     }
 }
 
+#[inline(always)]
 pub fn difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
         simd::difference(a, b, out);
@@ -35,6 +38,7 @@ pub fn difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     }
 }
 
+#[inline(always)]
 pub fn symmetric_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
         simd::symmetric_difference(a, b, out);

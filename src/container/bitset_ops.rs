@@ -1,5 +1,6 @@
 // TODO: Add cardinality checks for all ops
 
+#[inline(always)]
 pub fn union(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
     #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
         simd::union(a, b, out);
@@ -10,6 +11,7 @@ pub fn union(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
     }
 }
 
+#[inline(always)]
 pub fn intersect(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
     #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
         simd::intersect(a, b, out);
@@ -20,6 +22,7 @@ pub fn intersect(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
     }
 }
 
+#[inline(always)]
 pub fn difference(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
     #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
         simd::difference(a, b, out);
@@ -30,6 +33,7 @@ pub fn difference(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
     }
 }
 
+#[inline(always)]
 pub fn symmetric_difference(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
     #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
         simd::symmetric_difference(a, b, out);
