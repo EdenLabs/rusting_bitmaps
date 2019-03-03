@@ -8,7 +8,7 @@ pub const BITSET_SIZE_IN_WORDS: usize = (1 << 16) / 64;
 #[derive(Clone)]
 pub struct BitsetContainer {
     bitset: Align<Vec<u64>, A32>,
-    cardinality: usize
+    cardinality: isize
 }
 
 impl BitsetContainer {
@@ -36,7 +36,7 @@ impl BitsetContainer {
 
         self.bitset[word_index] = new_word;
 
-        self.cardinality += ((word ^ new_word) >> 1) as usize;
+        self.cardinality += ((word ^ new_word) >> 1) as isize;
     }
 
     /// Set all the bits within the range denoted by `min`->`max`
@@ -82,7 +82,7 @@ impl BitsetContainer {
 
         self.bitset[word_index] = new_word;
 
-        self.cardinality += ((word ^ new_word) >> 1) as usize;
+        self.cardinality += ((word ^ new_word) >> 1) as isize;
     }
 
     pub fn clear(&mut self) {
@@ -105,7 +105,7 @@ impl BitsetContainer {
 
         self.bitset[word_index] = new_word;
 
-        let increment = ((word ^ new_word) >> 1) as usize;
+        let increment = ((word ^ new_word) >> 1) as isize;
 
         self.cardinality += increment;
 
@@ -129,7 +129,7 @@ impl BitsetContainer {
 
         self.bitset[word_index] = new_word;
 
-        let increment = ((word ^ new_word) >> 1) as usize;
+        let increment = ((word ^ new_word) >> 1) as isize;
 
         self.cardinality -= increment;
 
@@ -188,7 +188,7 @@ impl BitsetContainer {
     }
 
     pub fn cardinality(&self) -> usize {
-        self.cardinality
+        self.cardinality as usize
     }
     
     pub fn min(&self) -> Option<u16> {

@@ -1,48 +1,137 @@
 mod simd;
 
-// TODO: Add cardinality checks for all ops
-
+// Full
 #[inline(always)]
-pub fn union(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
+pub unsafe fn union(a: &[u64], b: &[u64], out: &mut Vec<u64>) -> usize {
     #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
-        simd::union(a, b, out);
+        simd::union(a, b, out)
     }
 
     #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))] {
-        scalar_union(a, b, out);
+        scalar_union(a, b, out)
     }
 }
 
 #[inline(always)]
-pub fn intersect(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
+pub unsafe fn intersect(a: &[u64], b: &[u64], out: &mut Vec<u64>) -> usize {
     #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
-        simd::intersect(a, b, out);
+        simd::intersect(a, b, out)
     }
 
     #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))] {
-        scalar_intersect(a, b, out);
+        scalar_intersect(a, b, out)
     }
 }
 
 #[inline(always)]
-pub fn difference(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
+pub unsafe fn difference(a: &[u64], b: &[u64], out: &mut Vec<u64>) -> usize {
     #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
-        simd::difference(a, b, out);
+        simd::difference(a, b, out)
     }
 
     #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))] {
-        scalar_difference(a, b, out);
+        scalar_difference(a, b, out)
     }
 }
 
 #[inline(always)]
-pub fn symmetric_difference(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
+pub unsafe fn symmetric_difference(a: &[u64], b: &[u64], out: &mut Vec<u64>) -> usize {
     #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
-        simd::symmetric_difference(a, b, out);
+        simd::symmetric_difference(a, b, out)
     }
 
     #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))] {
-        scalar_symmetric_difference(a, b, out);
+        scalar_symmetric_difference(a, b, out)
+    }
+}
+
+// Lazy
+#[inline(always)]
+pub unsafe fn union_lazy(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
+    #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
+        simd::union_lazy(a, b, out)
+    }
+
+    #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))] {
+        scalar_union_lazy(a, b, out)
+    }
+}
+
+#[inline(always)]
+pub unsafe fn intersect_lazy(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
+    #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
+        simd::intersect_lazy(a, b, out)
+    }
+
+    #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))] {
+        scalar_intersect_lazy(a, b, out)
+    }
+}
+
+#[inline(always)]
+pub unsafe fn difference_lazy(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
+    #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
+        simd::difference_lazy(a, b, out)
+    }
+
+    #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))] {
+        scalar_difference_lazy(a, b, out)
+    }
+}
+
+#[inline(always)]
+pub unsafe fn symmetric_difference_lazy(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
+    #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
+        simd::symmetric_difference_lazy(a, b, out)
+    }
+
+    #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))] {
+        scalar_symmetric_difference_lazy(a, b, out)
+    }
+}
+
+// Cardinality
+#[inline(always)]
+pub unsafe fn union_cardinality(a: &[u64], b: &[u64]) -> usize {
+    #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
+        simd::union_cardinality(a, b)
+    }
+
+    #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))] {
+        scalar_union_cardinality(a, b)
+    }
+}
+
+#[inline(always)]
+pub unsafe fn intersect_cardinality(a: &[u64], b: &[u64]) -> usize {
+    #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
+        simd::intersect_cardinality(a, b)
+    }
+
+    #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))] {
+        scalar_intersect_cardinality(a, b)
+    }
+}
+
+#[inline(always)]
+pub unsafe fn difference_cardinality(a: &[u64], b: &[u64]) -> usize {
+    #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
+        simd::difference_cardinality(a, b)
+    }
+
+    #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))] {
+        scalar_difference_cardinality(a, b)
+    }
+}
+
+#[inline(always)]
+pub unsafe fn symmetric_difference_cardinality(a: &[u64], b: &[u64]) -> usize {
+    #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
+        simd::symmetric_difference_cardinality(a, b)
+    }
+
+    #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))] {
+        scalar_symmetric_difference_cardinality(a, b)
     }
 }
 
@@ -65,122 +154,86 @@ pub unsafe fn harley_seal(v: &[u64]) -> usize {
 // Universal scalar implementations
 // 32bit not natively supported but will work albeit slower than a hand optimized version
 
-fn scalar_union(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
-    // Handle the cases where A or B is 0
-    if a.len() == 0 {
-        out.extend_from_slice(b);
-    }
-    
-    if b.len() == 0 {
-        out.extend_from_slice(a);
-    }
-    
-    unsafe {
-        let mut i_a = 0;
-        let mut i_b = 0;
-        
-        while i_a < a.len() && i_b < b.len() {
-            let word_a = *a.get_unchecked(i_a);
-            let word_b = *b.get_unchecked(i_b);
-            
-            out.push(word_a | word_b);
-            
-            i_a += 1;
-            i_b += 1;
+macro_rules! bitmap_op {
+    ($name: ident, $word_a: ident, $word_b: ident, $($op: tt)*) => {
+        unsafe fn $name(a: &[u64], b: &[u64], out: &mut Vec<u64>) -> usize {
+            let mut i_a = 0;
+            let mut i_b = 0;
+            let mut cardinality = 0;
+
+            while i_a < a.len() && i_b < b.len() {
+                let $word_a = *a.get_unchecked(i_a);
+                let $word_b = *b.get_unchecked(i_b);
+                let word = $($op)*;
+
+                cardinality += popcount_mul(word);
+
+                out.push(word);
+                
+                i_a += 1;
+                i_b += 1;
+            }
+
+            cardinality as usize
         }
-        
-        // B finished first, append the rest of A
-        if i_a < a.len() {
-            out.extend_from_slice(&a[i_a..a.len()]);            
-        }
-        
-        // A finished first, append the rest of B
-        if i_b < b.len() {
-            out.extend_from_slice(&b[i_b..b.len()]);
-        }
-    }
+    };
 }
 
-fn scalar_intersect(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
-    // One is empty. No possible intersection
-    if a.len() == 0 || b.len() == 0 {
-        return;
-    }
-    
-    unsafe {
-        // Perform the intersection till there's no more elemetns to process
-        let mut i_a = 0;
-        let mut i_b = 0;
-        
-        while i_a < a.len() && i_b < b.len() {
-            let word_a = *a.get_unchecked(i_a);
-            let word_b = *b.get_unchecked(i_b);
-            
-            out.push(word_a & word_b);
-            
-            i_a += 1;
-            i_b += 1;
+macro_rules! bitmap_op_lazy {
+    ($name: ident, $word_a: ident, $word_b: ident, $($op: tt)*) => {
+        unsafe fn $name(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
+            let mut i_a = 0;
+            let mut i_b = 0;
+
+            while i_a < a.len() && i_b < b.len() {
+                let $word_a = *a.get_unchecked(i_a);
+                let $word_b = *b.get_unchecked(i_b);
+
+                out.push($($op)*);
+                
+                i_a += 1;
+                i_b += 1;
+            }
         }
-    }
+    };
 }
 
-fn scalar_difference(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
-    // A has no elements. No possible difference
-    if a.len() == 0 {
-        return;
-    }
-    
-    // B has no elements, Difference is all of A
-    if b.len() == 0 {
-        out.extend_from_slice(a);
-        return;
-    }
-    
-    unsafe {
-        let mut i_a = 0;
-        let mut i_b = 0;
-        
-        while i_a < a.len() && i_b < b.len() {
-            let word_a = *a.get_unchecked(i_a);
-            let word_b = *b.get_unchecked(i_b);
-            
-            out.push((word_a & word_b) & !word_b);
-            
-            i_a += 1;
-            i_b += 1;
+macro_rules! bitmap_op_cardinality {
+    ($name: ident, $word_a: ident, $word_b: ident, $($op: tt)*) => {
+        unsafe fn $name(a: &[u64], b: &[u64]) -> usize {
+            let mut i_a = 0;
+            let mut i_b = 0;
+            let mut cardinality = 0;
+
+            while i_a < a.len() && i_b < b.len() {
+                let $word_a = *a.get_unchecked(i_a);
+                let $word_b = *b.get_unchecked(i_b);
+
+                cardinality += popcount_mul($($op)*);
+
+                i_a += 1;
+                i_b += 1;
+            }
+
+            cardinality as usize
         }
-        
-        // B finishd first, append the rest of A
-        if i_a < a.len() {
-            out.extend_from_slice(&a[i_a..a.len()]);
-        }
-    }
+    };
 }
 
-fn scalar_symmetric_difference(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
-    unsafe {
-        let mut i_a = 0;
-        let mut i_b = 0;
-        
-        while i_a < a.len() && i_b < b.len() {
-            let word_a = *a.get_unchecked(i_a);
-            let word_b = *b.get_unchecked(i_b);
-            
-            out.push(word_a ^ word_b);
-            
-            i_a += 1;
-            i_b += 1;
-        }
-        
-        if i_a < a.len() {
-            out.extend_from_slice(&a[i_a..a.len()]);
-        }
-        
-        if i_b < b.len() {
-            out.extend_from_slice(&b[i_b..b.len()]);
-        }
-    }
-}
+bitmap_op!(scalar_union               , word_a, word_b, word_a | word_b            );
+bitmap_op!(scalar_intersect           , word_a, word_b, word_a & word_b            );
+bitmap_op!(scalar_difference          , word_a, word_b, (word_a & word_b) & !word_b);
+bitmap_op!(scalar_symmetric_difference, word_a, word_b, word_a ^ word_b            );
+
+bitmap_op_lazy!(scalar_union_lazy               , word_a, word_b, word_a | word_b            );
+bitmap_op_lazy!(scalar_intersect_lazy           , word_a, word_b, word_a & word_b            );
+bitmap_op_lazy!(scalar_difference_lazy          , word_a, word_b, (word_a & word_b) & !word_b);
+bitmap_op_lazy!(scalar_symmetric_difference_lazy, word_a, word_b, word_a ^ word_b            );
+
+bitmap_op_cardinality!(scalar_union_cardinality               , word_a, word_b, word_a | word_b            );
+bitmap_op_cardinality!(scalar_intersect_cardinality           , word_a, word_b, word_a & word_b            );
+bitmap_op_cardinality!(scalar_difference_cardinality          , word_a, word_b, (word_a & word_b) & !word_b);
+bitmap_op_cardinality!(scalar_symmetric_difference_cardinality, word_a, word_b, word_a ^ word_b            );
 
 fn scalar_harley_seal(v: &[u64]) -> usize {
     unsafe {
@@ -244,7 +297,7 @@ fn scalar_harley_seal(v: &[u64]) -> usize {
     }
 }
 
-/// Count the number of set bits in a 128 bit vector
+/// Count the number of set bits in a 64 bit word
 fn popcount_mul(mut x: u64) -> u64 {
     let m1  = 0x5555555555555555;
     let m2  = 0x3333333333333333;

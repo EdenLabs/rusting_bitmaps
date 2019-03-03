@@ -156,7 +156,7 @@ macro_rules! bitmap_op {
     };
 }
 
-macro_rules! bitmap_op_nocard {
+macro_rules! bitmap_op_lazy {
     ($name: ident, $intrinsic: ident) => {
         pub unsafe fn $name(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
             assert!(a.len() == BITSET_SIZE_IN_WORDS);
@@ -219,7 +219,7 @@ macro_rules! bitmap_op_nocard {
     };
 }
 
-macro_rules! bitmap_op_cardonly {
+macro_rules! bitmap_op_cardinality {
     ($name: ident, $intrinsic: ident) => {
         pub unsafe fn $name(a: &[u64], b: &[u64]) -> usize {
             assert!(a.len() == BITSET_SIZE_IN_WORDS);
@@ -326,14 +326,17 @@ macro_rules! bitmap_op_cardonly {
 bitmap_op!(union, _mm256_or_si256);
 bitmap_op!(intersect, _mm256_and_si256);
 bitmap_op!(difference, _mm256_andnot_si256);
+bitmap_op!(symmetric_difference, _mm256_xor_si256);
 
-bitmap_op_nocard!(union_nocard, _mm256_or_si256);
-bitmap_op_nocard!(intersect_nocard, _mm256_and_si256);
-bitmap_op_nocard!(difference_nocard, _mm256_andnot_si256);
+bitmap_op_lazy!(union_lazy, _mm256_or_si256);
+bitmap_op_lazy!(intersect_lazy, _mm256_and_si256);
+bitmap_op_lazy!(difference_lazy, _mm256_andnot_si256);
+bitmap_op_lazy!(symmetric_difference_lazy, _mm256_xor_si256);
 
-bitmap_op_cardonly!(union_cardonly, _mm256_or_si256);
-bitmap_op_cardonly!(intersect_cardonly, _mm256_and_si256);
-bitmap_op_cardonly!(difference_cardonly, _mm256_andnot_si256);
+bitmap_op_cardinality!(union_cardinality, _mm256_or_si256);
+bitmap_op_cardinality!(intersect_cardinality, _mm256_and_si256);
+bitmap_op_cardinality!(difference_cardinality, _mm256_andnot_si256);
+bitmap_op_cardinality!(symmetric_difference_cardinality, _mm256_xor_si256);
 
 /// AVX implementation of the Harley-Seal algorithm for counting the number of bits in an array
 /// 

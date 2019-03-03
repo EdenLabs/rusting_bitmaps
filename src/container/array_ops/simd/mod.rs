@@ -33,7 +33,7 @@ use std::arch::x86_64::{
 };
 
 use crate::min;
-use crate::align::{Align, A16, A32};
+use crate::align::{Align, A32};
 
 use super::{
     scalar_difference,
