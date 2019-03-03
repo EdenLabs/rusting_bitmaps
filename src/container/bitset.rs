@@ -3,6 +3,8 @@ use std::slice::{Iter, IterMut};
 use crate::container::*;
 use crate::align::{Align, A32};
 
+use super::bitset_ops;
+
 pub const BITSET_SIZE_IN_WORDS: usize = (1 << 16) / 64;
 
 #[derive(Clone)]
@@ -262,45 +264,12 @@ impl From<RunContainer> for BitsetContainer {
 
 impl Container for BitsetContainer { }
 
-impl Difference<Self> for BitsetContainer {
-    fn difference_with(&self, other: &Self, out: &mut Self) {
-        unimplemented!()
-    }
-}
-
-impl Difference<ArrayContainer> for BitsetContainer {
-    fn difference_with(&self, other: &ArrayContainer, out: &mut ArrayContainer) {
-        unimplemented!()
-    }
-}
-
-impl Difference<RunContainer> for BitsetContainer {
-    fn difference_with(&self, other: &RunContainer, out: &mut RunContainer) {
-        unimplemented!()
-    }
-}
-
-impl SymmetricDifference<Self> for BitsetContainer {
-    fn symmetric_difference_with(&self, other: &Self, out: &mut Self) {
-        unimplemented!()
-    }
-}
-
-impl SymmetricDifference<ArrayContainer> for BitsetContainer {
-    fn symmetric_difference_with(&self, other: &ArrayContainer, out: &mut ArrayContainer) {
-        unimplemented!()
-    }
-}
-
-impl SymmetricDifference<RunContainer> for BitsetContainer {
-    fn symmetric_difference_with(&self, other: &RunContainer, out: &mut RunContainer) {
-        unimplemented!()
-    }
-}
-
 impl Union<Self> for BitsetContainer {
     fn union_with(&self, other: &Self, out: &mut Self) {
-        unimplemented!()
+        unsafe {
+            let cardinality = bitset_ops::union(&self.bitset, &other.bitset, &mut out.bitset);
+            out.cardinality = cardinality as isize;
+        }
     }
 }
 
@@ -318,7 +287,10 @@ impl Union<RunContainer> for BitsetContainer {
 
 impl Intersection<Self> for BitsetContainer {
     fn intersect_with(&self, other: &Self, out: &mut Self) {
-        unimplemented!()
+        unsafe {
+            let cardinality = bitset_ops::intersect(&self.bitset, &other.bitset, &mut out.bitset);
+            out.cardinality = cardinality as isize;
+        }
     }
 }
 
@@ -330,6 +302,48 @@ impl Intersection<ArrayContainer> for BitsetContainer {
 
 impl Intersection<RunContainer> for BitsetContainer {
     fn intersect_with(&self, other: &RunContainer, out: &mut RunContainer) {
+        unimplemented!()
+    }
+}
+
+impl Difference<Self> for BitsetContainer {
+    fn difference_with(&self, other: &Self, out: &mut Self) {
+        unsafe {
+            let cardinality = bitset_ops::difference(&self.bitset, &other.bitset, &mut out.bitset);
+            out.cardinality = cardinality as isize;
+        }
+    }
+}
+
+impl Difference<ArrayContainer> for BitsetContainer {
+    fn difference_with(&self, other: &ArrayContainer, out: &mut ArrayContainer) {
+        unimplemented!()
+    }
+}
+
+impl Difference<RunContainer> for BitsetContainer {
+    fn difference_with(&self, other: &RunContainer, out: &mut RunContainer) {
+        unimplemented!()
+    }
+}
+
+impl SymmetricDifference<Self> for BitsetContainer {
+    fn symmetric_difference_with(&self, other: &Self, out: &mut Self) {
+        unsafe {
+            let cardinality = bitset_ops::symmetric_difference(&self.bitset, &other.bitset, &mut out.bitset);
+            out.cardinality = cardinality as isize;
+        }
+    }
+}
+
+impl SymmetricDifference<ArrayContainer> for BitsetContainer {
+    fn symmetric_difference_with(&self, other: &ArrayContainer, out: &mut ArrayContainer) {
+        unimplemented!()
+    }
+}
+
+impl SymmetricDifference<RunContainer> for BitsetContainer {
+    fn symmetric_difference_with(&self, other: &RunContainer, out: &mut RunContainer) {
         unimplemented!()
     }
 }

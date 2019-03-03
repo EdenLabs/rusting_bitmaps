@@ -5,7 +5,10 @@
 Rusting Bitmaps is a native Rust port of Roaring Bitmaps
 
 # Supported Platforms
- - x86_64 w/ AVX2
+ - x86_64 with any of the following instruction sets
+   - Scalar
+   - SSE4.2
+   - AVX2
 
 # Feature Implementation Tracking
  - [ ] Roaring Array
@@ -24,13 +27,13 @@ Rusting Bitmaps is a native Rust port of Roaring Bitmaps
     - [ ] Cardinality variants
     - [ ] Inplace variants
  - [-] Bitset Container
-    - [ ] Difference
+    - [x] Difference
     - [ ] Equals
-    - [ ] Intersect
+    - [x] Intersect
     - [ ] Negation
     - [x] Subset
-    - [ ] Union
-    - [ ] Symmetric Difference
+    - [x] Union
+    - [x] Symmetric Difference
     - [ ] Cardinality variants
     - [ ] Inplace variants
  - [ ] Run Container
