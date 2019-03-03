@@ -46,8 +46,14 @@ pub fn symmetric_difference(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
     }
 }
 
-pub fn harley_seal(v: &[u64]) -> usize {
+/// Harley-Seal algorithm for counting the number of bits in an array
+/// 
+/// # Safety
+/// Assumes that the input is evenly divisible by 64 when using vectorized instructions, scalar has no constraints
+pub unsafe fn harley_seal(v: &[u64]) -> usize {
     #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
+        assert!(v.len() % 64 == 0);
+
         simd::harley_seal(v)
     }
 
@@ -175,7 +181,6 @@ fn scalar_symmetric_difference(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
         }
     }
 }
-
 
 fn scalar_harley_seal(v: &[u64]) -> usize {
     unsafe {

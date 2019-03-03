@@ -3,7 +3,7 @@ use std::slice::{Iter, IterMut};
 use crate::container::*;
 use crate::align::{Align, A32};
 
-const BITSET_SIZE_IN_WORDS: usize = (1 << 16) / 64;
+pub const BITSET_SIZE_IN_WORDS: usize = (1 << 16) / 64;
 
 #[derive(Clone)]
 pub struct BitsetContainer {
