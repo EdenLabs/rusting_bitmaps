@@ -1,17 +1,97 @@
 use crate::container::*;
 
+#[derive(Clone, Copy)]
 struct Rle16 {
     value: u16,
     length: u16
 }
 
+#[derive(Clone)]
 pub struct RunContainer {
-    run_count: usize,
-    runs: Vec<Rle16>
+    runs: Vec<Rle16>,
+    cardinality: usize
 }
 
 impl RunContainer {
+    pub fn new() -> Self {
+        
+    }
     
+    pub fn with_capacity(capacity: usize) -> Self {
+        
+    }
+    
+    pub fn shrink_to_fit(&mut self) {
+        
+    }
+    
+    pub fn reserve(&mut self, additional: usize) {
+        self.runs.reserve(additional);
+    }
+    
+    pub fn add(&mut self, value: u16) {
+        
+    }
+    
+    pub fn add_range(&mut self, min: u16, max: u16) {
+        
+    }
+    
+    pub fn remove(&mut self, value: u16) {
+        
+    }
+    
+    pub fn remove_range(&mut self, min: u16, max: u16) {
+        
+    }
+    
+    pub fn contains(&self, value: u16) -> bool {
+        
+    }
+    
+    pub fn contains_range(&self, min: u16, max: u16) -> bool {
+        
+    }
+    
+    pub fn cardinality(&self) -> usize {
+        
+    }
+    
+    pub fn is_empty(&self) -> bool {
+        
+    }
+    
+    pub fn is_full(&self) -> bool {
+        
+    }
+    
+    pub fn clear(&mut self) {
+        
+    }
+    
+    pub fn append(&mut self, run: Rle16) {
+        
+    }
+    
+    pub fn iter(&self) -> Iter<Rle16> {
+        self.run.iter()
+    }
+    
+    pub fn iter_mut(&mut self) -> IterMut<Rle16> {
+        self.run.iter_mut()
+    }
+    
+    pub fn min(&self) -> u16 {
+        
+    }
+    
+    pub fn max(&self) -> u16 {
+        
+    }
+    
+    pub fn rank(&self, value: u16) -> usize {
+        
+    }
 }
 
 impl From<ArrayContainer> for RunContainer {

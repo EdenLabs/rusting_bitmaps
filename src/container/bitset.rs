@@ -138,8 +138,6 @@ impl BitsetContainer {
         return increment > 0;
     }
 
-    
-
     /// Get the value of the bit at `index`
     pub fn get(&self, index: u16) -> bool {
         assert!(index < (BITSET_SIZE_IN_WORDS * 64) as u16);
