@@ -1,9 +1,20 @@
+use std::slice::{Iter, IterMut};
+
 use crate::container::*;
 
 #[derive(Clone, Copy)]
-struct Rle16 {
-    value: u16,
-    length: u16
+pub struct Rle16 {
+    pub value: u16,
+    pub length: u16
+}
+
+impl Rle16 {
+    pub fn new(value: u16, length: u16) -> Self {
+        Self {
+            value,
+            length
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -14,15 +25,15 @@ pub struct RunContainer {
 
 impl RunContainer {
     pub fn new() -> Self {
-        
+        unimplemented!()
     }
     
     pub fn with_capacity(capacity: usize) -> Self {
-        
+        unimplemented!()
     }
     
     pub fn shrink_to_fit(&mut self) {
-        
+        unimplemented!()
     }
     
     pub fn reserve(&mut self, additional: usize) {
@@ -30,67 +41,67 @@ impl RunContainer {
     }
     
     pub fn add(&mut self, value: u16) {
-        
+        unimplemented!()
     }
     
     pub fn add_range(&mut self, min: u16, max: u16) {
-        
+        unimplemented!()
     }
     
     pub fn remove(&mut self, value: u16) {
-        
+        unimplemented!()
     }
     
     pub fn remove_range(&mut self, min: u16, max: u16) {
-        
+        unimplemented!()
     }
     
     pub fn contains(&self, value: u16) -> bool {
-        
+        unimplemented!()
     }
     
     pub fn contains_range(&self, min: u16, max: u16) -> bool {
-        
+        unimplemented!()
     }
     
     pub fn cardinality(&self) -> usize {
-        
+        unimplemented!()
     }
     
     pub fn is_empty(&self) -> bool {
-        
+        unimplemented!()
     }
     
     pub fn is_full(&self) -> bool {
-        
+        unimplemented!()
     }
     
     pub fn clear(&mut self) {
-        
+        unimplemented!()
     }
     
     pub fn append(&mut self, run: Rle16) {
-        
+        unimplemented!()
     }
     
     pub fn iter(&self) -> Iter<Rle16> {
-        self.run.iter()
+        self.runs.iter()
     }
     
     pub fn iter_mut(&mut self) -> IterMut<Rle16> {
-        self.run.iter_mut()
+        self.runs.iter_mut()
     }
     
     pub fn min(&self) -> u16 {
-        
+        unimplemented!()
     }
     
     pub fn max(&self) -> u16 {
-        
+        unimplemented!()
     }
     
     pub fn rank(&self, value: u16) -> usize {
-        
+        unimplemented!()
     }
 }
 

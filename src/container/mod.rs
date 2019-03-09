@@ -3,6 +3,7 @@ mod array_ops;
 mod bitset;
 mod bitset_ops;
 mod run;
+mod run_ops;
 
 pub use self::array::ArrayContainer;
 pub use self::bitset::BitsetContainer;
