@@ -9,13 +9,8 @@ pub unsafe fn is_full(runs: &[Rle16]) -> bool {
     runs.len() == 1 && runs.get_unchecked(0).value == 0 && runs.get_unchecked(0).length == std::u16::MAX
 }
 
-pub fn is_empty(runs: &[Rle16]) -> bool {
-    runs.len() == 0
-}
-
+/// Calculate the union (`A ∪ B`) of two rle slices and append the result in `out`
 pub fn union(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
-    assert!(out.len() == 0);
-    
     // Append if one of the slices has no elements
     if a.len() == 0 {
         out.extend_from_slice(b);
@@ -95,6 +90,7 @@ pub fn union(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
     }
 }
 
+/// Calculate the intersection (`A ∩ B`) of two r;e slices and append the result in `out`
 pub fn intersect(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
     // Append if one of the slices has no elements
     if a.len() == 0 {
@@ -193,6 +189,7 @@ pub fn intersect(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
     }
 }
 
+/// Calculate the difference (`A \ B`) between two rle slices and append the result in `out`
 pub fn difference(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
     if a.len() == 0 {
         return;
@@ -265,6 +262,7 @@ pub fn difference(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
     }
 }
 
+/// Calculate the symmetric difference (`(A \ B) ∪ (B \ A)`) between two rle slices and append the result in `out`
 pub fn symmetric_difference(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
     if a.len() == 0 {
         out.extend_from_slice(b);

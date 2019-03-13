@@ -11,6 +11,12 @@ pub use self::run::RunContainer;
 
 use std::any::Any;
 
+pub enum ContainerType {
+    Array(ArrayContainer),
+    Bitset(BitsetContainer),
+    Run(RunContainer)
+}
+
 /// Marker trait for container types
 pub trait Container: Any {
     // TODO: See about implementing common container functionality on this trait
@@ -32,14 +38,14 @@ pub trait Union<T: Container> {
     fn union_with(&self, other: &T, out: &mut T);
 }
 
-pub trait Negation<T: Container> {
-    fn negate_with(&self, other: &T, out: &mut T);
+pub trait Subset<T: Container> {
+    fn subset_of(&self, other: &T) -> bool;
 }
 
 pub trait Equality<T: Container> {
     fn equals(&self, other: &T) -> bool;
 }
 
-pub trait Subset<T: Container> {
-    fn subset_of(&self, other: &T) -> bool;
+pub trait Negation {
+    fn negate(&self, out: &mut ContainerType);
 }

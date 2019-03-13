@@ -1,8 +1,12 @@
+<p align="center">
+   <img src="res/rusting_bitmaps_logo_02.png" height="200">
+</p>
+
 # Rusting Bitmaps
 
 ><span style="color:red">WARNING: This software is incomplete and unfit for production</span>
 
-Rusting Bitmaps is a native Rust port of Roaring Bitmaps
+Rusting Bitmaps is a native Rust port of [Roaring Bitmaps](https://roaringbitmap.org/)
 
 # Supported Platforms
  - x86_64 with optional simd acceleration if built with the following targets
@@ -15,7 +19,7 @@ Rusting Bitmaps is a native Rust port of Roaring Bitmaps
  - [ ] Roaring Bitmap
     - [ ] TBD
  - [x] Traits
- - [-] Array Container
+ - [ ] Array Container
     - [x] Difference
     - [x] Equals
     - [x] Intersect
@@ -23,9 +27,8 @@ Rusting Bitmaps is a native Rust port of Roaring Bitmaps
     - [x] Subset
     - [x] Union
     - [x] Symmetric Difference
-    - [ ] Cardinality variants
     - [ ] Inplace variants
- - [-] Bitset Container
+ - [ ] Bitset Container
     - [x] Difference
     - [ ] Equals
     - [x] Intersect
@@ -36,13 +39,13 @@ Rusting Bitmaps is a native Rust port of Roaring Bitmaps
     - [ ] Cardinality variants
     - [ ] Inplace variants
  - [ ] Run Container
-    - [ ] Difference
+    - [x] Difference
     - [ ] Equals
-    - [ ] Intersect
+    - [x] Intersect
     - [ ] Negation
-    - [ ] Subset
-    - [ ] Union
-    - [ ] Symmetric Difference
+    - [x] Subset
+    - [x] Union
+    - [x] Symmetric Difference
     - [ ] Cardinality variants
     - [ ] Inplace variants
  - [ ] Conversions

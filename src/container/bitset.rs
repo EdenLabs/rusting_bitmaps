@@ -373,3 +373,9 @@ impl Subset<RunContainer> for BitsetContainer {
         unimplemented!()
     }
 }
+
+impl Negation for BitsetContainer {
+    fn negate(&self, out: &mut ContainerType) {
+        unimplemented!()
+    }
+}
