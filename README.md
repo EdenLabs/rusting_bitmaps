@@ -9,7 +9,7 @@
 Rusting Bitmaps is a native Rust port of [Roaring Bitmaps](https://roaringbitmap.org/)
 
 # Supported Platforms
- - x86_64 with optional simd acceleration if built with the following targets
+ - x86_64 with optional simd support for the following instruction sets
    - SSE4.2
    - AVX2
 
