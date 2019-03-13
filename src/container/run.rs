@@ -177,7 +177,59 @@ impl RunContainer {
     }
     
     pub fn remove_range(&mut self, min: u16, max: u16) {
-        unimplemented!()
+        fn result_to_compressed_index(value: SearchResult) -> isize {
+            match value {
+                SearchResult::ExactMatch(index) => {
+                    index as isize
+                },
+                SearchResult::PossibleMatch(index) => {
+                    -(index as isize + 1)
+                },
+                SearchResult::NoMatch => {
+                    -1
+                }
+            }
+        }
+
+        let mut first = result_to_compressed_index(self.find_run(min));
+        let mut last = result_to_compressed_index(self.find_run(max));
+
+        if first >= 0 {
+            let v_first = self.runs[first as usize];
+            if min > v_first.value && max < v_first.sum() {
+                // Split into two runs
+
+                // Right interval
+                self.runs.insert(first as usize + 1, Rle16::new(max + 1, v_first.sum() - (max + 1)));
+
+                // Left interval
+                self.runs[first as usize].length = (min - 1) - v_first.value;
+                return;
+            }
+
+            if min > v_first.value {
+                self.runs[first as usize].length = (min - 1) - v_first.value;
+                first += 1;
+            }
+        }
+        else {
+            first = -first - 1;
+        }
+
+        if last >= 0 {
+            let run_max = self.runs[last as usize].sum();
+            if run_max > max {
+                self.runs[last as usize] = Rle16::new(max + 1, run_max - (max + 1));
+                last -= 1;
+            }
+        }
+        else {
+            last = (-last - 1) - 1;
+        }
+
+        if first <= last {
+            self.runs.splice((self.runs.len() - (last as usize + 1))..(-(last - first + 1) as usize), iter::empty());
+        }
     }
     
     pub fn contains(&self, value: u16) -> bool {
@@ -355,6 +407,33 @@ impl RunContainer {
                 low = middle + 1;
             }
             else if value > key {
+                high = middle - 1;
+            }
+            else {
+                return SearchResult::ExactMatch(middle);
+            }
+        }
+
+        if low == 0 {
+            SearchResult::NoMatch
+        }
+        else {
+            SearchResult::PossibleMatch(low - 1)
+        }
+    }
+
+    /// Find the run containing `key`
+    fn find_run(&self, key: u16) -> SearchResult {
+        let mut low = 0;
+        let mut high = self.runs.len() - 1;
+        while low < high {
+            let middle = (low + high) >> 1;
+            let min = self.runs[middle].value;
+            let max = self.runs[middle].sum();
+            if key > max {
+                low = middle + 1;
+            }
+            else if key < min {
                 high = middle - 1;
             }
             else {
