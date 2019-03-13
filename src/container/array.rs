@@ -6,7 +6,7 @@ use crate::utils::mem_equals;
 use crate::container::*;
 use crate::container::array_ops::*;
 
-const DEFAULT_MAX_SIZE: usize = 4096;
+pub const DEFAULT_MAX_SIZE: usize = 4096;
 
 #[derive(Clone)]
 pub struct ArrayContainer {
@@ -453,5 +453,15 @@ impl Subset<BitsetContainer> for ArrayContainer {
 impl Subset<RunContainer> for ArrayContainer {
     fn subset_of(&self, other: &RunContainer) -> bool {
         unimplemented!()
+    }
+}
+
+impl Negation for ArrayContainer {
+    fn negate(&self, out: &mut ContainerType) {
+        let mut bitset = BitsetContainer::new();
+        bitset.set_all();
+        bitset.clear_list(&self.array);
+
+        *out = ContainerType::Bitset(bitset);
     }
 }

@@ -19,11 +19,11 @@ Rusting Bitmaps is a native Rust port of [Roaring Bitmaps](https://roaringbitmap
  - [ ] Roaring Bitmap
     - [ ] TBD
  - [x] Traits
- - [ ] Array Container
+ - [x] Array Container
     - [x] Difference
     - [x] Equals
     - [x] Intersect
-    - [ ] Negation
+    - [x] Negation
     - [x] Subset
     - [x] Union
     - [x] Symmetric Difference
@@ -31,7 +31,7 @@ Rusting Bitmaps is a native Rust port of [Roaring Bitmaps](https://roaringbitmap
     - [x] Difference
     - [x] Equals
     - [x] Intersect
-    - [ ] Negation
+    - [x] Negation
     - [x] Subset
     - [x] Union
     - [x] Symmetric Difference

@@ -2,6 +2,7 @@ use std::slice::{Iter, IterMut};
 
 use crate::utils;
 use crate::container::*;
+use crate::container::array::DEFAULT_MAX_SIZE;
 use crate::align::{Align, A32};
 
 use super::bitset_ops;
@@ -88,6 +89,24 @@ impl BitsetContainer {
         self.cardinality += ((word ^ new_word) >> 1) as isize;
     }
 
+    pub fn unset_range(&mut self, min: usize, max: usize) {
+        if min == max {
+            self.unset(min);
+            return;
+        }
+
+        let first_word = min >> 6;
+        let last_word = (max - 1) >> 6;
+
+        self.bitset[first_word] ^= !(!0 << (min % 64));
+
+        for word in first_word..last_word {
+            self.bitset[word] = !self.bitset[word];
+        }
+
+        self.bitset[last_word] ^= !0 >> ((!max + 1) % 64)
+    }
+
     pub fn clear(&mut self) {
         // TODO: Vectorize
         for word in &mut *self.bitset {
@@ -95,6 +114,18 @@ impl BitsetContainer {
         }
         
         self.cardinality = 0;
+    }
+
+    pub fn clear_list(&mut self, list: &[u16]) {
+        for value in list.iter() {
+            let offset = *value >> 6;
+            let index = *value & 64;
+            let load = self.bitset[offset as usize];
+            let new_load = load & !(1 << index);
+
+            self.bitset[offset as usize] = new_load;
+            self.cardinality -= ((load ^ new_load) >> index) as isize;
+        }
     }
 
     /// Add `value` to the set and return true if it was set
@@ -397,6 +428,14 @@ impl Subset<RunContainer> for BitsetContainer {
 
 impl Negation for BitsetContainer {
     fn negate(&self, out: &mut ContainerType) {
-        unimplemented!()
+        let mut bitset = self.clone();
+        bitset.unset_range(0, self.cardinality());
+
+        if bitset.cardinality() > DEFAULT_MAX_SIZE {
+            *out = ContainerType::Bitset(bitset);
+        }
+        else {
+            *out = ContainerType::Array(bitset.into());
+        }
     }
 }
