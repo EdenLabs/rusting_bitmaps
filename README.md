@@ -46,12 +46,12 @@ Rusting Bitmaps is a native Rust port of [Roaring Bitmaps](https://roaringbitmap
     - [x] Symmetric Difference
     - [ ] Deferred Cardinality
  - [ ] Conversions
-    - [ ] Array->Bitmap
-    - [ ] Array->Run
+    - [x] Array->Bitmap
+    - [x] Array->Run
     - [ ] Bitmap->Array
     - [ ] Bitmap->Run
-    - [ ] Run->Array
-    - [ ] Run->Bitmap
+    - [x] Run->Array
+    - [x] Run->Bitmap
  - [ ] Mixed Ops
     - [ ] Difference
     - [ ] Equals

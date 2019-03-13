@@ -504,7 +504,36 @@ impl RunContainer {
 
 impl From<ArrayContainer> for RunContainer {
     fn from(container: ArrayContainer) -> Self {
-        unimplemented!()
+        let num_runs = container.num_runs();
+        let mut run_container = RunContainer::with_capacity(num_runs);
+
+        let mut prev: isize = -2;
+        let mut run_start: isize = -1;
+        let cardinality = container.cardinality();
+
+        if cardinality == 0 {
+            return run_container;
+        }
+        
+        for value in container.iter() {
+            if *value != (prev + 1) as u16 {
+                if run_start != -1 {
+                    run_container.runs.push(
+                        Rle16::new(run_start as u16, prev as u16)
+                    );
+                }
+
+                run_start = *value as isize;
+            }
+
+            prev = *value as isize;
+        }
+
+        run_container.runs.push(
+            Rle16::new(run_start as u16, prev as u16)
+        );
+
+        run_container
     }
 }
 

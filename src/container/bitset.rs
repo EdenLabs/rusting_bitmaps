@@ -251,13 +251,27 @@ impl BitsetContainer {
 
 impl From<ArrayContainer> for BitsetContainer {
     fn from(container: ArrayContainer) -> Self {
-        unimplemented!()
+        let mut bitset = BitsetContainer::new();
+
+        for value in container.iter() {
+            bitset.set(*value as usize);
+        }
+
+        bitset
     }
 }
 
 impl From<RunContainer> for BitsetContainer {
     fn from(container: RunContainer) -> Self {
-        unimplemented!()
+        let cardinality = container.cardinality();
+
+        let mut bitset = BitsetContainer::new();
+        for run in container.iter() {
+            bitset.set_range(run.value as usize, (run.length - 1) as usize);
+        }
+
+        bitset.cardinality = cardinality as isize;
+        bitset
     }
 }
 

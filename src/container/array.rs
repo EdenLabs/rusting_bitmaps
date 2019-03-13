@@ -324,7 +324,19 @@ impl From<BitsetContainer> for ArrayContainer {
 
 impl From<RunContainer> for ArrayContainer {
     fn from(container: RunContainer) -> Self {
-        unimplemented!()
+        let cardinality = container.cardinality();
+
+        let mut array = ArrayContainer::with_capacity(cardinality);
+        for run in container.iter() {
+            let run_start = run.value;
+            let run_end = run_start + run.length;
+
+            for i in run_start..run_end {
+                array.append(i);
+            }
+        }
+
+        array
     }
 }
 
