@@ -1,5 +1,6 @@
 use std::slice::{Iter, IterMut};
 
+use crate::utils;
 use crate::container::*;
 use crate::align::{Align, A32};
 
@@ -257,6 +258,12 @@ impl From<ArrayContainer> for BitsetContainer {
 impl From<RunContainer> for BitsetContainer {
     fn from(container: RunContainer) -> Self {
         unimplemented!()
+    }
+}
+
+impl PartialEq for BitsetContainer {
+    fn eq(&self, other: &BitsetContainer) -> bool {
+        utils::mem_equals(&self.bitset, &other.bitset)
     }
 }
 

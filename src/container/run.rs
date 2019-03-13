@@ -1,10 +1,11 @@
 use std::slice::{Iter, IterMut};
 use std::iter;
 
+use crate::utils;
 use crate::container::*;
 use crate::container::run_ops;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Rle16 {
     pub value: u16,
     pub length: u16
@@ -431,6 +432,12 @@ impl From<ArrayContainer> for RunContainer {
 impl From<BitsetContainer> for RunContainer {
     fn from(container: BitsetContainer) -> Self {
         unimplemented!()
+    }
+}
+
+impl PartialEq for RunContainer {
+    fn eq(&self, other: &RunContainer) -> bool {
+        utils::mem_equals(&self.runs, &other.runs)
     }
 }
 

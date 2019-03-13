@@ -27,27 +27,24 @@ Rusting Bitmaps is a native Rust port of [Roaring Bitmaps](https://roaringbitmap
     - [x] Subset
     - [x] Union
     - [x] Symmetric Difference
-    - [ ] Inplace variants
  - [ ] Bitset Container
     - [x] Difference
-    - [ ] Equals
+    - [x] Equals
     - [x] Intersect
     - [ ] Negation
     - [x] Subset
     - [x] Union
     - [x] Symmetric Difference
-    - [ ] Cardinality variants
-    - [ ] Inplace variants
+    - [ ] Deferred Cardinality
  - [ ] Run Container
     - [x] Difference
-    - [ ] Equals
+    - [x] Equals
     - [x] Intersect
     - [ ] Negation
     - [x] Subset
     - [x] Union
     - [x] Symmetric Difference
-    - [ ] Cardinality variants
-    - [ ] Inplace variants
+    - [ ] Deferred Cardinality
  - [ ] Conversions
     - [ ] Array->Bitmap
     - [ ] Array->Run
@@ -63,8 +60,8 @@ Rusting Bitmaps is a native Rust port of [Roaring Bitmaps](https://roaringbitmap
     - [ ] Subset
     - [ ] Union
     - [ ] Symmetric Difference
-    - [ ] Cardinality variants
-    - [ ] Inplace variants (?)
+    - [ ] Cardinality variants?
  - [ ] Serialization (serde w/ feature flag)
  - [x] Portability
+ - [ ] Inplace variants for all ops
  - [ ] COW (?)
