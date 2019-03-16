@@ -128,8 +128,8 @@ impl RunContainer {
         else {
             let common_min = self.runs[runs_min].value;
             let common_max = self.runs[runs_min + common - 1].sum();
-            let result_min = crate::min(common_min, min);
-            let result_max = crate::max(common_max, max);
+            let result_min = crate::utils::min(common_min, min);
+            let result_max = crate::utils::max(common_max, max);
 
             self.runs[runs_min] = Rle16::new(result_min, result_max - result_min);
             self.runs.splice((runs_min + 1)..runs_max, iter::empty());
@@ -329,6 +329,11 @@ impl RunContainer {
     
     pub fn clear(&mut self) {
         self.runs.clear()
+    }
+
+    pub fn copy_from(&mut self, other: &RunContainer) {
+        self.runs.clear();
+        self.runs.copy_from_slice(&other.runs);
     }
     
     pub fn iter(&self) -> Iter<Rle16> {
@@ -552,20 +557,36 @@ impl PartialEq for RunContainer {
 impl Container for RunContainer { }
 
 impl Union<Self> for RunContainer {
-    fn union_with(&self, other: &Self, out: &mut Self) {
+    type Output = Self;
+
+    fn union_with(&self, other: &Self, out: &mut Self::Output) {
         run_ops::union(&self.runs, &other.runs, &mut out.runs);
     }
 }
 
 impl Union<ArrayContainer> for RunContainer {
-    fn union_with(&self, other: &ArrayContainer, out: &mut ArrayContainer) {
+    type Output = Self;
+
+    fn union_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
+        if self.is_full() {
+            out.copy_from(self);
+        }
+
+        out.reserve(2 * other.cardinality() + self.runs.len());
+
         unimplemented!()
     }
 }
 
 impl Union<BitsetContainer> for RunContainer {
-    fn union_with(&self, other: &BitsetContainer, out: &mut BitsetContainer) {
-        unimplemented!()
+    type Output = BitsetContainer;
+
+    fn union_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
+        out.copy_from(other);
+
+        for rle in self.iter() {
+            out.set_range(rle.value as usize, rle.sum() as usize);
+        }
     }
 }
 

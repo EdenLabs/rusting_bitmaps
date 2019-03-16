@@ -1,4 +1,4 @@
-use crate::max;
+use crate::utils::max;
 use crate::container::run::Rle16;
 
 /// Check if the container is full

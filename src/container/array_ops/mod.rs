@@ -1,6 +1,6 @@
 mod simd;
 
-use crate::min;
+use crate::utils::min;
 
 // TODO: See about moving to aligned loads and having some way to enforce that
 // TODO: Implement the cardinality ops for arrays (is this even necessary with pure vecs?)

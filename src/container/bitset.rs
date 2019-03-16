@@ -12,7 +12,7 @@ pub const BITSET_SIZE_IN_WORDS: usize = (1 << 16) / 64;
 #[derive(Clone)]
 pub struct BitsetContainer {
     bitset: Align<Vec<u64>, A32>,
-    cardinality: isize
+    cardinality: usize
 }
 
 impl BitsetContainer {
@@ -40,7 +40,7 @@ impl BitsetContainer {
 
         self.bitset[word_index] = new_word;
 
-        self.cardinality += ((word ^ new_word) >> 1) as isize;
+        self.cardinality += ((word ^ new_word) >> 1) as usize;
     }
 
     /// Set all the bits within the range denoted by `min`->`max`
@@ -63,6 +63,20 @@ impl BitsetContainer {
         }
 
         self.bitset[last_index] |= !0_u64 >> ((!max as u64 + 1) >> & 0x3F);
+        // TODO: Update cardinality
+    }
+
+    pub fn set_list(&mut self, list: &[u16]) {
+        for value in list {
+            let offset = (*value >> 6) as usize;
+            let index = *value % 64;
+            let load = self.bitset[offset];
+            let new_load = load | (1 << index);
+            
+            self.cardinality += ((load ^ new_load) >> index) as usize;
+
+            self.bitset[offset] = new_load;
+        }
     }
 
     /// Set all the bits in the bitset
@@ -73,6 +87,12 @@ impl BitsetContainer {
         }
         
         self.cardinality = 1 << 16;
+    }
+
+    /// Copy the contents of `other` into self
+    #[inline]
+    pub fn copy_from(&mut self, other: &BitsetContainer) {
+        self.bitset.copy_from_slice(&other.bitset);
     }
 
     /// Unset the bit at `index`
@@ -86,7 +106,7 @@ impl BitsetContainer {
 
         self.bitset[word_index] = new_word;
 
-        self.cardinality += ((word ^ new_word) >> 1) as isize;
+        self.cardinality += ((word ^ new_word) >> 1) as usize;
     }
 
     pub fn unset_range(&mut self, min: usize, max: usize) {
@@ -124,7 +144,7 @@ impl BitsetContainer {
             let new_load = load & !(1 << index);
 
             self.bitset[offset as usize] = new_load;
-            self.cardinality -= ((load ^ new_load) >> index) as isize;
+            self.cardinality -= ((load ^ new_load) >> index) as usize;
         }
     }
 
@@ -139,7 +159,7 @@ impl BitsetContainer {
 
         self.bitset[word_index] = new_word;
 
-        let increment = ((word ^ new_word) >> 1) as isize;
+        let increment = ((word ^ new_word) >> 1) as usize;
 
         self.cardinality += increment;
 
@@ -163,7 +183,7 @@ impl BitsetContainer {
 
         self.bitset[word_index] = new_word;
 
-        let increment = ((word ^ new_word) >> 1) as isize;
+        let increment = ((word ^ new_word) >> 1) as usize;
 
         self.cardinality -= increment;
 
@@ -301,7 +321,7 @@ impl From<RunContainer> for BitsetContainer {
             bitset.set_range(run.value as usize, (run.length - 1) as usize);
         }
 
-        bitset.cardinality = cardinality as isize;
+        bitset.cardinality = cardinality;
         bitset
     }
 }
@@ -315,23 +335,30 @@ impl PartialEq for BitsetContainer {
 impl Container for BitsetContainer { }
 
 impl Union<Self> for BitsetContainer {
-    fn union_with(&self, other: &Self, out: &mut Self) {
+    type Output = Self;
+
+    fn union_with(&self, other: &Self, out: &mut Self::Output) {
         unsafe {
             let cardinality = bitset_ops::union(&self.bitset, &other.bitset, &mut out.bitset);
-            out.cardinality = cardinality as isize;
+            out.cardinality = cardinality;
         }
     }
 }
 
 impl Union<ArrayContainer> for BitsetContainer {
-    fn union_with(&self, other: &ArrayContainer, out: &mut ArrayContainer) {
-        unimplemented!()
+    type Output = BitsetContainer;
+
+    fn union_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
+        out.copy_from(self);
+        out.set_list(&other);
     }
 }
 
 impl Union<RunContainer> for BitsetContainer {
-    fn union_with(&self, other: &RunContainer, out: &mut RunContainer) {
-        unimplemented!()
+    type Output = BitsetContainer;
+
+    fn union_with(&self, other: &RunContainer, out: &mut Self::Output) {
+        other.union_with(self, out)
     }
 }
 
@@ -339,7 +366,7 @@ impl Intersection<Self> for BitsetContainer {
     fn intersect_with(&self, other: &Self, out: &mut Self) {
         unsafe {
             let cardinality = bitset_ops::intersect(&self.bitset, &other.bitset, &mut out.bitset);
-            out.cardinality = cardinality as isize;
+            out.cardinality = cardinality;
         }
     }
 }
@@ -360,7 +387,7 @@ impl Difference<Self> for BitsetContainer {
     fn difference_with(&self, other: &Self, out: &mut Self) {
         unsafe {
             let cardinality = bitset_ops::difference(&self.bitset, &other.bitset, &mut out.bitset);
-            out.cardinality = cardinality as isize;
+            out.cardinality = cardinality;
         }
     }
 }
@@ -381,7 +408,7 @@ impl SymmetricDifference<Self> for BitsetContainer {
     fn symmetric_difference_with(&self, other: &Self, out: &mut Self) {
         unsafe {
             let cardinality = bitset_ops::symmetric_difference(&self.bitset, &other.bitset, &mut out.bitset);
-            out.cardinality = cardinality as isize;
+            out.cardinality = cardinality;
         }
     }
 }

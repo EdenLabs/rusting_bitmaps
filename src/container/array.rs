@@ -379,20 +379,26 @@ impl SymmetricDifference<RunContainer> for ArrayContainer {
 }
 
 impl Union<Self> for ArrayContainer {
-    fn union_with(&self, other: &Self, out: &mut Self) {
+    type Output = Self;
+
+    fn union_with(&self, other: &Self, out: &mut Self::Output) {
         union(&self.array, &other.array, &mut out.array);
     }
 }
 
 impl Union<BitsetContainer> for ArrayContainer {
-    fn union_with(&self, other: &BitsetContainer, out: &mut BitsetContainer) {
-        unimplemented!()
+    type Output = BitsetContainer;
+
+    fn union_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
+        other.union_with(self, out)
     }
 }
 
 impl Union<RunContainer> for ArrayContainer {
-    fn union_with(&self, other: &RunContainer, out: &mut RunContainer) {
-        unimplemented!()
+    type Output = RunContainer;
+
+    fn union_with(&self, other: &RunContainer, out: &mut Self::Output) {
+        other.union_with(self, out)
     }
 }
 

@@ -22,6 +22,16 @@ pub trait Container: Any {
     // TODO: See about implementing common container functionality on this trait
 }
 
+pub trait Union<T: Container> {
+    type Output;
+
+    fn union_with(&self, other: &T, out: &mut Self::Output);
+}
+
+pub trait Intersection<T: Container> {
+    fn intersect_with(&self, other: &T, out: &mut T);
+}
+
 pub trait Difference<T: Container> {
     fn difference_with(&self, other: &T, out: &mut T);
 }
@@ -30,20 +40,8 @@ pub trait SymmetricDifference<T: Container> {
     fn symmetric_difference_with(&self, other: &T, out: &mut T);
 }
 
-pub trait Intersection<T: Container> {
-    fn intersect_with(&self, other: &T, out: &mut T);
-}
-
-pub trait Union<T: Container> {
-    fn union_with(&self, other: &T, out: &mut T);
-}
-
 pub trait Subset<T: Container> {
     fn subset_of(&self, other: &T) -> bool;
-}
-
-pub trait Equality<T: Container> {
-    fn equals(&self, other: &T) -> bool;
 }
 
 pub trait Negation {

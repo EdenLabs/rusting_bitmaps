@@ -32,7 +32,7 @@ use std::arch::x86_64::{
     _mm_or_si128
 };
 
-use crate::min;
+use crate::utils::min;
 use crate::align::{Align, A32};
 
 use super::{
