@@ -342,6 +342,67 @@ impl From<RunContainer> for ArrayContainer {
 
 impl Container for ArrayContainer { }
 
+impl Union<Self> for ArrayContainer {
+    type Output = Self;
+
+    fn union_with(&self, other: &Self, out: &mut Self::Output) {
+        union(&self.array, &other.array, &mut out.array);
+    }
+}
+
+impl Union<BitsetContainer> for ArrayContainer {
+    type Output = BitsetContainer;
+
+    fn union_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
+        other.union_with(self, out)
+    }
+}
+
+impl Union<RunContainer> for ArrayContainer {
+    type Output = RunContainer;
+
+    fn union_with(&self, other: &RunContainer, out: &mut Self::Output) {
+        other.union_with(self, out)
+    }
+}
+
+impl Intersection<Self> for ArrayContainer {
+    type Output = Self;
+
+    fn intersect_with(&self, other: &Self, out: &mut Self::Output) {
+        intersect(&self.array, &other.array, &mut out.array);
+    }
+}
+
+impl Intersection<BitsetContainer> for ArrayContainer {
+    type Output = Self;
+
+    fn intersect_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
+        if out.capacity() < self.cardinality() {
+            out.reserve(self.cardinality() - out.capacity());
+        }
+
+        unsafe {
+            let mut new_card = 0;
+            let mut card = self.cardinality();
+
+            for i in 0..card {
+                let key = *self.array.get_unchecked(i);
+                *out.array.get_unchecked_mut(new_card) = key;
+                new_card += other.contains(key) as usize;
+            }
+
+            out.array.set_len(new_card);
+        }
+    }
+}
+
+impl Intersection<RunContainer> for ArrayContainer {
+    fn intersect_with(&self, other: &RunContainer, out: &mut RunContainer) {
+        unimplemented!()
+    }
+}
+
 impl Difference<Self> for ArrayContainer {
     fn difference_with(&self, other: &Self, out: &mut Self) {
         difference(&self.array, &other.array, &mut out.array);
@@ -374,48 +435,6 @@ impl SymmetricDifference<BitsetContainer> for ArrayContainer {
 
 impl SymmetricDifference<RunContainer> for ArrayContainer {
     fn symmetric_difference_with(&self, other: &RunContainer, out: &mut RunContainer) {
-        unimplemented!()
-    }
-}
-
-impl Union<Self> for ArrayContainer {
-    type Output = Self;
-
-    fn union_with(&self, other: &Self, out: &mut Self::Output) {
-        union(&self.array, &other.array, &mut out.array);
-    }
-}
-
-impl Union<BitsetContainer> for ArrayContainer {
-    type Output = BitsetContainer;
-
-    fn union_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
-        other.union_with(self, out)
-    }
-}
-
-impl Union<RunContainer> for ArrayContainer {
-    type Output = RunContainer;
-
-    fn union_with(&self, other: &RunContainer, out: &mut Self::Output) {
-        other.union_with(self, out)
-    }
-}
-
-impl Intersection<Self> for ArrayContainer {
-    fn intersect_with(&self, other: &Self, out: &mut Self) {
-        intersect(&self.array, &other.array, &mut out.array);
-    }
-}
-
-impl Intersection<BitsetContainer> for ArrayContainer {
-    fn intersect_with(&self, other: &BitsetContainer, out: &mut BitsetContainer) {
-        unimplemented!()
-    }
-}
-
-impl Intersection<RunContainer> for ArrayContainer {
-    fn intersect_with(&self, other: &RunContainer, out: &mut RunContainer) {
         unimplemented!()
     }
 }

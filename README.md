@@ -58,7 +58,7 @@ Rusting Bitmaps is a native Rust port of [Roaring Bitmaps](https://roaringbitmap
     - [ ] Intersect
     - [ ] Negation
     - [ ] Subset
-    - [ ] Union
+    - [x] Union
     - [ ] Symmetric Difference
     - [ ] Cardinality variants?
  - [ ] Serialization (serde w/ feature flag)

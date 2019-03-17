@@ -574,7 +574,44 @@ impl Union<ArrayContainer> for RunContainer {
 
         out.reserve(2 * other.cardinality() + self.runs.len());
 
-        unimplemented!()
+        let mut rle_index = 0;
+        let mut array_index = 0;
+        let mut prev_rle;
+
+        if self.runs[rle_index].value <= other[array_index] {
+            prev_rle = self.runs[rle_index];
+            out.runs.push(prev_rle);
+            rle_index += 1;
+        }
+        else {
+            prev_rle = Rle16::new(other[array_index], 0);
+            out.runs.push(prev_rle);
+            array_index += 1;
+        }
+
+        while rle_index < self.runs.len() && array_index < other.cardinality() {
+            if self.runs[rle_index].value < other[array_index] {
+                run_ops::append(&mut out.runs, &self.runs[rle_index], &mut prev_rle);
+                rle_index += 1;
+            }
+            else {
+                run_ops::append_value(&mut out.runs, other[array_index], &mut prev_rle);
+                array_index += 1;
+            }
+        }
+
+        if array_index < other.cardinality() {
+            while array_index < other.cardinality() {
+                run_ops::append_value(&mut out.runs, other[array_index], &mut prev_rle);
+                array_index += 1;
+            }
+        }
+        else {
+            while rle_index < self.runs.len() {
+                run_ops::append(&mut out.runs, &self.runs[rle_index], &mut prev_rle);
+                rle_index += 1;
+            }
+        }
     }
 }
 

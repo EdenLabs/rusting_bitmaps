@@ -317,9 +317,9 @@ pub fn symmetric_difference(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
 
 /// Appends a run to `runs` or merges it with `previous_run`
 /// 
-/// # Safety
-/// Expects `runs` to have at least 1 element and `previous_run` to point to that last element
-unsafe fn append(runs: &mut Vec<Rle16>, run: &Rle16, previous_run: &mut Rle16) {
+/// # Notes
+/// Expects `runs` to have at least 1 element and `previous_run` to point to that last element. 
+pub unsafe fn append(runs: &mut Vec<Rle16>, run: &Rle16, previous_run: &mut Rle16) {
     let prev_end = previous_run.value + previous_run.length;
 
     // Add a new run
@@ -342,7 +342,7 @@ unsafe fn append(runs: &mut Vec<Rle16>, run: &Rle16, previous_run: &mut Rle16) {
 
 /// # Safety
 /// Assumes that `runs` has at least one element
-unsafe fn append_exclusive(runs: &mut Vec<Rle16>, start: u16, length: u16) {
+pub fn append_exclusive(runs: &mut Vec<Rle16>, start: u16, length: u16) {
     if runs.len() == 0 {
         runs.push(Rle16::new(start, length));
         return;
@@ -386,5 +386,24 @@ unsafe fn append_exclusive(runs: &mut Vec<Rle16>, start: u16, length: u16) {
     else if new_end > old_end {
         let run = Rle16::new(old_end, new_end - old_end - 1);
         runs.push(run);
+    }
+}
+
+pub fn append_value(runs: &mut Vec<Rle16>, value: u16, prev_rle: &mut Rle16) {
+    let prev_end = prev_rle.sum();
+    if value > prev_end + 1 {
+        let rle = Rle16::new(value, 0);
+        runs.push(rle);
+
+        *prev_rle = rle;
+        return;
+    }
+    
+    if value == prev_end * 1 {
+        prev_rle.length += 1;
+
+        let len = runs.len();
+        runs[len - 1] = *prev_rle;
+        return;
     }
 }

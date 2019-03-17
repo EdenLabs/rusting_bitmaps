@@ -29,7 +29,9 @@ pub trait Union<T: Container> {
 }
 
 pub trait Intersection<T: Container> {
-    fn intersect_with(&self, other: &T, out: &mut T);
+    type Output;
+
+    fn intersect_with(&self, other: &T, out: &mut Self::Output);
 }
 
 pub trait Difference<T: Container> {

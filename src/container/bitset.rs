@@ -363,7 +363,9 @@ impl Union<RunContainer> for BitsetContainer {
 }
 
 impl Intersection<Self> for BitsetContainer {
-    fn intersect_with(&self, other: &Self, out: &mut Self) {
+    type Output = Self;
+
+    fn intersect_with(&self, other: &Self, out: &mut Self::Output) {
         unsafe {
             let cardinality = bitset_ops::intersect(&self.bitset, &other.bitset, &mut out.bitset);
             out.cardinality = cardinality;
@@ -372,8 +374,10 @@ impl Intersection<Self> for BitsetContainer {
 }
 
 impl Intersection<ArrayContainer> for BitsetContainer {
-    fn intersect_with(&self, other: &ArrayContainer, out: &mut ArrayContainer) {
-        unimplemented!()
+    type Output = ArrayContainer;
+
+    fn intersect_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
+        other.intersect_with(self, out)
     }
 }
 
