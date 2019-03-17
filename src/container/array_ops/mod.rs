@@ -49,6 +49,58 @@ pub fn symmetric_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     }
 }
 
+pub fn advance_until(slice: &[u16], index: usize, min: u16, length: usize) -> usize {
+    let lower = (index + 1) as usize;
+    if lower >= length || slice[lower] >= min {
+        return lower;
+    }
+
+    let mut span_size = 1;
+    let mut bound = lower + span_size;
+
+    while bound < length && slice[bound] < min {
+        span_size = span_size << 1;
+
+        bound = lower + span_size;
+    }
+
+    let upper = {
+        if bound < length {
+            bound
+        }
+        else {
+            length - 1
+        }
+    };
+
+    if slice[upper] == min {
+        return upper;
+    }
+
+    if slice[upper] < min {
+        return length;
+    }
+
+    lower += span_size >> 1;
+
+    let mut mid = 0;
+    while lower + 1 != upper {
+        mid = (lower + upper) >> 1;
+
+        if slice[mid] == min {
+            return mid;
+        }
+        else if slice[mid] < min {
+            lower = mid;
+        }
+        else {
+            upper = mid;
+        }
+    }
+
+    upper
+}
+
 pub fn exponential_search<T>(slice: &[T], size: usize, key: T) -> Result<usize, usize>
     where T: Copy + Ord + Eq
 {

@@ -3,6 +3,7 @@ use std::iter;
 
 use crate::utils;
 use crate::container::*;
+use crate::container::array_ops;
 use crate::container::run_ops;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -628,14 +629,62 @@ impl Union<BitsetContainer> for RunContainer {
 }
 
 impl Intersection<Self> for RunContainer {
-    fn intersect_with(&self, other: &Self, out: &mut Self) {
+    type Output = Self;
+
+    fn intersect_with(&self, other: &Self, out: &mut Self::Output) {
         run_ops::intersect(&self.runs, &other.runs, &mut out.runs);
     }
 }
 
 impl Intersection<ArrayContainer> for RunContainer {
-    fn intersect_with(&self, other: &ArrayContainer, out: &mut ArrayContainer) {
-        unimplemented!()
+    type Output = ArrayContainer;
+
+    fn intersect_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
+        if self.is_full() {
+            out.copy_from(other);
+            return;
+        }
+
+        if out.capacity() < other.cardinality() {
+            out.reserve(other.cardinality() - out.capacity());
+        }
+
+        if self.runs.len() == 0 {
+            return;
+        }
+
+        unsafe {
+            let mut rle_index = 0;
+            let mut array_index = 0;
+            let mut rle = self.runs[rle_index];
+
+            while array_index < other.cardinality() {
+                let value = other[array_index];
+                
+                while rle.sum() < value {
+                    rle_index += 1;
+
+                    if rle_index == self.runs.len() {
+                        return;
+                    }
+
+                    rle = self.runs[rle_index];
+                }
+
+                if rle.value > value {
+                    array_index = array_ops::advance_until(
+                        &other,
+                        array_index,
+                        rle.value,
+                        other.cardinality()
+                    );
+                }
+                else {
+                    out.add(value);
+                    array_index += 1;
+                }
+            }
+        }
     }
 }
 

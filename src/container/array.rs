@@ -71,16 +71,8 @@ impl ArrayContainer {
         self.array.reserve(additional);
     }
 
-    pub fn copy_into(&self, target: &mut ArrayContainer) {
-        let cap = self.capacity();
-        let target_cap = target.capacity();
-
-        if cap > target_cap {
-            target.array.reserve(cap - target_cap);
-        }
-
-        target.array.clear();
-        target.array.extend(self.array.iter());
+    pub fn copy_from(&mut self, other: &ArrayContainer) {
+        self.copy_from_slice(&other.array);
     }
 
     pub fn add(&mut self, value: u16) -> bool {
@@ -398,8 +390,10 @@ impl Intersection<BitsetContainer> for ArrayContainer {
 }
 
 impl Intersection<RunContainer> for ArrayContainer {
-    fn intersect_with(&self, other: &RunContainer, out: &mut RunContainer) {
-        unimplemented!()
+    type Output = ArrayContainer;
+
+    fn intersect_with(&self, other: &RunContainer, out: &mut Self::Output) {
+        other.intersect_with(self, out)
     }
 }
 
