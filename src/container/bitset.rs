@@ -1,4 +1,5 @@
 use std::slice::{Iter, IterMut};
+use std::ops::{Deref, DerefMut};
 
 use crate::utils;
 use crate::container::*;
@@ -108,6 +109,7 @@ impl BitsetContainer {
         self.cardinality += ((word ^ new_word) >> 1) as usize;
     }
 
+    // TODO: Unify these index types
     pub fn unset_range(&mut self, min: usize, max: usize) {
         if min == max {
             self.unset(min);
@@ -230,6 +232,23 @@ impl BitsetContainer {
         return true;
     }
 
+    pub fn flip_range(&mut self, min: usize, max: usize) {
+        if min == max {
+            return;
+        }
+
+        let first_word = min / 64;
+        let last_word = (max - 1) / 64;
+        
+        self.bitset[first_word] ^= !(!0 << (min % 64));
+        
+        for i in first_word..last_word {
+            self.bitset[i] = !self.bitset[i];
+        }
+
+        self.bitset[last_word] ^= !0 >> ((!max + 1) % 64);
+    }
+
     pub fn contains(&self, value: u16) -> bool {
         self.get(value)
     }
@@ -299,6 +318,13 @@ impl BitsetContainer {
     }
 }
 
+impl BitsetContainer {
+    /// Get the size in bytes of a bitset container
+    pub fn serialized_size() -> usize {
+        BITSET_SIZE_IN_WORDS * 8
+    }
+}
+
 impl From<ArrayContainer> for BitsetContainer {
     fn from(container: ArrayContainer) -> Self {
         let mut bitset = BitsetContainer::new();
@@ -328,6 +354,20 @@ impl From<RunContainer> for BitsetContainer {
 impl PartialEq for BitsetContainer {
     fn eq(&self, other: &BitsetContainer) -> bool {
         utils::mem_equals(&self.bitset, &other.bitset)
+    }
+}
+
+impl Deref for BitsetContainer {
+    type Target = [u64];
+
+    fn deref(&self) -> &Self::Target {
+        &self.bitset
+    }
+}
+
+impl DerefMut for BitsetContainer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.bitset
     }
 }
 
@@ -383,18 +423,29 @@ impl Intersection<ArrayContainer> for BitsetContainer {
 impl Intersection<RunContainer> for BitsetContainer {
     type Output = ContainerType;
     
-    fn intersect_with(&self, other: &RunContainer, out: &mut ContainerType) {
+    fn intersect_with(&self, other: &RunContainer, out: &mut Self::Output) {
         other.intersect_with(self, out)
     }
 }
 
 impl Difference<Self> for BitsetContainer {
-    type Output = Self;
+    type Output = ContainerType;
 
     fn difference_with(&self, other: &Self, out: &mut Self::Output) {
         unsafe {
-            let cardinality = bitset_ops::difference(&self.bitset, &other.bitset, &mut out.bitset);
-            out.cardinality = cardinality;
+            let mut bitset = BitsetContainer::new();
+            let cardinality = bitset_ops::difference(
+                &self.bitset,
+                &other.bitset,
+                &mut bitset.bitset
+            );
+
+            if cardinality <= DEFAULT_MAX_SIZE {
+                *out = ContainerType::Array(bitset.into());
+            }
+            else {
+                *out = ContainerType::Bitset(bitset);
+            }
         }
     }
 }
@@ -440,22 +491,25 @@ impl Difference<RunContainer> for BitsetContainer {
 }
 
 impl SymmetricDifference<Self> for BitsetContainer {
-    fn symmetric_difference_with(&self, other: &Self, out: &mut Self) {
-        unsafe {
-            let cardinality = bitset_ops::symmetric_difference(&self.bitset, &other.bitset, &mut out.bitset);
-            out.cardinality = cardinality;
-        }
+    type Output = ContainerType;
+
+    fn symmetric_difference_with(&self, other: &Self, out: &mut Self::Output) {
+        unimplemented!()
     }
 }
 
 impl SymmetricDifference<ArrayContainer> for BitsetContainer {
-    fn symmetric_difference_with(&self, other: &ArrayContainer, out: &mut ArrayContainer) {
+    type Output = ContainerType;
+
+    fn symmetric_difference_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
         unimplemented!()
     }
 }
 
 impl SymmetricDifference<RunContainer> for BitsetContainer {
-    fn symmetric_difference_with(&self, other: &RunContainer, out: &mut RunContainer) {
+    type Output = ContainerType;
+
+    fn symmetric_difference_with(&self, other: &RunContainer, out: &mut Self::Output) {
         unimplemented!()
     }
 }

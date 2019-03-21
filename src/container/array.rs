@@ -1,5 +1,5 @@
 use std::fmt;
-use std::ops::{Deref};
+use std::ops::{Deref, DerefMut};
 use std::slice::Iter;
 
 use crate::utils::mem_equals;
@@ -304,6 +304,13 @@ impl ArrayContainer {
     }
 }
 
+impl ArrayContainer {
+    /// Get the size in bytes of a container with `cardinality`
+    pub fn serialized_size(cardinality: usize) -> usize {
+        cardinality * 2 + 2
+    }
+}
+
 impl fmt::Debug for ArrayContainer {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "ArrayContainer {:?}", self.array)
@@ -315,6 +322,12 @@ impl Deref for ArrayContainer {
 
     fn deref(&self) -> &[u16] {
         &self.array
+    }
+}
+
+impl DerefMut for ArrayContainer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.array
     }
 }
 
@@ -436,10 +449,10 @@ impl Difference<BitsetContainer> for ArrayContainer {
         }
 
         unsafe {
-            let card = 0;
-            for key in self.array {
-                *out.get_unchecked_mut(card) = key;
-                card += !other.contains(key) as usize;
+            let mut card = 0;
+            for key in self.array.iter() {
+                *out.get_unchecked_mut(card) = *key;
+                card += !other.contains(*key) as usize;
             }
 
             out.set_cardinality(card);
@@ -460,15 +473,53 @@ impl Difference<RunContainer> for ArrayContainer {
             return;
         }
 
-        unimplemented!()
+        unsafe {
+            let runs = other.deref();
+            let mut run_start = runs.get_unchecked(0).value as usize;
+            let mut run_end = run_start + runs.get_unchecked(0).length as usize;
+            let mut which_run = 0;
+
+            let mut i = 0;
+            while i < self.cardinality() {
+                let val = *self.array.get_unchecked(0) as usize;
+                if val < run_start {
+                    out.push(val as u16);
+                    continue;
+                }
+
+                if val <= run_end {
+                    continue;
+                }
+
+                loop {
+                    if which_run + 1 < runs.len() {
+                        which_run += 1;
+
+                        let rle = runs.get_unchecked(which_run);
+                        run_start = rle.value as usize;
+                        run_end = rle.sum() as usize;
+                    }
+                    else {
+                        run_start = (1 << 16) + 1;
+                        run_end = (1 << 16) + 1;
+                    }
+
+                    if val <= run_end {
+                        break;
+                    }
+                }
+
+                i -= 1;
+            }
+        }
     }
 }
 
 impl SymmetricDifference<Self> for ArrayContainer {
-    type Output = Self;
+    type Output = ContainerType;
 
     fn symmetric_difference_with(&self, other: &Self, out: &mut Self::Output) {
-        symmetric_difference(&self.array, &other.array, &mut out.array);
+        unimplemented!()
     }
 }
 

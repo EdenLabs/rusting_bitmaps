@@ -1,5 +1,7 @@
 use std::slice::{Iter, IterMut};
+use std::ops::{Deref, DerefMut};
 use std::iter;
+use std::mem;
 
 use crate::utils;
 use crate::container::*;
@@ -129,8 +131,8 @@ impl RunContainer {
         else {
             let common_min = self.runs[runs_min].value;
             let common_max = self.runs[runs_min + common - 1].sum();
-            let result_min = crate::utils::min(common_min, min);
-            let result_max = crate::utils::max(common_max, max);
+            let result_min = utils::min(common_min, min);
+            let result_max = utils::max(common_max, max);
 
             self.runs[runs_min] = Rle16::new(result_min, result_max - result_min);
             self.runs.splice((runs_min + 1)..runs_max, iter::empty());
@@ -512,6 +514,13 @@ impl RunContainer {
     }
 }
 
+impl RunContainer {
+    /// Get the size in bytes of a container with `num_runs`
+    pub fn serialized_size(num_runs: usize) -> usize {
+        mem::size_of::<u16>() + mem::size_of::<Rle16>() * num_runs
+    }
+}
+
 impl From<ArrayContainer> for RunContainer {
     fn from(container: ArrayContainer) -> Self {
         let num_runs = container.num_runs();
@@ -559,6 +568,20 @@ impl PartialEq for RunContainer {
     }
 }
 
+impl Deref for RunContainer {
+    type Target = [Rle16];
+
+    fn deref(&self) -> &Self::Target {
+        &self.runs
+    }
+}
+
+impl DerefMut for RunContainer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.runs
+    }
+}
+
 impl Container for RunContainer { }
 
 impl Union<Self> for RunContainer {
@@ -575,6 +598,7 @@ impl Union<ArrayContainer> for RunContainer {
     fn union_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
         if self.is_full() {
             out.copy_from(self);
+            return;
         }
 
         out.reserve(2 * other.cardinality() + self.runs.len());
@@ -596,7 +620,7 @@ impl Union<ArrayContainer> for RunContainer {
 
         while rle_index < self.runs.len() && array_index < other.cardinality() {
             if self.runs[rle_index].value < other[array_index] {
-                run_ops::append(&mut out.runs, &self.runs[rle_index], &mut prev_rle);
+                unsafe { run_ops::append(&mut out.runs, &self.runs[rle_index], &mut prev_rle) };// TODO: Refactor this
                 rle_index += 1;
             }
             else {
@@ -613,7 +637,7 @@ impl Union<ArrayContainer> for RunContainer {
         }
         else {
             while rle_index < self.runs.len() {
-                run_ops::append(&mut out.runs, &self.runs[rle_index], &mut prev_rle);
+                unsafe { run_ops::append(&mut out.runs, &self.runs[rle_index], &mut prev_rle) };
                 rle_index += 1;
             }
         }
@@ -714,7 +738,7 @@ impl Intersection<BitsetContainer> for RunContainer {
             }
 
             let mut array = ArrayContainer::with_capacity(card);
-            for run in self.runs {
+            for run in self.runs.iter() {
                 array.add_from_range(run.value, run.sum());
             }
 
@@ -727,8 +751,8 @@ impl Intersection<BitsetContainer> for RunContainer {
             bitset.copy_from(other);
 
             // Unset all bits in between the runs
-            let start = 0;
-            for run in self.runs {
+            let mut start = 0;
+            for run in self.runs.iter() {
                 let end = run.value as usize;
                 bitset.unset_range(start, end);
 
@@ -751,17 +775,57 @@ impl Intersection<BitsetContainer> for RunContainer {
 }
 
 impl Difference<Self> for RunContainer {
-    type Output = Self;
+    type Output = ContainerType;
 
     fn difference_with(&self, other: &Self, out: &mut Self::Output) {
-        run_ops::difference(&self.runs, &other.runs, &mut out.runs);
+        let mut r = RunContainer::new();
+        run_ops::difference(&self.runs, &other.runs, &mut r.runs);
+
+        // Determine the most efficient container type and convert to that
+        let cardinality = r.cardinality();
+        let size_as_run = RunContainer::serialized_size(r.num_runs());
+        let size_as_bitset = BitsetContainer::serialized_size();
+        let size_as_array = ArrayContainer::serialized_size(cardinality);
+        let min_size_other = utils::min(size_as_array, size_as_bitset);
+
+        // Run is still smallest, leave as is
+        if size_as_run < min_size_other {
+            *out = ContainerType::Run(r);
+            return;
+        }
+
+        // Array is smallest, convert
+        if cardinality < DEFAULT_MAX_SIZE {
+            *out = ContainerType::Array(r.into());
+            return;
+        }
+
+        // Bitset is smallest, convert
+        *out = ContainerType::Bitset(r.into());
     }
 }
 
 impl Difference<ArrayContainer> for RunContainer {
-    type Output = ContainerType;
+    type Output = ArrayContainer;
 
     fn difference_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
+        const ARBITRARY_THRESHOLD: usize = 32;
+
+        let cardinality = self.cardinality();
+
+        if cardinality < ARBITRARY_THRESHOLD {
+
+        }
+
+        if cardinality <= DEFAULT_MAX_SIZE {
+            let mut array = ArrayContainer::with_capacity(cardinality);
+            
+            unimplemented!();
+            
+            return;
+        }
+
+        // TODO: Implement non consuming conversion operation for bitset from run
         unimplemented!()
     }
 }
@@ -770,24 +834,71 @@ impl Difference<BitsetContainer> for RunContainer {
     type Output = ContainerType;
 
     fn difference_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
-        unimplemented!()
+        let cardinality = self.cardinality();
+        
+        // Result is an array
+        if cardinality < DEFAULT_MAX_SIZE {
+            let mut array = ArrayContainer::with_capacity(cardinality);
+            for rle in self.runs.iter() {
+                for value in rle.value..rle.sum() {
+                    if !other.get(value) {
+                        array.push(value);
+                    }
+                }
+            }
+
+            *out = ContainerType::Array(array);
+        }
+        // Result may be a bitset
+        else {
+            let mut bitset = other.clone();
+
+            let mut last_pos = 0;
+            for rle in self.runs.iter() {
+                let start = rle.value as usize;
+                let end = (rle.sum() + 1) as usize;
+
+                bitset.unset_range(last_pos, start);
+                bitset.flip_range(start, end);
+
+                last_pos = end;
+            }
+
+            bitset.unset_range(last_pos, 1 << 16);
+
+            // Result is not a bitset, convert to array
+            if bitset.cardinality() <= DEFAULT_MAX_SIZE {
+                *out = ContainerType::Array(bitset.into());
+                return;
+            }
+            // Result is a bitset
+            else {
+                *out = ContainerType::Bitset(bitset);
+            }
+        }
     }
 }
 
 impl SymmetricDifference<Self> for RunContainer {
-    fn symmetric_difference_with(&self, other: &Self, out: &mut Self) {
-        run_ops::symmetric_difference(&self.runs, &other.runs, &mut out.runs);
+    type Output = ContainerType;
+
+    fn symmetric_difference_with(&self, other: &Self, out: &mut Self::Output) {
+        unimplemented!()
     }
 }
 
 impl SymmetricDifference<ArrayContainer> for RunContainer {
-    fn symmetric_difference_with(&self, other: &ArrayContainer, out: &mut ArrayContainer) {
+    type Output = ContainerType;
+
+    fn symmetric_difference_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
         unimplemented!()
     }
 }
 
 impl SymmetricDifference<BitsetContainer> for RunContainer {
-    fn symmetric_difference_with(&self, other: &BitsetContainer, out: &mut BitsetContainer) {
+    type Output = ContainerType;
+
+    fn symmetric_difference_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
         unimplemented!()
     }
 }

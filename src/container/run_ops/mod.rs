@@ -349,7 +349,7 @@ pub fn append_exclusive(runs: &mut Vec<Rle16>, start: u16, length: u16) {
     }
 
     let len = runs.len();
-    let last_run = runs.get_unchecked_mut(len - 1);
+    let last_run = &mut runs[len - 1];
     let old_end = last_run.value + last_run.length + 1;
 
     if start > old_end {
