@@ -55,12 +55,12 @@ Rusting Bitmaps is a native Rust port of [Roaring Bitmaps](https://roaringbitmap
  - [ ] Mixed Ops
     - [ ] Difference
     - [ ] Equals
-    - [ ] Intersect
+    - [x] Intersect
     - [ ] Negation
     - [ ] Subset
     - [x] Union
     - [ ] Symmetric Difference
-    - [ ] Cardinality variants?
+    - [ ] Cardinality variants? (Making cardinality lazy may be the better option)
  - [ ] Serialization (serde w/ feature flag)
  - [x] Portability
  - [ ] Inplace variants for all ops
