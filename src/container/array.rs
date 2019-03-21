@@ -6,26 +6,28 @@ use crate::utils::mem_equals;
 use crate::container::*;
 use crate::container::array_ops::*;
 
-pub const DEFAULT_MAX_SIZE: usize = 4096;
-
+/// An array container. Elements are sorted numerically and represented as individual values in the array
 #[derive(Clone)]
 pub struct ArrayContainer {
     array: Vec<u16>
 }
 
 impl ArrayContainer {
+    /// Create a new array container
     pub fn new() -> Self {
         Self {
             array: Vec::with_capacity(DEFAULT_MAX_SIZE)
         }
     }
 
+    /// Create a new array container with a specified capacity
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             array: Vec::with_capacity(capacity)
         }
     }
 
+    /// Create a new array container with elements in the specified range
     pub fn with_range(min: usize, max: usize, step: usize) -> Self {
         assert!(min < max);
         assert!(step != 0);
@@ -41,44 +43,74 @@ impl ArrayContainer {
         container
     }
 
+    /// Convert the array container into it's raw representation
     pub fn into_raw(self) -> Vec<u16> {
         self.array
     }
 
+    /// The cardinality of the array container
     #[inline]
     pub fn cardinality(&self) -> usize {
         // Len is the same as the cardinality for raw sets of integers
         self.array.len()
     }
 
+    /// Set the cardinality of the array container
+    /// 
+    /// # Safety
+    /// Assumes that the container's capacity is < `cardinality`
     #[inline]
-    pub fn len(&self) -> usize {
-        self.array.len()
+    pub unsafe fn set_cardinality(&mut self, cardinality: usize) {
+        self.array.set_len(cardinality);
     }
 
+    /// The capacity of the array container
     #[inline]
     pub fn capacity(&self) -> usize {
         self.array.capacity()
     }
 
+    /// Shrink the capacity of the array container to match the cardinality
     #[inline]
     pub fn shrink_to_fit(&mut self) {
         self.array.shrink_to_fit();
     }
 
+    /// Reserve space for `additional` elements
     #[inline]
     pub fn reserve(&mut self, additional: usize) {
         self.array.reserve(additional);
     }
 
+    /// Copy the elements from `other` into `self`
     pub fn copy_from(&mut self, other: &ArrayContainer) {
         self.copy_from_slice(&other.array);
     }
 
+    /// Push a value onto the end of the array
+    /// 
+    /// # Notes
+    /// Assumes that the value is greater than all other elements in the array
+    pub fn push(&mut self, value: u16) {
+        assert!({
+            // Ensure that value is greater than any element in the set
+            if self.len() > 0 {
+                value > self.max().unwrap()
+            }
+            else {
+                true
+            }
+        });
+
+        self.array.push(value);
+    }
+
+    /// Add a value to the array
     pub fn add(&mut self, value: u16) -> bool {
         self.add_with_cardinality(value, std::usize::MAX)
     }
 
+    /// Add a value to the array with a max cardinality
     pub fn add_with_cardinality(&mut self, value: u16, max_cardinality: usize) -> bool {
         let can_append = {
             let is_max_value = match self.max() {
@@ -90,7 +122,7 @@ impl ArrayContainer {
         };
 
         if can_append {
-            self.append(value);
+            self.push(value);
             return true;
         }
 
@@ -112,7 +144,7 @@ impl ArrayContainer {
     }
 
     /// Add all values within the specified range
-    pub fn add_from_range(&mut self, min: u32, max: u32) {
+    pub fn add_from_range(&mut self, min: u16, max: u16) {
         assert!(min < max);
 
         let range = min..max;
@@ -127,24 +159,11 @@ impl ArrayContainer {
 
         // Append new elements
         for i in range {
-            self.array.push(i as u16);
+            self.array.push(i);
         }
     }
 
-    pub fn append(&mut self, value: u16) {
-        assert!({
-            // Ensure that value is greater than any element in the set
-            if self.len() > 0 {
-                value > self.max().unwrap()
-            }
-            else {
-                true
-            }
-        });
-
-        self.array.push(value);
-    }
-
+    /// Remove a specified value from the array
     pub fn remove(&mut self, value: u16) -> bool {
         match self.array.binary_search(&value) {
             Ok(index) => {
@@ -213,6 +232,7 @@ impl ArrayContainer {
         }
     }
 
+    /// The smallest element in the array. Returns `None` if `cardinality` is 0
     #[inline]
     pub fn min(&self) -> Option<u16> {
         if self.array.len() == 0 {
@@ -223,6 +243,7 @@ impl ArrayContainer {
         }
     }
 
+    /// The largest element in the array. Returns `None` if the cardinality is 0
     #[inline]
     pub fn max(&self) -> Option<u16> {
         if self.array.len() == 0 {
@@ -277,6 +298,7 @@ impl ArrayContainer {
         num_runs
     }
 
+    /// Get an iterator over the elements of the array
     pub fn iter(&self) -> Iter<u16> {
         self.array.iter()
     }
@@ -324,7 +346,7 @@ impl From<RunContainer> for ArrayContainer {
             let run_end = run_start + run.length;
 
             for i in run_start..run_end {
-                array.append(i);
+                array.push(i);
             }
         }
 
@@ -398,37 +420,70 @@ impl Intersection<RunContainer> for ArrayContainer {
 }
 
 impl Difference<Self> for ArrayContainer {
-    fn difference_with(&self, other: &Self, out: &mut Self) {
+    type Output = Self;
+
+    fn difference_with(&self, other: &Self, out: &mut Self::Output) {
         difference(&self.array, &other.array, &mut out.array);
     }
 }
 
 impl Difference<BitsetContainer> for ArrayContainer {
-    fn difference_with(&self, other: &BitsetContainer, out: &mut BitsetContainer) {
-        unimplemented!()
+    type Output = ArrayContainer;
+
+    fn difference_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
+        if out.capacity() < self.cardinality() {
+            out.reserve(self.cardinality() - out.capacity());
+        }
+
+        unsafe {
+            let card = 0;
+            for key in self.array {
+                *out.get_unchecked_mut(card) = key;
+                card += !other.contains(key) as usize;
+            }
+
+            out.set_cardinality(card);
+        }
     }
 }
 
 impl Difference<RunContainer> for ArrayContainer {
-    fn difference_with(&self, other: &RunContainer, out: &mut RunContainer) {
+    type Output = ArrayContainer;
+
+    fn difference_with(&self, other: &RunContainer, out: &mut Self::Output) {
+        if self.cardinality() > out.capacity() {
+            out.reserve(self.cardinality() - out.capacity());
+        }
+
+        if other.num_runs() == 0 {
+            out.copy_from(self);
+            return;
+        }
+
         unimplemented!()
     }
 }
 
 impl SymmetricDifference<Self> for ArrayContainer {
-    fn symmetric_difference_with(&self, other: &Self, out: &mut Self) {
+    type Output = Self;
+
+    fn symmetric_difference_with(&self, other: &Self, out: &mut Self::Output) {
         symmetric_difference(&self.array, &other.array, &mut out.array);
     }
 }
 
 impl SymmetricDifference<BitsetContainer> for ArrayContainer {
-    fn symmetric_difference_with(&self, other: &BitsetContainer, out: &mut BitsetContainer) {
+    type Output = ContainerType;
+
+    fn symmetric_difference_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
         unimplemented!()
     }
 }
 
 impl SymmetricDifference<RunContainer> for ArrayContainer {
-    fn symmetric_difference_with(&self, other: &RunContainer, out: &mut RunContainer) {
+    type Output = ContainerType;
+
+    fn symmetric_difference_with(&self, other: &RunContainer, out: &mut Self::Output) {
         unimplemented!()
     }
 }

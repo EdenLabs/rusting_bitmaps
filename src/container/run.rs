@@ -313,6 +313,10 @@ impl RunContainer {
     pub fn cardinality(&self) -> usize {
         unimplemented!()
     }
+
+    pub fn num_runs(&self) -> usize {
+        self.runs.len()
+    }
     
     pub fn is_empty(&self) -> bool {
         self.runs.len() == 0
@@ -680,7 +684,7 @@ impl Intersection<ArrayContainer> for RunContainer {
                     );
                 }
                 else {
-                    out.add(value);
+                    out.push(value);
                     array_index += 1;
                 }
             }
@@ -689,25 +693,83 @@ impl Intersection<ArrayContainer> for RunContainer {
 }
 
 impl Intersection<BitsetContainer> for RunContainer {
-    fn intersect_with(&self, other: &BitsetContainer, out: &mut BitsetContainer) {
-        unimplemented!()
+    type Output = ContainerType;
+
+    fn intersect_with(&self, other: &BitsetContainer, out: &mut ContainerType) {
+        if self.is_full() {
+            *out = {
+                let mut bitset = BitsetContainer::new();
+                bitset.copy_from(other);
+
+                ContainerType::Bitset(bitset)
+            };
+            
+            return;
+        }
+
+        let mut card = self.cardinality();
+        if card <= DEFAULT_MAX_SIZE {
+            if card > other.cardinality() {
+                card = other.cardinality();
+            }
+
+            let mut array = ArrayContainer::with_capacity(card);
+            for run in self.runs {
+                array.add_from_range(run.value, run.sum());
+            }
+
+            *out = ContainerType::Array(array);
+
+            return;
+        }
+        else {
+            let mut bitset = BitsetContainer::new();
+            bitset.copy_from(other);
+
+            // Unset all bits in between the runs
+            let start = 0;
+            for run in self.runs {
+                let end = run.value as usize;
+                bitset.unset_range(start, end);
+
+                start = end + run.length as usize + 1;
+            }
+
+            bitset.unset_range(start, 1 << 16);
+
+            if bitset.cardinality() > DEFAULT_MAX_SIZE {
+                *out = ContainerType::Bitset(bitset);
+                return;
+            }
+            else {
+                *out = ContainerType::Array(bitset.into());
+            }
+            
+            return;
+        }
     }
 }
 
 impl Difference<Self> for RunContainer {
-    fn difference_with(&self, other: &Self, out: &mut Self) {
+    type Output = Self;
+
+    fn difference_with(&self, other: &Self, out: &mut Self::Output) {
         run_ops::difference(&self.runs, &other.runs, &mut out.runs);
     }
 }
 
 impl Difference<ArrayContainer> for RunContainer {
-    fn difference_with(&self, other: &ArrayContainer, out: &mut ArrayContainer) {
+    type Output = ContainerType;
+
+    fn difference_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
         unimplemented!()
     }
 }
 
 impl Difference<BitsetContainer> for RunContainer {
-    fn difference_with(&self, other: &BitsetContainer, out: &mut BitsetContainer) {
+    type Output = ContainerType;
+
+    fn difference_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
         unimplemented!()
     }
 }

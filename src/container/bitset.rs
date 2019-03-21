@@ -2,7 +2,6 @@ use std::slice::{Iter, IterMut};
 
 use crate::utils;
 use crate::container::*;
-use crate::container::array::DEFAULT_MAX_SIZE;
 use crate::align::{Align, A32};
 
 use super::bitset_ops;
@@ -382,13 +381,17 @@ impl Intersection<ArrayContainer> for BitsetContainer {
 }
 
 impl Intersection<RunContainer> for BitsetContainer {
-    fn intersect_with(&self, other: &RunContainer, out: &mut RunContainer) {
-        unimplemented!()
+    type Output = ContainerType;
+    
+    fn intersect_with(&self, other: &RunContainer, out: &mut ContainerType) {
+        other.intersect_with(self, out)
     }
 }
 
 impl Difference<Self> for BitsetContainer {
-    fn difference_with(&self, other: &Self, out: &mut Self) {
+    type Output = Self;
+
+    fn difference_with(&self, other: &Self, out: &mut Self::Output) {
         unsafe {
             let cardinality = bitset_ops::difference(&self.bitset, &other.bitset, &mut out.bitset);
             out.cardinality = cardinality;
@@ -397,14 +400,42 @@ impl Difference<Self> for BitsetContainer {
 }
 
 impl Difference<ArrayContainer> for BitsetContainer {
-    fn difference_with(&self, other: &ArrayContainer, out: &mut ArrayContainer) {
-        unimplemented!()
+    type Output = ContainerType;
+
+    fn difference_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
+        let mut bitset = BitsetContainer::new();
+        bitset.copy_from(self);
+        bitset.clear_list(&other);
+
+        if bitset.cardinality() <= DEFAULT_MAX_SIZE {
+            *out = ContainerType::Array(bitset.into());
+            return;
+        }
+
+        *out = ContainerType::Bitset(bitset);
     }
 }
 
 impl Difference<RunContainer> for BitsetContainer {
-    fn difference_with(&self, other: &RunContainer, out: &mut RunContainer) {
-        unimplemented!()
+    type Output = ContainerType;
+
+    fn difference_with(&self, other: &RunContainer, out: &mut Self::Output) {
+        let mut bitset = BitsetContainer::new();
+        bitset.copy_from(self);
+
+        for run in other.iter() {
+            bitset.unset_range(
+                run.value as usize,
+                (run.sum() + 1) as usize
+            );
+        }
+
+        if bitset.cardinality() <= DEFAULT_MAX_SIZE {
+            *out = ContainerType::Array(bitset.into());
+            return;
+        }
+
+        *out = ContainerType::Bitset(bitset);
     }
 }
 
