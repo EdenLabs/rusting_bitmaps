@@ -319,6 +319,10 @@ impl RunContainer {
     pub fn num_runs(&self) -> usize {
         self.runs.len()
     }
+
+    pub fn capacity(&self) -> usize {
+        self.runs.capacity()
+    }
     
     pub fn is_empty(&self) -> bool {
         self.runs.len() == 0
@@ -406,6 +410,28 @@ impl RunContainer {
         }
 
         return false;
+    }
+
+    /// Convert self into the most efficient container. Returns self if already optimal
+    pub fn into_efficient_container(self) -> ContainerType {
+        let cardinality = self.cardinality();
+        let size_as_run = RunContainer::serialized_size(self.num_runs());
+        let size_as_bitset = BitsetContainer::serialized_size();
+        let size_as_array = ArrayContainer::serialized_size(cardinality);
+        let min_size_other = utils::min(size_as_array, size_as_bitset);
+
+        // Run is still smallest, leave as is
+        if size_as_run < min_size_other {
+            return ContainerType::Run(self);
+        }
+
+        // Array is smallest, convert
+        if cardinality < DEFAULT_MAX_SIZE {
+            return ContainerType::Array(self.into());
+        }
+
+        // Bitset is smallest, convert
+        return ContainerType::Bitset(self.into());
     }
 
     fn binary_search(&self, key: u16) -> SearchResult {
@@ -523,6 +549,12 @@ impl RunContainer {
 
 impl From<ArrayContainer> for RunContainer {
     fn from(container: ArrayContainer) -> Self {
+        From::from(&container)
+    }
+}
+
+impl<'a> From<&'a ArrayContainer> for RunContainer {
+    fn from(container: &'a ArrayContainer) -> Self {
         let num_runs = container.num_runs();
         let mut run_container = RunContainer::with_capacity(num_runs);
 
@@ -558,6 +590,12 @@ impl From<ArrayContainer> for RunContainer {
 
 impl From<BitsetContainer> for RunContainer {
     fn from(container: BitsetContainer) -> Self {
+        From::from(&container)
+    }
+}
+
+impl<'a> From<&'a BitsetContainer> for RunContainer {
+    fn from(container: &'a BitsetContainer) -> Self {
         unimplemented!()
     }
 }
@@ -781,27 +819,7 @@ impl Difference<Self> for RunContainer {
         let mut r = RunContainer::new();
         run_ops::difference(&self.runs, &other.runs, &mut r.runs);
 
-        // Determine the most efficient container type and convert to that
-        let cardinality = r.cardinality();
-        let size_as_run = RunContainer::serialized_size(r.num_runs());
-        let size_as_bitset = BitsetContainer::serialized_size();
-        let size_as_array = ArrayContainer::serialized_size(cardinality);
-        let min_size_other = utils::min(size_as_array, size_as_bitset);
-
-        // Run is still smallest, leave as is
-        if size_as_run < min_size_other {
-            *out = ContainerType::Run(r);
-            return;
-        }
-
-        // Array is smallest, convert
-        if cardinality < DEFAULT_MAX_SIZE {
-            *out = ContainerType::Array(r.into());
-            return;
-        }
-
-        // Bitset is smallest, convert
-        *out = ContainerType::Bitset(r.into());
+        *out = r.into_efficient_container();
     }
 }
 

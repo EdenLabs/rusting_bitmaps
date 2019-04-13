@@ -345,12 +345,24 @@ impl Eq for ArrayContainer { }
 
 impl From<BitsetContainer> for ArrayContainer {
     fn from(container: BitsetContainer) -> Self {
+        From::from(&container)
+    }
+}
+
+impl<'a> From<&'a BitsetContainer> for ArrayContainer {
+    fn from(container: &'a BitsetContainer) -> Self {
         unimplemented!()
     }
 }
 
 impl From<RunContainer> for ArrayContainer {
     fn from(container: RunContainer) -> Self {
+        From::from(&container)
+    }
+}
+
+impl<'a> From<&'a RunContainer> for ArrayContainer {
+    fn from(container: &'a RunContainer) -> Self {
         let cardinality = container.cardinality();
 
         let mut array = ArrayContainer::with_capacity(cardinality);
@@ -573,7 +585,63 @@ impl SymmetricDifference<RunContainer> for ArrayContainer {
     type Output = ContainerType;
 
     fn symmetric_difference_with(&self, other: &RunContainer, out: &mut Self::Output) {
-        unimplemented!()
+        const THRESHOLD: usize = 32;
+        if self.cardinality() < THRESHOLD {
+            let mut result = RunContainer::new();
+            
+            let desired_capacity = self.cardinality() + other.num_runs();
+            if result.capacity() < desired_capacity {
+                result.reserve(desired_capacity - result.capacity());
+            }
+
+            let mut rle_pos = 0;
+            let mut array_pos = 0;
+
+            // Append elements using xor logic
+            while rle_pos < other.num_runs() && array_pos < self.cardinality() {
+                let rle = other[rle_pos];
+
+                if rle.value <= self[array_pos] {
+                    // TOOD: Smart append exclusive
+
+                    rle_pos += 1;
+                }
+                else {
+                    // TODO: Smart append exclusive
+
+                    array_pos += 1;
+                }
+            }
+
+            // Append remaining elements in array
+            while array_pos < self.cardinality() {
+                // TODO: Smart append exclusive
+
+                array_pos += 1;
+            }
+
+            // Append remaining elements in run
+            while rle_pos < other.num_runs() {
+                // TODO: Smart append exclusive
+
+                rle_pos += 1;
+            }
+
+            *out = result.into_efficient_container();
+        }
+
+        // Process as an array since the final result is probably an array
+        if other.cardinality() <= DEFAULT_MAX_SIZE {
+            let array: ArrayContainer = other.into();
+
+            array.symmetric_difference_with(self, out);
+        }
+        // Process as a bitset since the final result may be a bitset
+        else {
+            let bitset: BitsetContainer = other.into();
+
+            bitset.symmetric_difference_with(self, out);
+        }
     }
 }
 

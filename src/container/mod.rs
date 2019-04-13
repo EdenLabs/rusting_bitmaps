@@ -16,6 +16,8 @@ pub const DEFAULT_MAX_SIZE: usize = 4096;
 
 /// Enum representing a container
 pub enum ContainerType {
+    None,
+
     /// Array container
     Array(ArrayContainer),
 
@@ -24,6 +26,64 @@ pub enum ContainerType {
 
     /// Run container
     Run(RunContainer)
+}
+
+impl ContainerType {
+    /// Check if there is no container
+    pub fn is_none(&self) -> bool {
+        match self {
+            ContainerType::None => true,
+            _ => false
+        }
+    }
+
+    /// Check if the container is an array
+    pub fn is_array(&self) -> bool {
+        match self {
+            ContainerType::Array(_) => true,
+            _ => false
+        }
+    }
+
+    /// Check if the container is a bitset
+    pub fn is_bitset(&self) -> bool {
+        match self {
+            ContainerType::Bitset(_) => true,
+            _ => false
+        }
+    }
+
+    /// Check if the container is a run
+    pub fn is_run(&self) -> bool {
+        match self {
+            ContainerType::Run(_) => true,
+            _ => false
+        }
+    }
+
+    /// Unwrap the container as an array
+    pub fn unwrap_array(self) -> ArrayContainer {
+        match self {
+            ContainerType::Array(array) => array,
+            _ => panic!("Not an array")
+        }
+    }
+
+    /// Unwrap the container as a bitset
+    pub fn unwrap_bitset(self) -> BitsetContainer {
+        match self {
+            ContainerType::Bitset(bitset) => bitset,
+            _ => panic!("Not a bitset")
+        }
+    }
+
+    /// Unwrap the container as a run
+    pub fn unwrap_run(self) -> RunContainer {
+        match self {
+            ContainerType::Run(run) => run,
+            _ => panic!("Not a run")
+        }
+    }
 }
 
 /// Marker trait for container types

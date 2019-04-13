@@ -255,12 +255,12 @@ impl BitsetContainer {
             let i = 0;
             while i < list.len() {
                 let val = *ptr.offset(i as isize);
-                let word_index = val >> 6;// Index / word_size
+                let word_index = (val >> 6) as usize;// Index / word_size
                 let index = val % 64;
                 let load = self.bitset[word_index];
                 let store = load ^ (1 << index);
 
-                self.cardinality += 1 - 2 * (((1 << index) & load) >> index);// Update with -1 or +1
+                self.cardinality += (1 - 2 * (((1 << index) & load) >> index)) as usize;// Update with -1 or +1
 
                 self.bitset[word_index] = store;
 
@@ -347,6 +347,12 @@ impl BitsetContainer {
 
 impl From<ArrayContainer> for BitsetContainer {
     fn from(container: ArrayContainer) -> Self {
+        From::from(&container)
+    }
+}
+
+impl<'a> From<&'a ArrayContainer> for BitsetContainer {
+    fn from(container: &'a ArrayContainer) -> Self {
         let mut bitset = BitsetContainer::new();
 
         for value in container.iter() {
@@ -359,6 +365,12 @@ impl From<ArrayContainer> for BitsetContainer {
 
 impl From<RunContainer> for BitsetContainer {
     fn from(container: RunContainer) -> Self {
+        From::from(&container)
+    }
+}
+
+impl<'a> From<&'a RunContainer> for BitsetContainer {
+    fn from(container: &'a RunContainer) -> Self {
         let cardinality = container.cardinality();
 
         let mut bitset = BitsetContainer::new();
