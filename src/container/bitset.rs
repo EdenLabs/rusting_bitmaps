@@ -249,6 +249,26 @@ impl BitsetContainer {
         self.bitset[last_word] ^= !0 >> ((!max + 1) % 64);
     }
 
+    pub fn flip_list(&mut self, list: &[u16]) {
+        unsafe {
+            let ptr = list.as_ptr();
+            let i = 0;
+            while i < list.len() {
+                let val = *ptr.offset(i as isize);
+                let word_index = val >> 6;// Index / word_size
+                let index = val % 64;
+                let load = self.bitset[word_index];
+                let store = load ^ (1 << index);
+
+                self.cardinality += 1 - 2 * (((1 << index) & load) >> index);// Update with -1 or +1
+
+                self.bitset[word_index] = store;
+
+                i += 1;
+            }
+        }
+    }
+
     pub fn contains(&self, value: u16) -> bool {
         self.get(value)
     }

@@ -411,7 +411,7 @@ impl Intersection<BitsetContainer> for ArrayContainer {
 
         unsafe {
             let mut new_card = 0;
-            let mut card = self.cardinality();
+            let card = self.cardinality();
 
             for i in 0..card {
                 let key = *self.array.get_unchecked(i);
@@ -519,7 +519,34 @@ impl SymmetricDifference<Self> for ArrayContainer {
     type Output = ContainerType;
 
     fn symmetric_difference_with(&self, other: &Self, out: &mut Self::Output) {
-        unimplemented!()
+        let total_cardinality = self.cardinality() + other.cardinality();
+        
+        // Output is an array container, calculate and return
+        if total_cardinality <= DEFAULT_MAX_SIZE {
+            let mut result = ArrayContainer::with_capacity(total_cardinality);
+            
+            symmetric_difference(
+                &self.array,
+                &other.array,
+                &mut result.array
+            );
+
+            *out = ContainerType::Array(result);
+            return;
+        }
+
+        // Output may be a bitset container, calculate it one as an 
+        // intermediate representation and convert if necessary
+        let mut result = BitsetContainer::from(self.clone());// TODO: Avoid the double alloc here
+        result.flip_list(&other.array);
+
+        // Check if the result is small enough to fit in an array, if so convert
+        if result.cardinality() <= DEFAULT_MAX_SIZE {
+            *out = ContainerType::Array(result.into());
+        }
+        else {
+            *out = ContainerType::Bitset(result);
+        }
     }
 }
 
@@ -527,7 +554,18 @@ impl SymmetricDifference<BitsetContainer> for ArrayContainer {
     type Output = ContainerType;
 
     fn symmetric_difference_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
-        unimplemented!()
+        let mut result = BitsetContainer::new();
+        result.copy_from(other);
+        result.flip_list(&self.array);
+
+        // Array is a better representation for this set, convert
+        if self.cardinality() <= DEFAULT_MAX_SIZE {
+            *out = ContainerType::Array(result.into());
+        }
+        // Bitset is a better representation
+        else {
+            *out = ContainerType::Bitset(result);
+        }
     }
 }
 
