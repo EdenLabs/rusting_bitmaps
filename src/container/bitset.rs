@@ -7,8 +7,13 @@ use crate::align::{Align, A32};
 
 use super::bitset_ops;
 
-pub const BITSET_SIZE_IN_WORDS: usize = (1 << 16) / 64;
+/// The size of the bitset in 64bit words
+pub const BITSET_SIZE_IN_WORDS: usize = (1 << 16) >> 6;
 
+/// A bitset container used in a roaring bitmap. 
+/// 
+/// # Structure
+/// Bits are aligned to the 32byte boundary and stored as 64bit words
 #[derive(Clone)]
 pub struct BitsetContainer {
     bitset: Align<Vec<u64>, A32>,
@@ -43,7 +48,7 @@ impl BitsetContainer {
         self.cardinality += ((word ^ new_word) >> 1) as usize;
     }
 
-    /// Set all the bits within the range denoted by `min`->`max`
+    /// Set all the bits within the range denoted by [min-max]
     pub fn set_range(&mut self, min: usize, max: usize) {
         assert!(min < max);
         assert!(max < BITSET_SIZE_IN_WORDS * 64);
@@ -66,6 +71,7 @@ impl BitsetContainer {
         // TODO: Update cardinality
     }
 
+    /// Set bits for the elements in `list`
     pub fn set_list(&mut self, list: &[u16]) {
         for value in list {
             let offset = (*value >> 6) as usize;
@@ -110,6 +116,8 @@ impl BitsetContainer {
     }
 
     // TODO: Unify these index types
+
+    /// Unset all the bits between [min-max]
     pub fn unset_range(&mut self, min: usize, max: usize) {
         if min == max {
             self.unset(min);
@@ -128,6 +136,7 @@ impl BitsetContainer {
         self.bitset[last_word] ^= !0 >> ((!max + 1) % 64)
     }
 
+    /// Clear all bits in the bitset
     pub fn clear(&mut self) {
         // TODO: Vectorize
         for word in &mut *self.bitset {
@@ -137,6 +146,7 @@ impl BitsetContainer {
         self.cardinality = 0;
     }
 
+    /// Clear the elements specified in the list from the bitset
     pub fn clear_list(&mut self, list: &[u16]) {
         for value in list.iter() {
             let offset = *value >> 6;
@@ -167,6 +177,7 @@ impl BitsetContainer {
         increment > 0
     }
 
+    /// Add all values in [min-max] to the bitset
     pub fn add_range(&mut self, min: u16, max: u16) {
         assert!(min < max);
         
@@ -232,6 +243,7 @@ impl BitsetContainer {
         return true;
     }
 
+    /// Flip all bits in the range [min-max]
     pub fn flip_range(&mut self, min: usize, max: usize) {
         if min == max {
             return;
@@ -249,10 +261,11 @@ impl BitsetContainer {
         self.bitset[last_word] ^= !0 >> ((!max + 1) % 64);
     }
 
+    /// Flip all bits contained in `list`
     pub fn flip_list(&mut self, list: &[u16]) {
         unsafe {
             let ptr = list.as_ptr();
-            let i = 0;
+            let mut i = 0;
             while i < list.len() {
                 let val = *ptr.offset(i as isize);
                 let word_index = (val >> 6) as usize;// Index / word_size
@@ -269,18 +282,22 @@ impl BitsetContainer {
         }
     }
 
+    /// Check if the bitset contains a specific value
     pub fn contains(&self, value: u16) -> bool {
         self.get(value)
     }
 
+    /// Check if the bitset contains all bits in the range [min-max]
     pub fn contains_range(&self, min: u16, max: u16) -> bool {
         self.get_range(min, max)
     }
 
+    /// The cardinality of the bitset
     pub fn cardinality(&self) -> usize {
         self.cardinality as usize
     }
     
+    /// Get the smallest value in the bitset
     pub fn min(&self) -> Option<u16> {
         for (i, word) in (*self.bitset).iter().enumerate() {
             if *word != 0 {
@@ -293,6 +310,7 @@ impl BitsetContainer {
         None
     }
 
+    /// Get the largest value in the bitset
     pub fn max(&self) -> Option<u16> {
         for (i, word) in (*self.bitset).iter().enumerate().rev() {
             if *word != 0 {
@@ -305,6 +323,7 @@ impl BitsetContainer {
         None
     }
 
+    /// Get the number of runs in the bitset
     pub fn num_runs(&self) -> usize {
         let mut num_runs = 0;
 
@@ -329,10 +348,12 @@ impl BitsetContainer {
         num_runs as usize
     }
 
+    /// Get an iterator over the words of the bitset
     pub fn iter(&self) -> Iter<u64> {
         self.bitset.iter()
     }
 
+    /// Get a mutable iterator over the words of the bitset
     pub fn iter_mut(&mut self) -> IterMut<u64> {
         self.bitset.iter_mut()
     }

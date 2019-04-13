@@ -8,13 +8,18 @@ use crate::container::*;
 use crate::container::array_ops;
 use crate::container::run_ops;
 
+/// A RLE word storing the value and the length of that run
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Rle16 {
+    /// The value of the run
     pub value: u16,
+
+    /// The number of values in this run
     pub length: u16
 }
 
 impl Rle16 {
+    /// Create a new rle run
     pub fn new(value: u16, length: u16) -> Self {
         Self {
             value,
@@ -22,43 +27,59 @@ impl Rle16 {
         }
     }
 
+    /// Get the total size of the run. `value + length`
     pub fn sum(&self) -> u16 {
         self.value + self.length
     }
 }
 
+/// The result for a binary search
 enum SearchResult {
+    /// An exact match was found, the index is contained
     ExactMatch(usize),
+    
+    /// A match was not found but there was a place it could be inserted, the index is contained 
     PossibleMatch(usize),
+
+    /// No match was found
     NoMatch
 }
 
+/// A container using run length encoding to store it's values.
+/// 
+/// # Structure
+/// Runs are stored as `Rle16` words
 #[derive(Clone)]
 pub struct RunContainer {
     runs: Vec<Rle16>
 }
 
 impl RunContainer {
+    /// Create a new run container
     pub fn new() -> Self {
         Self {
             runs: Vec::new()
         }
     }
     
+    /// Create a new run container with a specified capacity
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             runs: Vec::with_capacity(capacity)
         }
     }
     
+    /// Shrink the run container's backing memory to fit it's contents
     pub fn shrink_to_fit(&mut self) {
         self.runs.shrink_to_fit()
     }
     
+    /// Reserve space for `additional` runs in the run container
     pub fn reserve(&mut self, additional: usize) {
         self.runs.reserve(additional);
     }
     
+    /// Add a value to the run container
     pub fn add(&mut self, value: u16) {
         match self.binary_search(value) {
             SearchResult::ExactMatch(_index) => {
@@ -117,6 +138,7 @@ impl RunContainer {
         }
     }
     
+    /// Add all values in the range [min-max] to the run container
     pub fn add_range(&mut self, min: u16, max: u16) {
         let runs_min = self.rle_count_less(min);
         let runs_max = self.rle_count_greater(max);
@@ -139,6 +161,7 @@ impl RunContainer {
         }
     }
     
+    /// Remove a value from the run container
     pub fn remove(&mut self, value: u16) -> bool {
         match self.binary_search(value) {
             SearchResult::ExactMatch(index) => {
@@ -179,6 +202,7 @@ impl RunContainer {
         }
     }
     
+    /// Remove all values in the range [min-max] from the run container
     pub fn remove_range(&mut self, min: u16, max: u16) {
         fn result_to_compressed_index(value: SearchResult) -> isize {
             match value {
@@ -235,6 +259,7 @@ impl RunContainer {
         }
     }
     
+    /// Check if a value is in the run container
     pub fn contains(&self, value: u16) -> bool {
         match self.binary_search(value) {
             SearchResult::ExactMatch(_index) => {
@@ -256,6 +281,7 @@ impl RunContainer {
         }
     }
     
+    /// Check if the container contains all the values in [min-max]
     pub fn contains_range(&self, min: u16, max: u16) -> bool {
         let mut count = 0;
         let index;
@@ -312,22 +338,27 @@ impl RunContainer {
         return count >= max - min - 1;
     }
     
+    /// The cardinality of the run container
     pub fn cardinality(&self) -> usize {
         unimplemented!()
     }
 
+    /// The number of runs in the run container
     pub fn num_runs(&self) -> usize {
         self.runs.len()
     }
 
+    /// The capacity of the container in runs
     pub fn capacity(&self) -> usize {
         self.runs.capacity()
     }
     
+    /// Check whether the container is empty
     pub fn is_empty(&self) -> bool {
         self.runs.len() == 0
     }
     
+    /// Check whether the container is full
     pub fn is_full(&self) -> bool {
         if self.runs.len() == 0 {
             return false;
@@ -338,23 +369,29 @@ impl RunContainer {
         }
     }
     
+    /// Clear all elements from the container
     pub fn clear(&mut self) {
         self.runs.clear()
     }
 
+    // TODO: Delete this, redundant with `clone()`
+    /// Copy another container into this one replacing it's contents
     pub fn copy_from(&mut self, other: &RunContainer) {
         self.runs.clear();
         self.runs.copy_from_slice(&other.runs);
     }
     
+    /// Get an iterator over the runs of this container
     pub fn iter(&self) -> Iter<Rle16> {
         self.runs.iter()
     }
     
+    /// Get a mutable iterator over the runs of this container
     pub fn iter_mut(&mut self) -> IterMut<Rle16> {
         self.runs.iter_mut()
     }
     
+    /// Get the minimum value of this container
     pub fn min(&self) -> u16 {
         if self.runs.len() == 0 {
             return 0;
@@ -363,6 +400,7 @@ impl RunContainer {
         self.runs[0].value
     }
     
+    /// Get the maximum value of this container
     pub fn max(&self) -> u16 {
         if self.runs.len() == 0 {
             return 0;
@@ -373,6 +411,7 @@ impl RunContainer {
         run.value + run.length
     }
     
+    /// Get the rank of a value in the set. The relative position of an element in the set
     pub fn rank(&self, value: u32) -> usize {
         let mut sum = 0;
         for run in self.runs.iter() {
@@ -395,6 +434,8 @@ impl RunContainer {
         return sum as usize;
     }
 
+    /// Select the element with `rank` starting the search from `start_rank` and outputting the result into `element`.
+    /// Returns true if found, false if there is no element with that rank in the set
     pub fn select(&self, rank: u32, start_rank: &mut u32, element: &mut u32) -> bool {
         for run in self.runs.iter() {
             let length = run.length as u32;
@@ -434,6 +475,7 @@ impl RunContainer {
         return ContainerType::Bitset(self.into());
     }
 
+    /// Perform a binary search for a given key in the set
     fn binary_search(&self, key: u16) -> SearchResult {
         let mut low = 0;
         let mut high = self.runs.len() - 1;
@@ -487,6 +529,7 @@ impl RunContainer {
         }
     }
 
+    /// Get the number of runs before `value` 
     fn rle_count_less(&self, value: u16) -> usize {
         if self.runs.len() == 0 {
             return 0;
@@ -513,6 +556,7 @@ impl RunContainer {
         return low;
     }
 
+    /// Get the number of runs after `value`
     fn rle_count_greater(&self, value: u16) -> usize {
         if self.runs.len() == 0 {
             return 0;
