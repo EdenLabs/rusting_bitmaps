@@ -868,7 +868,7 @@ impl Difference<Self> for RunContainer {
 }
 
 impl Difference<ArrayContainer> for RunContainer {
-    type Output = ArrayContainer;
+    type Output = ContainerType;
 
     fn difference_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
         const ARBITRARY_THRESHOLD: usize = 32;
@@ -876,13 +876,83 @@ impl Difference<ArrayContainer> for RunContainer {
         let cardinality = self.cardinality();
 
         if cardinality < ARBITRARY_THRESHOLD {
+            if other.cardinality() == 0 {
+                *out = ContainerType::Run(self.clone());
+                return;
+            }
 
+            let mut result = RunContainer::with_capacity(cardinality + other.cardinality());
+
+            unsafe {
+                let mut rle0_pos = 0;
+                let mut rle1_pos = 0;
+
+                let rle = *self.runs.get_unchecked(rle0_pos);
+                let mut rle0_start = rle.value;
+                let mut rle0_end = rle.sum() + 1;
+                let mut rle1_start = *other.get_unchecked(rle1_pos);
+
+                while rle0_pos < self.num_runs() && rle1_pos < other.cardinality() {
+                    if rle0_end == rle1_start {
+                        result.runs.push(Rle16::new(rle0_start, rle0_end - rle0_start - 1));
+                        rle0_pos += 1;
+
+                        if rle0_pos < self.num_runs() {
+                            let r = self.runs.get_unchecked(rle0_pos);
+
+                            rle0_start = r.value;
+                            rle0_end = r.sum() + 1;
+                        }
+                    }
+                    else if rle1_start + 1 <= rle0_start {
+                        rle1_pos += 1;
+
+                        if rle1_pos < other.cardinality() {
+                            rle1_start = *other.get_unchecked(rle1_pos);
+                        }
+                    }
+                    else {
+                        if rle0_start < rle1_start {
+                            result.runs.push(Rle16::new(rle0_start, rle1_start - rle0_start - 1));
+                        }
+
+                        if rle1_start + 1 < rle0_end {
+                            rle0_start = rle1_start + 1;
+                        }
+                        else {
+                            rle0_pos += 1;
+
+                            if rle0_pos < self.num_runs() {
+                                let r = self.runs.get_unchecked(rle0_pos);
+
+                                rle0_start = r.value;
+                                rle0_end = r.sum() + 1;
+                            }
+                        }
+                    }
+
+                    if rle0_pos < self.num_runs() {
+                        result.runs.push(Rle16::new(rle0_start, rle0_end - rle0_start - 1));
+                        rle0_pos += 1;
+
+                        if rle0_pos < self.num_runs() {
+                            let len = self.num_runs() - rle0_pos;
+                            result.copy_from_slice(&self.runs[rle0_pos..len]);
+                        }
+                    }
+                }
+
+                *out = result.into_efficient_container();
+                return;
+            }
         }
 
         if cardinality <= DEFAULT_MAX_SIZE {
             let mut array = ArrayContainer::with_capacity(cardinality);
             
-            unimplemented!();
+            
+            
+            *out = ContainerType::Array(array);
             
             return;
         }
