@@ -50,7 +50,7 @@ pub fn symmetric_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
 }
 
 pub fn advance_until(slice: &[u16], index: usize, min: u16, length: usize) -> usize {
-    let mut lower = (index + 1) as usize;
+    let mut lower = index as usize;
     if lower >= length || slice[lower] >= min {
         return lower;
     }

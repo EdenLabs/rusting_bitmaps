@@ -1,5 +1,5 @@
 <p align="center">
-   <img src="res/rusting_bitmaps_logo_02.png" height="200">
+   <img src="res/rusting_bitmaps_logo_02.png" height="200" />
 </p>
 
 # Rusting Bitmaps
@@ -53,7 +53,7 @@ Rusting Bitmaps is a native Rust port of [Roaring Bitmaps](https://roaringbitmap
     - [x] Run->Array
     - [x] Run->Bitmap
  - [ ] Mixed Ops
-    - [ ] Difference
+    - [x] Difference
     - [ ] Equals
     - [x] Intersect
     - [ ] Negation
@@ -64,4 +64,11 @@ Rusting Bitmaps is a native Rust port of [Roaring Bitmaps](https://roaringbitmap
  - [ ] Serialization (serde w/ feature flag)
  - [x] Portability
  - [ ] Inplace variants for all ops
- - [ ] COW (?)
+
+# Potential ideas
+ - [ ] Verify conversions
+ - [ ] Unify conversions
+ - [ ] See about inverted array for dense sets
+ - [ ] Verify code stability
+ - [ ] Fuzz the code
+ - [ ] Implement tests

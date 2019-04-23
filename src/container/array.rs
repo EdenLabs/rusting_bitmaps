@@ -587,47 +587,8 @@ impl SymmetricDifference<RunContainer> for ArrayContainer {
     fn symmetric_difference_with(&self, other: &RunContainer, out: &mut Self::Output) {
         const THRESHOLD: usize = 32;
         if self.cardinality() < THRESHOLD {
-            let mut result = RunContainer::new();
-            
-            let desired_capacity = self.cardinality() + other.num_runs();
-            if result.capacity() < desired_capacity {
-                result.reserve(desired_capacity - result.capacity());
-            }
-
-            let mut rle_pos = 0;
-            let mut array_pos = 0;
-
-            // Append elements using xor logic
-            while rle_pos < other.num_runs() && array_pos < self.cardinality() {
-                let rle = other[rle_pos];
-
-                if rle.value <= self[array_pos] {
-                    // TOOD: Smart append exclusive
-
-                    rle_pos += 1;
-                }
-                else {
-                    // TODO: Smart append exclusive
-
-                    array_pos += 1;
-                }
-            }
-
-            // Append remaining elements in array
-            while array_pos < self.cardinality() {
-                // TODO: Smart append exclusive
-
-                array_pos += 1;
-            }
-
-            // Append remaining elements in run
-            while rle_pos < other.num_runs() {
-                // TODO: Smart append exclusive
-
-                rle_pos += 1;
-            }
-
-            *out = result.into_efficient_container();
+            other.symmetric_difference_with(self, out);
+            return;
         }
 
         // Process as an array since the final result is probably an array

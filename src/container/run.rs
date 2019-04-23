@@ -950,15 +950,58 @@ impl Difference<ArrayContainer> for RunContainer {
         if cardinality <= DEFAULT_MAX_SIZE {
             let mut array = ArrayContainer::with_capacity(cardinality);
             
-            
+            unsafe {
+                let mut index = 0;
+                for run in self.runs.iter() {
+                    let start = run.value;
+                    let end = run.sum() + 1;
+
+                    index = array_ops::advance_until(&other, index, start, other.len());
+
+                    if index >= other.cardinality() {
+                        for i in start..end {
+                            array.push(i as u16);
+                        }
+                    }
+                    else {
+                        let mut next = *other.get_unchecked(index);
+                        if next >= end {
+                            for i in start..end {
+                                array.push(i as u16);
+                            }
+
+                            index -= 1;
+                        }
+                        else {
+                            for i in start..end {
+                                if i != next {
+                                    array.push(i as u16);
+                                }
+                                else {
+                                    next = {
+                                        if index + 1 >= other.cardinality() {
+                                            0
+                                        }
+                                        else {
+                                            *other.get_unchecked(index)
+                                        }
+                                    };
+                                }
+                            }
+
+                            index -= 1;
+                        }
+                    }
+                }
+            }
             
             *out = ContainerType::Array(array);
             
             return;
         }
 
-        // TODO: Implement non consuming conversion operation for bitset from run
-        unimplemented!()
+        let bitset: BitsetContainer = self.into();
+        bitset.difference_with(other, out);// TODO: In place variants
     }
 }
 
@@ -1012,10 +1055,42 @@ impl Difference<BitsetContainer> for RunContainer {
 }
 
 impl SymmetricDifference<Self> for RunContainer {
-    type Output = ContainerType;
+    type Output = RunContainer;
 
     fn symmetric_difference_with(&self, other: &Self, out: &mut Self::Output) {
-        unimplemented!()
+        let current = out.capacity();
+        let needed = self.num_runs() + other.num_runs();
+        if current < needed {
+            out.reserve(needed - current);
+        }
+
+    
+        let mut i_0 = 0;
+        let mut i_1 = 0;
+
+        unsafe {
+            while i_0 < self.num_runs() && i_1 < other.num_runs() {
+                let r0 = self.runs.get_unchecked(i_0);
+                let r1 = other.runs.get_unchecked(i_1);
+
+                if r0.value <= r1.value {
+                    run_ops::append_exclusive(&mut out.runs, r0.value, r0.length);
+                    i_0 += 1;
+                }
+                else {
+                    run_ops::append_exclusive(&mut out.runs, r1.value, r1.length);
+                    i_1 += 1;
+                }
+            }
+        }
+
+        for run in &self.runs[i_0..self.runs.len()] {
+            run_ops::append_exclusive(&mut out.runs, run.value, run.length);
+        }
+
+        for run in &self.runs[i_1..other.runs.len()] {
+            run_ops::append_exclusive(&mut out.runs, run.value, run.length);
+        }
     }
 }
 
@@ -1023,7 +1098,7 @@ impl SymmetricDifference<ArrayContainer> for RunContainer {
     type Output = ContainerType;
 
     fn symmetric_difference_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
-        unimplemented!()
+        other.symmetric_difference_with(self, out)
     }
 }
 
@@ -1031,7 +1106,18 @@ impl SymmetricDifference<BitsetContainer> for RunContainer {
     type Output = ContainerType;
 
     fn symmetric_difference_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
-        unimplemented!()
+        let mut result = other.clone();
+
+        for rle in self.runs.iter() {
+            result.flip_range(rle.value as usize, (rle.sum() + 1) as usize);
+        }
+
+        if result.cardinality() < DEFAULT_MAX_SIZE {
+            *out = ContainerType::Array(result.into());
+            return;
+        }
+
+        *out = ContainerType::Bitset(result);
     }
 }
 

@@ -547,7 +547,19 @@ impl SymmetricDifference<Self> for BitsetContainer {
     type Output = ContainerType;
 
     fn symmetric_difference_with(&self, other: &Self, out: &mut Self::Output) {
-        unimplemented!()
+        let mut result = BitsetContainer::new();
+        let cardinality = unsafe {
+            bitset_ops::symmetric_difference(&self.bitset, &other.bitset, &mut result.bitset)
+        };
+
+        if cardinality <= DEFAULT_MAX_SIZE {
+            *out = ContainerType::Array(result.into());
+            return;
+        }
+        else {
+            *out = ContainerType::Bitset(result);
+            return;
+        }
     }
 }
 
@@ -555,7 +567,7 @@ impl SymmetricDifference<ArrayContainer> for BitsetContainer {
     type Output = ContainerType;
 
     fn symmetric_difference_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
-        unimplemented!()
+        other.symmetric_difference_with(self, out)
     }
 }
 
@@ -563,7 +575,7 @@ impl SymmetricDifference<RunContainer> for BitsetContainer {
     type Output = ContainerType;
 
     fn symmetric_difference_with(&self, other: &RunContainer, out: &mut Self::Output) {
-        unimplemented!()
+        other.symmetric_difference_with(self, out)
     }
 }
 
