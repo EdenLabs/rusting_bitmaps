@@ -1,3 +1,6 @@
+#![allow(exceeding_bitshifts)]
+
+use std::convert::TryFrom;
 use std::fmt;
 use std::ops::{Range};
 
@@ -48,8 +51,19 @@ impl RoaringBitmap {
     }
     
     /// Add a value to the bitmap
-    pub fn add(&mut self, x: usize) -> bool {
-        unimplemented!()
+    pub fn add(&mut self, x: usize) {
+        let bound = (x >> 16) as u16;
+        let x = (x & 0xFFFF) as u16;
+        if let Some(i) = self.get_index(&bound) {
+            self.containers[i].add(x);
+        }
+        else {
+            let mut array = ArrayContainer::new();
+            array.add(x);
+
+            self.containers.push(Container::Array(array));
+            self.keys.push(bound);
+        }
     }
 
     /// Add a range of values to the bitmap

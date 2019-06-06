@@ -372,6 +372,12 @@ impl From<ArrayContainer> for BitsetContainer {
     }
 }
 
+impl<'a> From<&'a mut ArrayContainer> for BitsetContainer {
+    fn from(container: &'a mut ArrayContainer) -> Self {
+        From::from(&*container)
+    }
+}
+
 impl<'a> From<&'a ArrayContainer> for BitsetContainer {
     fn from(container: &'a ArrayContainer) -> Self {
         let mut bitset = BitsetContainer::new();

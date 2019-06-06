@@ -9,16 +9,12 @@ pub use self::array::ArrayContainer;
 pub use self::bitset::BitsetContainer;
 pub use self::run::RunContainer;
 
-use std::any::Any;
-
 /// Default maximum size of an array container before it is converted to another type
 pub const DEFAULT_MAX_SIZE: usize = 4096;
 
 /// Enum representing a container
 #[derive(Clone)]
 pub enum Container {
-    None,
-
     /// Array container
     Array(ArrayContainer),
 
@@ -30,12 +26,20 @@ pub enum Container {
 }
 
 impl Container {
-    /// Check if there is no container
-    pub fn is_none(&self) -> bool {
+    pub fn add(&mut self, value: u16) {
         match self {
-            Container::None => true,
-            _ => false
-        }
+            Container::Array(array) => {
+                if !array.add(value) {
+                    *self = Container::Bitset(array.into());
+                }
+            },
+            Container::Bitset(bitset) => {
+                bitset.add(value);
+            },
+            Container::Run(run) => {
+                run.add(value);
+            }
+        };
     }
 }
 
