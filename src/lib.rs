@@ -17,28 +17,10 @@
 // TODO: Update api's to be idiomatic rust
 
 mod roaring;
-mod roaring_array;
 mod container;
 mod utils;
 
-pub mod prelude {
-    // TODO: Write prelude
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Key(u16);
-
-impl From<u16> for Key {
-    fn from(value: u16) -> Key {
-        Key(value)
-    }
-}
-
-impl From<Key> for u16 {
-    fn from(key: Key) -> u16 {
-        key.0
-    }
-}
+pub use roaring::RoaringBitmap;
 
 mod align {
     mod sealed {

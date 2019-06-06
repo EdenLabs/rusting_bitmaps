@@ -1,4 +1,5 @@
 use std::fmt;
+use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::slice::Iter;
 
@@ -526,7 +527,7 @@ impl Difference<RunContainer> for ArrayContainer {
 }
 
 impl SymmetricDifference<Self> for ArrayContainer {
-    type Output = ContainerType;
+    type Output = Container;
 
     fn symmetric_difference_with(&self, other: &Self, out: &mut Self::Output) {
         let total_cardinality = self.cardinality() + other.cardinality();
@@ -541,7 +542,7 @@ impl SymmetricDifference<Self> for ArrayContainer {
                 &mut result.array
             );
 
-            *out = ContainerType::Array(result);
+            *out = Container::Array(result);
             return;
         }
 
@@ -552,16 +553,16 @@ impl SymmetricDifference<Self> for ArrayContainer {
 
         // Check if the result is small enough to fit in an array, if so convert
         if result.cardinality() <= DEFAULT_MAX_SIZE {
-            *out = ContainerType::Array(result.into());
+            *out = Container::Array(result.into());
         }
         else {
-            *out = ContainerType::Bitset(result);
+            *out = Container::Bitset(result);
         }
     }
 }
 
 impl SymmetricDifference<BitsetContainer> for ArrayContainer {
-    type Output = ContainerType;
+    type Output = Container;
 
     fn symmetric_difference_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
         let mut result = BitsetContainer::new();
@@ -570,17 +571,17 @@ impl SymmetricDifference<BitsetContainer> for ArrayContainer {
 
         // Array is a better representation for this set, convert
         if self.cardinality() <= DEFAULT_MAX_SIZE {
-            *out = ContainerType::Array(result.into());
+            *out = Container::Array(result.into());
         }
         // Bitset is a better representation
         else {
-            *out = ContainerType::Bitset(result);
+            *out = Container::Bitset(result);
         }
     }
 }
 
 impl SymmetricDifference<RunContainer> for ArrayContainer {
-    type Output = ContainerType;
+    type Output = Container;
 
     fn symmetric_difference_with(&self, other: &RunContainer, out: &mut Self::Output) {
         const THRESHOLD: usize = 32;
@@ -647,11 +648,11 @@ impl Subset<RunContainer> for ArrayContainer {
 }
 
 impl Negation for ArrayContainer {
-    fn negate(&self, out: &mut ContainerType) {
+    fn negate(&self, out: &mut Container) {
         let mut bitset = BitsetContainer::new();
         bitset.set_all();
         bitset.clear_list(&self.array);
 
-        *out = ContainerType::Bitset(bitset);
+        *out = Container::Bitset(bitset);
     }
 }
