@@ -12,6 +12,9 @@
 //!  - Only supports x86_64 with AVX2 support
 
 // TODO: Look at using Align<T, A> for enforcing alignment on the internal vecs with aligned loads and see whether that has a performance impact
+// TODO: Rename the set operations to the binary equivalent to avoid confusion for developers
+// TODO: Rewrite the set operations to use pointer arithmetic where possible to remove as much overhead as possible
+// TODO: Update api's to be idiomatic rust
 
 mod roaring;
 mod roaring_array;

@@ -15,7 +15,7 @@ use std::any::Any;
 pub const DEFAULT_MAX_SIZE: usize = 4096;
 
 /// Enum representing a container
-pub enum ContainerType {
+pub enum Container {
     None,
 
     /// Array container
@@ -28,7 +28,7 @@ pub enum ContainerType {
     Run(RunContainer)
 }
 
-impl ContainerType {
+impl Container {
     /// Check if there is no container
     pub fn is_none(&self) -> bool {
         match self {
@@ -36,59 +36,6 @@ impl ContainerType {
             _ => false
         }
     }
-
-    /// Check if the container is an array
-    pub fn is_array(&self) -> bool {
-        match self {
-            ContainerType::Array(_) => true,
-            _ => false
-        }
-    }
-
-    /// Check if the container is a bitset
-    pub fn is_bitset(&self) -> bool {
-        match self {
-            ContainerType::Bitset(_) => true,
-            _ => false
-        }
-    }
-
-    /// Check if the container is a run
-    pub fn is_run(&self) -> bool {
-        match self {
-            ContainerType::Run(_) => true,
-            _ => false
-        }
-    }
-
-    /// Unwrap the container as an array
-    pub fn unwrap_array(self) -> ArrayContainer {
-        match self {
-            ContainerType::Array(array) => array,
-            _ => panic!("Not an array")
-        }
-    }
-
-    /// Unwrap the container as a bitset
-    pub fn unwrap_bitset(self) -> BitsetContainer {
-        match self {
-            ContainerType::Bitset(bitset) => bitset,
-            _ => panic!("Not a bitset")
-        }
-    }
-
-    /// Unwrap the container as a run
-    pub fn unwrap_run(self) -> RunContainer {
-        match self {
-            ContainerType::Run(run) => run,
-            _ => panic!("Not a run")
-        }
-    }
-}
-
-/// Marker trait for container types
-pub trait Container: Any {
-    // TODO: See about implementing common container functionality on this trait
 }
 
 /// The set union operation
@@ -96,6 +43,8 @@ pub trait Union<T: Container> {
     type Output;
 
     fn union_with(&self, other: &T, out: &mut Self::Output);
+    
+    fn inplace_union_widh
 }
 
 /// The set intersection operation

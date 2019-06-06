@@ -307,7 +307,7 @@ impl ArrayContainer {
 impl ArrayContainer {
     /// Get the size in bytes of a container with `cardinality`
     pub fn serialized_size(cardinality: usize) -> usize {
-        cardinality * 2 + 2
+        cardinality * mem::size_of::<u16>() + 2
     }
 }
 
@@ -378,8 +378,6 @@ impl<'a> From<&'a RunContainer> for ArrayContainer {
         array
     }
 }
-
-impl Container for ArrayContainer { }
 
 impl Union<Self> for ArrayContainer {
     type Output = Self;

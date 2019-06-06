@@ -5,3 +5,14 @@ authors = ["Techgeek1 <austin.rife@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+
+
+# Use simd acceleration for the library
+[features]
+default = []
+
+# Use avx2 extensions for all ops
+avx = []
+
+# Use sse extensions for all ops
+sse = []

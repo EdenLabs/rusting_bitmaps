@@ -664,8 +664,6 @@ impl DerefMut for RunContainer {
     }
 }
 
-impl Container for RunContainer { }
-
 impl Union<Self> for RunContainer {
     type Output = Self;
 

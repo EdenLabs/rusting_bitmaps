@@ -424,8 +424,6 @@ impl DerefMut for BitsetContainer {
     }
 }
 
-impl Container for BitsetContainer { }
-
 impl Union<Self> for BitsetContainer {
     type Output = Self;
 
