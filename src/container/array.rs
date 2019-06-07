@@ -1,4 +1,3 @@
-use std::fmt;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::slice::Iter;
@@ -8,7 +7,7 @@ use crate::container::*;
 use crate::container::array_ops::*;
 
 /// An array container. Elements are sorted numerically and represented as individual values in the array
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ArrayContainer {
     array: Vec<u16>
 }
@@ -309,12 +308,6 @@ impl ArrayContainer {
     /// Get the size in bytes of a container with `cardinality`
     pub fn serialized_size(cardinality: usize) -> usize {
         cardinality * mem::size_of::<u16>() + 2
-    }
-}
-
-impl fmt::Debug for ArrayContainer {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ArrayContainer {:?}", self.array)
     }
 }
 

@@ -78,7 +78,7 @@ impl RoaringBitmap {
     }
     
     /// Remove a value from the bitmap
-    pub fn remove(&mut self, x: usize) -> Self {
+    pub fn remove(&mut self, x: usize) {
         let bound = (x >> 16) as u16;
         let x = (x & 0xFFFF) as u16;
         
@@ -240,17 +240,5 @@ impl RoaringBitmap {
     fn get_index(&self, x: &u16) -> Option<usize> {
         self.keys.binary_search(x)
             .ok()
-    }
-}
-
-impl fmt::Display for RoaringBitmap {
-    /// Pretty print the contents of the bitmap
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut result = String::new();
-        for container in self.containers.iter() {
-            result.push(format!("{}", container));
-        }
-        
-        write!(f, "[ {} ]", result);
     }
 }

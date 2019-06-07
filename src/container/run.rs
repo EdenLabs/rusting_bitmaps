@@ -2,6 +2,7 @@ use std::slice::{Iter, IterMut};
 use std::ops::{Deref, DerefMut};
 use std::iter;
 use std::mem;
+use std::fmt;
 
 use crate::utils;
 use crate::container::*;
@@ -33,6 +34,12 @@ impl Rle16 {
     }
 }
 
+impl fmt::Debug for Rle16 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[{:?}, {:?}]", self.value, self.length)
+    }
+}
+
 /// The result for a binary search
 enum SearchResult {
     /// An exact match was found, the index is contained
@@ -49,7 +56,7 @@ enum SearchResult {
 /// 
 /// # Structure
 /// Runs are stored as `Rle16` words
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RunContainer {
     runs: Vec<Rle16>
 }
@@ -598,7 +605,7 @@ impl From<ArrayContainer> for RunContainer {
 }
 
 impl<'a> From<&'a mut ArrayContainer> for RunContainer {
-    fn from(cotainer: &'a mut ArrayContainer) -> Self {
+    fn from(container: &'a mut ArrayContainer) -> Self {
         From::from(&*container)
     }
 }

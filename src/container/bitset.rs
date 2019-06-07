@@ -1,9 +1,9 @@
 use std::slice::{Iter, IterMut};
 use std::ops::{Deref, DerefMut};
+use std::mem;
 
 use crate::utils;
 use crate::container::*;
-use crate::align::{Align, A32};
 
 use super::bitset_ops;
 
@@ -14,9 +14,9 @@ pub const BITSET_SIZE_IN_WORDS: usize = (1 << 16) >> 6;
 /// 
 /// # Structure
 /// Bits are aligned to the 32byte boundary and stored as 64bit words
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BitsetContainer {
-    bitset: Align<Vec<u64>, A32>,
+    bitset: Vec<u64>,
     cardinality: usize
 }
 
@@ -29,7 +29,7 @@ impl BitsetContainer {
         }
 
         Self {
-            bitset: Align::new(bitset),
+            bitset: bitset,
             cardinality: 0
         }
     }
@@ -362,7 +362,7 @@ impl BitsetContainer {
 impl BitsetContainer {
     /// Get the size in bytes of a bitset container
     pub fn serialized_size() -> usize {
-        BITSET_SIZE_IN_WORDS * 8
+        BITSET_SIZE_IN_WORDS * mem::size_of::<u64>()
     }
 }
 
