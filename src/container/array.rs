@@ -350,6 +350,12 @@ impl From<BitsetContainer> for ArrayContainer {
     }
 }
 
+impl<'a> From<&'a mut BitsetContainer> for ArrayContainer {
+    fn from(container: &'a mut BitsetContainer) -> Self {
+        From::from(&*container)
+    }
+}
+
 impl<'a> From<&'a BitsetContainer> for ArrayContainer {
     fn from(container: &'a BitsetContainer) -> Self {
         unimplemented!()
@@ -359,6 +365,12 @@ impl<'a> From<&'a BitsetContainer> for ArrayContainer {
 impl From<RunContainer> for ArrayContainer {
     fn from(container: RunContainer) -> Self {
         From::from(&container)
+    }
+}
+
+impl<'a> From<&'a mut RunContainer> for ArrayContainer {
+    fn from(container: &'a mut RunContainer) -> Self {
+        From::from(&*container)
     }
 }
 

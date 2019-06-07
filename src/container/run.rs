@@ -597,6 +597,12 @@ impl From<ArrayContainer> for RunContainer {
     }
 }
 
+impl<'a> From<&'a mut ArrayContainer> for RunContainer {
+    fn from(cotainer: &'a mut ArrayContainer) -> Self {
+        From::from(&*container)
+    }
+}
+
 impl<'a> From<&'a ArrayContainer> for RunContainer {
     fn from(container: &'a ArrayContainer) -> Self {
         let num_runs = container.num_runs();
@@ -635,6 +641,12 @@ impl<'a> From<&'a ArrayContainer> for RunContainer {
 impl From<BitsetContainer> for RunContainer {
     fn from(container: BitsetContainer) -> Self {
         From::from(&container)
+    }
+}
+
+impl<'a> From<&'a mut BitsetContainer> for RunContainer {
+    fn from(container: &'a mut BitsetContainer) -> Self {
+        From::from(&*container)
     }
 }
 

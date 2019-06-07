@@ -396,6 +396,12 @@ impl From<RunContainer> for BitsetContainer {
     }
 }
 
+impl<'a> From<&'a mut RunContainer> for BitsetContainer {
+    fn from(container: &'a mut RunContainer) -> Self {
+        From::from(&*container)
+    }
+}
+
 impl<'a> From<&'a RunContainer> for BitsetContainer {
     fn from(container: &'a RunContainer) -> Self {
         let cardinality = container.cardinality();
