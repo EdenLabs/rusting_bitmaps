@@ -77,6 +77,7 @@ impl RunContainer {
     }
     
     /// Shrink the run container's backing memory to fit it's contents
+    #[inline]
     pub fn shrink_to_fit(&mut self) {
         self.runs.shrink_to_fit()
     }
@@ -399,31 +400,31 @@ impl RunContainer {
     }
     
     /// Get the minimum value of this container
-    pub fn min(&self) -> u16 {
+    pub fn min(&self) -> Option<u16> {
         if self.runs.len() == 0 {
-            return 0;
+            return None;
         }
 
-        self.runs[0].value
+        Some(self.runs[0].value)
     }
     
     /// Get the maximum value of this container
-    pub fn max(&self) -> u16 {
+    pub fn max(&self) -> Option<u16> {
         if self.runs.len() == 0 {
-            return 0;
+            return None;
         }
 
         let run = self.runs[self.runs.len() - 1];
         
-        run.value + run.length
+        Some(run.value + run.length)
     }
     
     /// Get the rank of a value in the set. The relative position of an element in the set
-    pub fn rank(&self, value: u32) -> usize {
+    pub fn rank(&self, value: u16) -> usize {
         let mut sum = 0;
         for run in self.runs.iter() {
-            let start = run.value as u32;
-            let length = run.length as u32;
+            let start = run.value;
+            let length = run.length;
             let end = start + length;
 
             if value < end {
@@ -441,23 +442,21 @@ impl RunContainer {
         return sum as usize;
     }
 
-    /// Select the element with `rank` starting the search from `start_rank` and outputting the result into `element`.
-    /// Returns true if found, false if there is no element with that rank in the set
-    pub fn select(&self, rank: u32, start_rank: &mut u32, element: &mut u32) -> bool {
+    /// Select the element with `rank` starting the search from `start_rank`
+    pub fn select(&self, rank: u32, start_rank: &mut u32) -> Option<u16> {
         for run in self.runs.iter() {
             let length = run.length as u32;
             let value = run.value as u32;
 
             if rank <= *start_rank + length {
-                *element = value + rank - *start_rank;
-                return true;
+                return Some((value + rank - *start_rank) as u16);
             }
             else {
                 *start_rank += length + 1;
             }
         }
 
-        return false;
+        None
     }
 
     /// Convert self into the most efficient container. Returns self if already optimal
@@ -750,7 +749,10 @@ impl Union<BitsetContainer> for RunContainer {
         out.copy_from(other);
 
         for rle in self.iter() {
-            out.set_range(rle.value as usize, rle.sum() as usize);
+            let min = rle.value as u32;
+            let max = rle.sum() as u32;
+
+            out.set_range(min..max);
         }
     }
 }
@@ -838,7 +840,10 @@ impl Intersection<BitsetContainer> for RunContainer {
 
             let mut array = ArrayContainer::with_capacity(card);
             for run in self.runs.iter() {
-                array.add_from_range(run.value, run.sum());
+                let min = run.value as u32;
+                let max = run.sum() as u32;
+
+                array.add_range(min..max);
             }
 
             *out = Container::Array(array);

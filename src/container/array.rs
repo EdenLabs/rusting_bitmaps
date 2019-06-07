@@ -1,5 +1,5 @@
 use std::mem;
-use std::ops::{Deref, DerefMut};
+use std::ops::{Deref, DerefMut, Range};
 use std::slice::Iter;
 
 use crate::utils::mem_equals;
@@ -25,22 +25,6 @@ impl ArrayContainer {
         Self {
             array: Vec::with_capacity(capacity)
         }
-    }
-
-    /// Create a new array container with elements in the specified range
-    pub fn with_range(min: usize, max: usize, step: usize) -> Self {
-        assert!(min < max);
-        assert!(step != 0);
-        
-        let mut container = Self {
-            array: Vec::with_capacity(max - min + 1)
-        };
-
-        for i in (min..max).step_by(step) {
-            container.array.push(i as u16);
-        }
-
-        container
     }
 
     /// Convert the array container into it's raw representation
@@ -144,10 +128,8 @@ impl ArrayContainer {
     }
 
     /// Add all values within the specified range
-    pub fn add_from_range(&mut self, min: u16, max: u16) {
-        assert!(min < max);
-
-        let range = min..max;
+    pub fn add_range(&mut self, range: Range<u32>) {
+        assert!(range.len() > 0);
 
         // Resize to fit all new elements
         let len = self.len();
@@ -159,7 +141,9 @@ impl ArrayContainer {
 
         // Append new elements
         for i in range {
-            self.array.push(i);
+            // This is technically valid since we only store the lower 16 bits
+            // inside containers. The upper 16 are stored as keys in the roaring bitmap
+            self.array.push(i as u16);
         }
     }
 
@@ -215,8 +199,8 @@ impl ArrayContainer {
         }
     }
 
-    pub fn select(&self, rank: usize, start_rank: &mut usize) -> Option<u32> {
-        let cardinality = self.cardinality();
+    pub fn select(&self, rank: u32, start_rank: &mut u32) -> Option<u16> {
+        let cardinality = self.cardinality() as u32;
         if *start_rank + cardinality <= rank {
             *start_rank += cardinality;
 
@@ -224,8 +208,8 @@ impl ArrayContainer {
         }
         else {
             unsafe {
-                let index = rank - *start_rank;
-                let element = self.array.get_unchecked(index) as *const u16 as *const u32;
+                let index = (rank - *start_rank) as usize;
+                let element = self.array.get_unchecked(index);
 
                 Some(*element)
             }
