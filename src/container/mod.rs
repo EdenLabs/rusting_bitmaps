@@ -26,6 +26,7 @@ pub enum Container {
 }
 
 impl Container {
+    /// Add a value to the underlying container
     pub fn add(&mut self, value: u16) {
         match self {
             Container::Array(array) => {
@@ -40,6 +41,25 @@ impl Container {
                 run.add(value);
             }
         };
+    }
+    
+    /// Remove a value from the underlying container
+    pub fn remove(&mut self, value: u16) {
+        match self {
+            Container::Array(array) => {
+                array.remove(value);
+            },
+            Container::Bitset(bitset) => {
+                if bitset.remove(value) {
+                    if bitset.cardinality() < DEFAULT_MAX_SIZE {
+                        *self = Container::Array(bitset.into());
+                    }
+                }
+            },
+            Container::Run(run) => {
+                run.remove(value);
+            }
+        }
     }
 }
 
