@@ -7,11 +7,12 @@ use std::ops::{Range};
 use crate::container::*;
 
 // TODO: Add support for custom allocators
+// TODO: Implement checked variants?
 
 /// A Roaring Bitmap
 ///
 /// TODO: Description
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RoaringBitmap {
     /// List of containers in this roaring bitmap
     containers: Vec<Container>,
@@ -78,7 +79,17 @@ impl RoaringBitmap {
     
     /// Remove a value from the bitmap
     pub fn remove(&mut self, x: usize) -> Self {
-        unimplemented!()
+        let bound = (x >> 16) as u16;
+        let x = (x & 0xFFFF) as u16;
+        
+        if let Some(i) = self.get_index(&bound) {
+            self.containers[i].remove(x);
+            
+            if self.containers[i].cardinality() == 0 {
+                self.containers.pop();
+                self.keys.pop();
+            }
+        }
     }
 
     /// Remove a range of values from the bitmap
@@ -120,7 +131,8 @@ impl RoaringBitmap {
     
     /// Clear the contents of this bitmap
     pub fn clear(&mut self) {
-        self.containers.clear()
+        self.containers.clear();
+        self.keys.clear();
     }
     
     /// Shrink the memory used by the bitmap to fit it's contents
@@ -231,16 +243,14 @@ impl RoaringBitmap {
     }
 }
 
-impl fmt::Debug for RoaringBitmap {
-    /// Print the contents of the bitmap with debug information
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        unimplemented!()
-    }
-}
-
 impl fmt::Display for RoaringBitmap {
     /// Pretty print the contents of the bitmap
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        unimplemented!()
+        let mut result = String::new();
+        for container in self.containers.iter() {
+            result.push(format!("{}", container));
+        }
+        
+        write!(f, "[ {} ]", result);
     }
 }
