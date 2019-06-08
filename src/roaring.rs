@@ -3,6 +3,7 @@
 use std::ops::{Range};
 
 use crate::container::*;
+use crate::container::array;
 
 // TODO: Add support for custom allocators
 // TODO: Implement checked variants?
@@ -206,7 +207,34 @@ impl RoaringBitmap {
 
     /// Remove a range of values from the bitmap
     pub fn remove_range(&mut self, range: Range<u32>) {
-        unimplemented!()
+        debug_assert!(range.len() > 0);
+
+        let min = range.start;
+        let max = range.end;
+        
+        let min_key = (range.start >> 16) as u16;
+        let max_key = (range.end >> 16) as u16;
+
+        let src = array::count_less(&self.keys, min_key);
+        let dst = src;
+
+        while src < self.keys.len() && self.keys[src] <= max_key {
+            let container_min = if min_key == self.keys[src] { min as u16 } else { 0 };
+            let container_max = if max_key == self.keys[src] { max as u16 } else { 0xFFFF };
+
+            let has_elements = self.containers[src]
+                .remove_range(container_min..container_max);
+
+            if has_elements {
+                dst += 1;
+            }
+
+            src += 1;
+        }
+
+        if src > dst {
+            unimplemented!()
+        }
     }
     
     /// Remove a list of values from the bitmap

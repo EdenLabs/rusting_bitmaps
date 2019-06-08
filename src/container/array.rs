@@ -6,6 +6,28 @@ use crate::utils::mem_equals;
 use crate::container::*;
 use crate::container::array_ops::*;
 
+/// Count the number of elements which are less than the key
+/// 
+/// # Remarks
+/// Assumes that the array is sorted and all elements are unique
+pub fn count_less(slice: &[u16], key: u16) -> usize {
+    match slice.binary_search(&key) {
+        Ok(index) => index,
+        Err(index) => index + 1
+    }
+}
+
+/// Count the number of elements which are greater than the key
+/// 
+/// # Remarks
+/// Assumes that the array is sorted and all elements are unique
+pub fn count_greater(slice: &[u16], key: u16) -> usize {
+    match slice.binary_search(&key) {
+        Ok(index) => slice.len() - index,
+        Err(index) => slice.len() - (index + 1)
+    }
+}
+
 /// An array container. Elements are sorted numerically and represented as individual values in the array
 #[derive(Clone, Debug)]
 pub struct ArrayContainer {

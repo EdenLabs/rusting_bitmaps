@@ -8,16 +8,16 @@ use crate::container::*;
 use super::bitset_ops;
 
 /// The size of the bitset in 64bit words
-pub const BITSET_SIZE_IN_WORDS: usize = (1 << 16) >> 6;
+pub const BITSET_SIZE_IN_WORDS: usize = 1024;
 
 /// A bitset container used in a roaring bitmap. 
 /// 
 /// # Structure
-/// Bits are aligned to the 32byte boundary and stored as 64bit words
+/// Contents are aligned to the 32byte boundary and stored as 64bit words
 #[derive(Clone, Debug)]
 pub struct BitsetContainer {
     bitset: Vec<u64>,
-    cardinality: usize
+    cardinality: usize // TODO Make this an `Option` or `Lazy` and calculate on demand
 }
 
 impl BitsetContainer {
@@ -300,6 +300,42 @@ impl BitsetContainer {
     /// The cardinality of the bitset
     pub fn cardinality(&self) -> usize {
         self.cardinality as usize
+    }
+
+    pub fn cardinality_range(&self, range: Range<u16>) -> usize {
+        let start = range.start as usize;
+        let end = range.end as usize;
+        let len_minus_one = range.len() - 1;
+
+        let first_word = start >> 6;
+        let last_word = (start + len_minus_one) >> 6;
+
+        if first_word == last_word {
+            return (self.bitset[first_word] & (!0 >> ((63 - len_minus_one) % 64)) << (start % 64))
+                .count_ones() as usize;
+        }
+
+        let mut result = (self.bitset[first_word] & (!0 << (start % 64)))
+            .count_ones();
+
+        for i in (first_word + 1)..last_word {
+            result += self.bitset[i].count_ones();
+        }
+
+        result += (self.bitset[last_word] & (!0 >> (((!start + 1) - len_minus_one - 1) % 64)))
+            .count_ones();
+
+        result as usize
+    }
+
+    /// Set the cardinality of the bitset
+    /// 
+    /// # Safety
+    /// This function is marked unsafe as it can potentially 
+    /// out of bounds indexing on operations that rely on the cardinality.
+    /// It also would violate many logical invariants if set incorrectly
+    pub unsafe fn set_cardinality(&mut self, cardinality: usize) {
+        self.cardinality = cardinality;
     }
     
     /// Get the smallest value in the bitset

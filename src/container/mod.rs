@@ -1,16 +1,16 @@
-mod array;
+pub mod array;
+
 mod array_ops;
 mod bitset;
 mod bitset_ops;
 mod run;
 mod run_ops;
 
-use std::fmt;
-use std::ops::Range;
-
 pub use self::array::ArrayContainer;
 pub use self::bitset::BitsetContainer;
 pub use self::run::RunContainer;
+
+use std::ops::Range;
 
 /// Default maximum size of an array container before it is converted to another type
 pub const DEFAULT_MAX_SIZE: usize = 4096;
@@ -134,6 +134,75 @@ impl Container {
                 c.remove(value);
             }
         }
+    }
+
+    /// Remove all elements with a specified range
+    /// 
+    /// # Returns
+    /// Returns false if no more elements are in the container, returns true otherwise
+    pub fn remove_range(&mut self, range: Range<u16>) -> bool {
+        match self {
+            Container::Array(c) => {
+                let vals_greater = array::count_greater(&c[..], range.end as u16);// TODO: Make sure these don't truncate
+                let vals_less = array::count_less(&c[0..(c.len() - vals_greater)], range.start as u16);
+                let result_card = vals_less + vals_greater;
+
+                if result_card == 0 {
+                    return false;
+                }
+                else {
+                    c.remove_range(range);
+
+                    return true;
+                }
+            },
+            Container::Bitset(c) => {
+                let result_card = c.cardinality() - c.cardinality_range(range);
+
+                if result_card == 0 {
+                    return false;
+                }
+                else if result_card < DEFAULT_MAX_SIZE {
+                    c.unset_range(range);
+                    unsafe { c.set_cardinality(result_card); }
+                    
+                    *self = Container::Array(c.into());
+
+                    return true;
+                }
+                else {
+                    c.unset_range(range);
+                    unsafe { c.set_cardinality(result_card); }
+
+                    return true;
+                }
+            },
+            Container::Run(c) => {
+                let num_runs = c.num_runs();
+                if num_runs == 0 {
+                    return false;
+                }
+
+                let min = c.min()
+                    .unwrap_or(0);
+                let max = c.max()
+                    .unwrap_or(0);
+
+                if range.start <= min && range.end >= max {
+                    return false;
+                }
+
+                c.remove_range(range);
+
+                if RunContainer::serialized_size(num_runs) < BitsetContainer::serialized_size() {
+                    return true;
+                }
+                else {
+                    *self = Container::Bitset(c.into());
+                    return true;
+                }
+            }
+        };
     }
 
     /// Get the cardinality of the container
