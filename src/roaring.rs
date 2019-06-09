@@ -277,8 +277,14 @@ impl RoaringBitmap {
             src += 1;
         }
 
+        // Check if any containers can be removed
         if src > dst {
-            unimplemented!()
+            let count = dst - src;
+            let start = self.containers.len() - src;
+            let end = start + count;
+
+            self.containers.drain(start..end);
+            self.keys.drain(start..end);
         }
     }
     
@@ -801,13 +807,13 @@ impl RoaringBitmap {
 
         // Range occupies the same container, just flip that
         if start_high == end_high {
-            result.insert_flipped(start_high, start_low..end_low);
+            result.append_flipped(self, start_high, start_low..end_low);
         }
         // Else flip a cross container range
         else {
             // Handle a partial start container
             if start_low > 0 {
-                result.insert_flipped(start_high, start_low..std::u16::MAX);
+                result.append_flipped(self, start_high, start_low..std::u16::MAX);
 
                 start_high += 1;
             }
@@ -818,14 +824,14 @@ impl RoaringBitmap {
 
             // Handle all containers in the middle of the range skipping the last container
             for bound in start_high..end_high {
-                result.insert_fully_flipped(bound);
+                result.append_flipped(self, bound, 0..std::u16::MAX);
             }
 
             // Handle a partial final container
             if end_low != std::u16::MAX {
                 end_high += 1;
 
-                result.insert_flipped(end_high, 0..end_low);
+                result.append_flipped(self, end_high, 0..end_low);
             }
         }
 
@@ -842,16 +848,24 @@ impl RoaringBitmap {
         result
     }
 
-    /// Insert the negation of the container with the given key.
+    /// Insert the negation of the container within `range` with the given key.
     /// Creates a new full container if no container is found
-    fn insert_flipped(&mut self, key: u16, range: Range<u16>) {
-        unimplemented!()
-    }
+    fn append_flipped(&mut self, other: &Self, key: u16, range: Range<u16>) {
+        if let Some(i) = other.get_index(&key) {
+            let unflipped = &other.containers[i];
+            let flipped = unflipped.not(range);
 
-    /// Insert the full negation of the container at `key`.
-    /// Creates a new full container if no container is present
-    fn insert_fully_flipped(&mut self, key: u16) {
-        unimplemented!()
+            if flipped.cardinality() > 0 {
+                self.containers.push(flipped);
+                self.keys.push(key);
+            }
+        }
+        else {
+            if let Some(c) = Container::from_range(range) {
+                self.containers.push(c);
+                self.keys.push(key);
+            }
+        }
     }
 
     /// Same as [`or`] but operates in place on `self`

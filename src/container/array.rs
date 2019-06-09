@@ -366,42 +366,53 @@ impl<'a> From<&'a RunContainer> for ArrayContainer {
     }
 }
 
-impl Union<Self> for ArrayContainer {
-    type Output = Self;
+impl SetOr<Self> for ArrayContainer {
+    fn or(&self, other: &Self) -> Container {
+        //union(&self.array, &other.array, &mut out.array);
+        unimplemented!()
+    }
 
-    fn union_with(&self, other: &Self, out: &mut Self::Output) {
-        union(&self.array, &other.array, &mut out.array);
+    fn inplace_or(&mut self, other: &Self) {
+        unimplemented!()
     }
 }
 
-impl Union<BitsetContainer> for ArrayContainer {
-    type Output = BitsetContainer;
+impl SetOr<BitsetContainer> for ArrayContainer {
+    fn or(&self, other: &BitsetContainer) -> Container {
+        //other.union_with(self, out)
+        unimplemented!()
+    }
 
-    fn union_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
-        other.union_with(self, out)
+    fn inplace_or(&mut self, other: &BitsetContainer) {
+        unimplemented!()
     }
 }
 
-impl Union<RunContainer> for ArrayContainer {
-    type Output = RunContainer;
+impl SetOr<RunContainer> for ArrayContainer {
+    fn or(&self, other: &RunContainer) -> Container {
+        //other.union_with(self, out)
+        unimplemented!()
+    }
 
-    fn union_with(&self, other: &RunContainer, out: &mut Self::Output) {
-        other.union_with(self, out)
+    fn inplace_or(&mut self, other: &RunContainer) {
+        unimplemented!()
     }
 }
 
-impl Intersection<Self> for ArrayContainer {
-    type Output = Self;
+impl SetAnd<Self> for ArrayContainer {
+    fn and(&self, other: &Self) -> Container {
+        //intersect(&self.array, &other.array, &mut out.array);
+        unimplemented!()
+    }
 
-    fn intersect_with(&self, other: &Self, out: &mut Self::Output) {
-        intersect(&self.array, &other.array, &mut out.array);
+    fn inplace_and(&mut self, other: &Self) {
+        unimplemented!()
     }
 }
 
-impl Intersection<BitsetContainer> for ArrayContainer {
-    type Output = Self;
-
-    fn intersect_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
+impl SetAnd<BitsetContainer> for ArrayContainer {
+    fn and(&self, other: &BitsetContainer) -> Container {
+        /*
         if out.capacity() < self.cardinality() {
             out.reserve(self.cardinality() - out.capacity());
         }
@@ -418,29 +429,40 @@ impl Intersection<BitsetContainer> for ArrayContainer {
 
             out.array.set_len(new_card);
         }
+        */
+        unimplemented!()
+    }
+
+    fn inplace_and(&mut self, other: &BitsetContainer) {
+        unimplemented!()
     }
 }
 
-impl Intersection<RunContainer> for ArrayContainer {
-    type Output = ArrayContainer;
+impl SetAnd<RunContainer> for ArrayContainer {
+    fn and(&self, other: &RunContainer) -> Container {
+        //other.intersect_with(self, out)
+        unimplemented!()
+    }
 
-    fn intersect_with(&self, other: &RunContainer, out: &mut Self::Output) {
-        other.intersect_with(self, out)
+    fn inplace_and(&mut self, other: &RunContainer) {
+        unimplemented!()
     }
 }
 
-impl Difference<Self> for ArrayContainer {
-    type Output = Self;
+impl SetAndNot<Self> for ArrayContainer {
+    fn and_not(&self, other: &Self) -> Container {
+        //difference(&self.array, &other.array, &mut out.array);
+        unimplemented!()
+    }
 
-    fn difference_with(&self, other: &Self, out: &mut Self::Output) {
-        difference(&self.array, &other.array, &mut out.array);
+    fn inplace_and_not(&mut self, other: &Self) {
+        unimplemented!()
     }
 }
 
-impl Difference<BitsetContainer> for ArrayContainer {
-    type Output = ArrayContainer;
-
-    fn difference_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
+impl SetAndNot<BitsetContainer> for ArrayContainer {
+    fn and_not(&self, other: &BitsetContainer) -> Container {
+        /*
         if out.capacity() < self.cardinality() {
             out.reserve(self.cardinality() - out.capacity());
         }
@@ -454,13 +476,18 @@ impl Difference<BitsetContainer> for ArrayContainer {
 
             out.set_cardinality(card);
         }
+        */
+        unimplemented!()
+    }
+
+    fn inplace_and_not(&mut self, other: &BitsetContainer) {
+        unimplemented!()
     }
 }
 
-impl Difference<RunContainer> for ArrayContainer {
-    type Output = ArrayContainer;
-
-    fn difference_with(&self, other: &RunContainer, out: &mut Self::Output) {
+impl SetAndNot<RunContainer> for ArrayContainer {
+    fn and_not(&self, other: &RunContainer) -> Container {
+        /*
         if self.cardinality() > out.capacity() {
             out.reserve(self.cardinality() - out.capacity());
         }
@@ -509,13 +536,18 @@ impl Difference<RunContainer> for ArrayContainer {
                 i -= 1;
             }
         }
+        */
+        unimplemented!()
+    }
+
+    fn inplace_and_not(&mut self, other: &RunContainer) {
+        unimplemented!()
     }
 }
 
-impl SymmetricDifference<Self> for ArrayContainer {
-    type Output = Container;
-
-    fn symmetric_difference_with(&self, other: &Self, out: &mut Self::Output) {
+impl SetXor<Self> for ArrayContainer {
+    fn xor(&self, other: &Self) -> Container {
+        /*
         let total_cardinality = self.cardinality() + other.cardinality();
         
         // Output is an array container, calculate and return
@@ -544,13 +576,18 @@ impl SymmetricDifference<Self> for ArrayContainer {
         else {
             *out = Container::Bitset(result);
         }
+        */
+        unimplemented!()
+    }
+
+    fn inplace_xor(&mut self, other: &Self) {
+        unimplemented!()
     }
 }
 
-impl SymmetricDifference<BitsetContainer> for ArrayContainer {
-    type Output = Container;
-
-    fn symmetric_difference_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
+impl SetXor<BitsetContainer> for ArrayContainer {
+    fn xor(&self, other: &BitsetContainer) -> Container {
+        /*
         let mut result = BitsetContainer::new();
         result.copy_from(other);
         result.flip_list(&self.array);
@@ -563,13 +600,18 @@ impl SymmetricDifference<BitsetContainer> for ArrayContainer {
         else {
             *out = Container::Bitset(result);
         }
+        */
+        unimplemented!()
+    }
+
+    fn inplace_xor(&mut self, other: &BitsetContainer) {
+        unimplemented!()
     }
 }
 
-impl SymmetricDifference<RunContainer> for ArrayContainer {
-    type Output = Container;
-
-    fn symmetric_difference_with(&self, other: &RunContainer, out: &mut Self::Output) {
+impl SetXor<RunContainer> for ArrayContainer {
+    fn xor(&self, other: &RunContainer) -> Container {
+        /*
         const THRESHOLD: usize = 32;
         if self.cardinality() < THRESHOLD {
             other.symmetric_difference_with(self, out);
@@ -588,6 +630,12 @@ impl SymmetricDifference<RunContainer> for ArrayContainer {
 
             bitset.symmetric_difference_with(self, out);
         }
+        */
+        unimplemented!()
+    }
+
+    fn inplace_xor(&mut self, other: &RunContainer) {
+        unimplemented!()
     }
 }
 
@@ -633,12 +681,19 @@ impl Subset<RunContainer> for ArrayContainer {
     }
 }
 
-impl Negation for ArrayContainer {
-    fn negate(&self, out: &mut Container) {
+impl SetNot for ArrayContainer {
+    fn not(&self) -> Container {
+        /*
         let mut bitset = BitsetContainer::new();
         bitset.set_all();
         bitset.clear_list(&self.array);
 
         *out = Container::Bitset(bitset);
+        */
+        unimplemented!()
+    }
+
+    fn inplace_not(&mut self) {
+        unimplemented!()
     }
 }

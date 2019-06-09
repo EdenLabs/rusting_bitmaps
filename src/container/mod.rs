@@ -15,41 +15,93 @@ use std::ops::Range;
 pub const DEFAULT_MAX_SIZE: usize = 4096;
 
 /// The set union operation
-pub trait Union<T> {
-    type Output;
+trait SetOr<T> {
+    fn or(&self, other: &T) -> Container;
 
-    fn union_with(&self, other: &T, out: &mut Self::Output);
+    fn inplace_or(&mut self, other: &T);
 }
 
 /// The set intersection operation
-pub trait Intersection<T> {
-    type Output;
+trait SetAnd<T> {
+    fn and(&self, other: &T) -> Container;
 
-    fn intersect_with(&self, other: &T, out: &mut Self::Output);
+    fn inplace_and(&mut self, other: &T);
+
+    fn and_cardinality(&self, other: &T) -> usize;
 }
 
 /// The set difference operation
-pub trait Difference<T> {
-    type Output;
+trait SetAndNot<T> {
+    fn and_not(&self, other: &T) -> Container;
 
-    fn difference_with(&self, other: &T, out: &mut Self::Output);
+    fn inplace_and_not(&mut self, other: &T);
 }
 
 /// The set symmetric difference operation
-pub trait SymmetricDifference<T> {
-    type Output;
+trait SetXor<T> {
+    fn xor(&self, other: &T) -> Container;
 
-    fn symmetric_difference_with(&self, other: &T, out: &mut Self::Output);
+    fn inplace_xor(&mut self, other: &T);
 }
 
 /// The set subset operation
-pub trait Subset<T> {
+trait Subset<T> {
     fn subset_of(&self, other: &T) -> bool;
 }
 
 /// The inverse set operation
-pub trait Negation {
-    fn negate(&self, out: &mut Container);
+trait SetNot {
+    fn not(&self) -> Container;
+
+    fn inplace_not(&mut self);
+}
+
+macro_rules! op {
+    ($fn_name: ident) => {
+        pub fn $fn_name(&self, other: &Self) -> Self {
+            match self {
+                Container::Array(c0) => match other {
+                    Container::Array(c1) => c0.$fn_name(c1),
+                    Container::Bitset(c1) => c0.$fn_name(c1),
+                    Container::Run(c1) => c0.$fn_name(c1)
+                },
+                Container::Bitset(c0) => match other {
+                    Container::Array(c1) => c0.$fn_name(c1),
+                    Container::Bitset(c1) => c0.$fn_name(c1),
+                    Container::Run(c1) => c0.$fn_name(c1)
+                },
+                Container::Run(c0) => match other {
+                    Container::Array(c1) => c0.$fn_name(c1),
+                    Container::Bitset(c1) => c0.$fn_name(c1),
+                    Container::Run(c1) => c0.$fn_name(c1)
+                }
+            }
+        }
+    }
+}
+
+macro_rules! inplace {
+    ($fn_name: ident) => {
+        pub fn $fn_name(&mut self, other: &Self) {
+            match self {
+                Container::Array(c0) => match other {
+                    Container::Array(c1) => c0.$fn_name(c1),
+                    Container::Bitset(c1) => c0.$fn_name(c1),
+                    Container::Run(c1) => c0.$fn_name(c1)
+                },
+                Container::Bitset(c0) => match other {
+                    Container::Array(c1) => c0.$fn_name(c1),
+                    Container::Bitset(c1) => c0.$fn_name(c1),
+                    Container::Run(c1) => c0.$fn_name(c1)
+                },
+                Container::Run(c0) => match other {
+                    Container::Array(c1) => c0.$fn_name(c1),
+                    Container::Bitset(c1) => c0.$fn_name(c1),
+                    Container::Run(c1) => c0.$fn_name(c1)
+                }
+            }
+        }
+    }
 }
 
 /// Enum representing a container of any type
@@ -298,32 +350,56 @@ impl Container {
     }
 
     /// Perform an `or` operation between `self` and `other`
-    pub fn or(&self, other: &Self) -> Self {
-        unimplemented!()
-    }
+    op!(or);
 
     /// Perform an `and` operation between `self` and `other`
-    pub fn and(&self, other: &Self) -> Self {
-        unimplemented!()
-    }
+    op!(and);
 
     /// Perform an `and not` operation between `self` and `other`
-    pub fn and_not(&self, other: &Self) -> Self {
-        unimplemented!()
-    }
+    op!(and_not);
 
     /// Perform an `xor` operation between `self` and `other`
-    pub fn xor(&self, other: &Self) -> Self {
-        unimplemented!()
-    }
+    op!(xor);
 
     /// Compute the negation of this container within the specified range
     pub fn not(&self, range: Range<u16>) -> Self {
-        unimplemented!()
+        match self {
+            Container::Array(c) => c.not(),
+            Container::Bitset(c) => c.not(),
+            Container::Run(c) => c.not()
+        }
     }
 
     /// Compute the cardinality of an `and` operation between `self` and `other`
     pub fn and_cardinality(&self, other: &Self) -> usize {
-        unimplemented!()
+        match self {
+            Container::Array(c0) => match other {
+                Container::Array(c1) => c0.and_cardinality(c1),
+                Container::Bitset(c1) => c0.and_cardinality(c1),
+                Container::Run(c1) => c0.and_cardinality(c1)
+            },
+            Container::Bitset(c0) => match other {
+                Container::Array(c1) => c0.and_cardinality(c1),
+                Container::Bitset(c1) => c0.and_cardinality(c1),
+                Container::Run(c1) => c0.and_cardinality(c1)
+            },
+            Container::Run(c0) => match other {
+                Container::Array(c1) => c0.and_cardinality(c1),
+                Container::Bitset(c1) => c0.and_cardinality(c1),
+                Container::Run(c1) => c0.and_cardinality(c1)
+            }
+        }
     }
+
+    /// Compute the `or` of self `self` and `other` storing the result in `self`
+    inplace!(inplace_or);
+
+    /// Compute the `and` of self `self` and `other` storing the result in `self`
+    inplace!(inplace_and);
+
+    /// Compute the `and_not` of self `self` and `other` storing the result in `self`
+    inplace!(inplace_and_not);
+
+    /// Compute the `xor` of self `self` and `other` storing the result in `self`
+    inplace!(inplace_xor);
 }
