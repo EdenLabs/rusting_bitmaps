@@ -784,8 +784,73 @@ impl RoaringBitmap {
         result
     }
 
-    /// Invert all elements in this bitmap
-    pub fn not(&self) -> Self {
+    /// Negate all elements within `range` in this bitmap
+    pub fn flip(&self, range: Range<u32>) -> Self {
+        let mut result = Self::new();
+
+        let mut start_high = (range.start >> 16) as u16;
+        let start_low = range.start as u16;
+
+        let mut end_high = (range.end >> 16) as u16;
+        let end_low = range.end as u16;
+
+        // Append all preceding elements that are not to be flipped
+        let end = array_ops::advance_until(&self.keys, 0, start_high);
+        result.containers.extend_from_slice(&self.containers[0..end]);
+        result.keys.extend_from_slice(&self.keys[0..end]);
+
+        // Range occupies the same container, just flip that
+        if start_high == end_high {
+            result.insert_flipped(start_high, start_low..end_low);
+        }
+        // Else flip a cross container range
+        else {
+            // Handle a partial start container
+            if start_low > 0 {
+                result.insert_flipped(start_high, start_low..std::u16::MAX);
+
+                start_high += 1;
+            }
+
+            if end_low != std::u16::MAX {
+                end_high -= 1;
+            }
+
+            // Handle all containers in the middle of the range skipping the last container
+            for bound in start_high..end_high {
+                result.insert_fully_flipped(bound);
+            }
+
+            // Handle a partial final container
+            if end_low != std::u16::MAX {
+                end_high += 1;
+
+                result.insert_flipped(end_high, 0..end_low);
+            }
+        }
+
+        // Append any remaining containers
+        if let Some(mut i_last) = self.get_index(&end_high) {
+            i_last += 1; // Increment to get the next container after the last flipped one
+
+            if i_last < self.containers.len() {
+                result.containers.extend_from_slice(&self.containers[i_last..]);
+                result.keys.extend_from_slice(&self.keys[i_last..]);
+            }
+        }
+
+        result
+    }
+
+    /// Insert the negation of the container with the given key.
+    /// Creates a new full container if no container is found
+    fn insert_flipped(&mut self, key: u16, range: Range<u16>) {
+        unimplemented!()
+    }
+
+    /// Insert the full negation of the container at `key`.
+    /// Creates a new full container if no container is present
+    fn insert_fully_flipped(&mut self, key: u16) {
         unimplemented!()
     }
 

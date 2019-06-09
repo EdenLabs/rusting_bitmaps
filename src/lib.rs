@@ -20,6 +20,7 @@
 // TODO: Add cleaner conversion between range types
 // TODO: Inline trivial fns
 // TODO: Eliminate all bounds checks in critical paths
+// TODO: Remove the container op traits in preference of static dispatch from the enum object
 
 mod roaring;
 mod container;

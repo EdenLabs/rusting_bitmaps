@@ -317,6 +317,11 @@ impl Container {
         unimplemented!()
     }
 
+    /// Compute the negation of this container within the specified range
+    pub fn not(&self, range: Range<u16>) -> Self {
+        unimplemented!()
+    }
+
     /// Compute the cardinality of an `and` operation between `self` and `other`
     pub fn and_cardinality(&self, other: &Self) -> usize {
         unimplemented!()
