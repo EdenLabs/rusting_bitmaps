@@ -8,13 +8,44 @@ use crate::container::array;
 // TODO: Add support for custom allocators
 // TODO: Implement checked variants?
 
-/// Mask used for removing the lower half of a 32 bit integer to generate a key in a roaring bitmap.
-/// The same can be accomplished by casting to a u16 to truncate the upper bits
-const MASK: u32 = 0xFFFF;
-
 /// A Roaring Bitmap
 ///
-/// TODO: Description
+/// Roaring bitmaps are an optimized bitmap implementation for 32 bit integer sets 
+/// that support high performance queries and a compact memory representation.
+/// 
+/// # How it works
+/// Internally data is split into a 16 bit key consisting of the upper 16 bits of the value, and a 16 bit
+/// value that contains the lower 16 bits. Only the lower 16 bits are stored and the value is reconstructed
+/// from the key on demand. The storage method used changes dynamically based on the number of values
+/// contained within the bitmap.
+/// 
+/// Generallly the representation selected is as follows
+/// ```
+/// Less than 4096 elements       : Array
+/// Less than `u16::MAX` elements : Bitset
+/// More than `u16::MAX` elements : RLE encoded
+/// ```
+/// 
+/// # Performance Remarks
+/// Frequent modification of a bitmap may result in high memory churn due to transitions between
+/// in memory representations of the bitmap contents. As such, if the bitmap is to be modified frequently 
+/// it is best to aggregate operations and apply them at once. Providing an optimized allocator that somewhat
+/// preserves memory locality and has a low cost is desireable.
+/// 
+/// If building a custom allocator the memory characteristics of a roaring bitmap are as follows
+/// 
+/// Roaring Bitmap:
+///  - Nonlinear growable vectors to store a 16 bit key and container pointer + data for each bucket
+/// 
+/// Containers:
+///  - Arrays require a maximum of `4096 * 2` bytes (grown with contents)
+///  - Bitmaps require `1024 * 8` bytes (fixed at allocation)
+///  - Run containers are nonlinear and depend on the distribution of the set contents over the universe of 32 bit integers
+/// 
+/// Once a bitmap is built queries done via the `inplace_<op>` variants will only incur a cost for the query bitmap.
+/// Queries using the normal ops will create a new bitmap for every operation.
+/// 
+/// `cardinality()` (`len()`) queries may lazily evaluate the cardinality of some containers if they are determined to be out of date
 #[derive(Clone, Debug)]
 pub struct RoaringBitmap {
     /// List of containers in this roaring bitmap
@@ -54,15 +85,15 @@ impl RoaringBitmap {
         let mut value = min;
         while value < max {
             let key = value >> 16;
-            let container_min = value & MASK;
-            let container_max = (max - (key << 16)).min(1 << 16);
+            let container_min = value as u16;
+            let container_max = (max - (key << 16)).min(1 << 16) as u16;
 
-            if let Some(container) = Container::from_range(range.clone()) {
+            if let Some(container) = Container::from_range(container_min..container_max) {
                 bitmap.containers.push(container);
                 bitmap.keys.push(key as u16);
             }
 
-            value += container_max - container_min;
+            value += (container_max - container_min) as u32;
         }
 
         bitmap
@@ -86,18 +117,20 @@ impl RoaringBitmap {
     }
     
     /// Add a value to the bitmap
-    pub fn add(&mut self, x: u32) {
-        let x_high = (x >> 16) as u16;
+    pub fn add(&mut self, value: u32) {
+        let x_high = (value >> 16) as u16;
 
-        if let Some(i) = self.get_index(&x_high) {
-            self.containers[i].add(x as u16);
-        }
-        else {
-            let mut array = ArrayContainer::new();
-            array.add(x as u16);
+        match self.keys.binary_search(&x_high) {
+            Ok(i) => {
+                self.containers[i].add(value as u16)
+            },
+            Err(i) => {
+                let mut array = ArrayContainer::new();
+                array.add(value as u16);
 
-            self.containers.push(Container::Array(array));
-            self.keys.push(x_high);
+                self.containers.insert(i, Container::Array(array));
+                self.keys.insert(i, x_high);
+            }
         }
     }
 
@@ -107,17 +140,17 @@ impl RoaringBitmap {
     /// # Remarks
     /// The index container is only guaranteed to be valid immediately after the call assuming
     /// no containers are removed in subsequent operations.
-    fn add_fetch_container(&mut self, x: u32) -> usize {
-        let x_high = (x >> 16) as u16;
+    fn add_fetch_container(&mut self, value: u32) -> usize {
+        let x_high = (value >> 16) as u16;
 
         if let Some(i) = self.get_index(&x_high) {
-            self.containers[i].add(x as u16);
+            self.containers[i].add(value as u16);
 
             i
         }
         else {
             let mut array = ArrayContainer::new();
-            array.add(x as u16);
+            array.add(value as u16);
 
             self.containers.push(Container::Array(array));
             self.keys.push(x_high);
@@ -128,35 +161,46 @@ impl RoaringBitmap {
 
     /// Add a range of values to the bitmap
     pub fn add_range(&mut self, range: Range<u32>) {
-        // TODO: Make this use container min and container max
+        let min = range.start;
+        let max = range.end;
 
-        // Add the first value so we can nab the container index
-        if range.len() == 0 {
-            return;
+        // Determine keys
+        let min_key = (range.start >> 16) as u16;
+        let max_key = ((range.end - 1) >> 16) as u16;
+        let span = (max_key - min_key) as isize;
+        
+        // Determine lengths
+        let prefix_len = array::count_less(&self.keys, min_key) as isize;
+        let suffix_len = array::count_greater(&self.keys, max_key) as isize;
+        let common_len = (self.keys.len() as isize) - prefix_len - suffix_len;
+
+        // Reserve extra space for the new containers
+        if span > common_len {
+            let required = (span - common_len) as usize;
+            self.containers.reserve(required);
+            self.keys.reserve(required);
         }
 
-        unsafe {
-            let max = range.end;
-            let mut value = range.start;
-            let mut prev = value;
-            let mut c_index = self.add_fetch_container(value);
+        let mut src: isize = prefix_len + common_len - 1; // isize as this could potentially be -1
+        let mut dst: isize = (self.keys.len() as isize) - suffix_len - 1;
+        for key in (min_key..max_key).rev() {
+            let container_min = if min_key == key { min as u16 } else { 0 };
+            let container_max = if max_key == key { max as u16 } else { 0 };
 
-            value += 1;
+            if src >= 0 && self.keys[src as usize] == key {
+               let container = &mut self.containers[src as usize];
+               container.add_range(container_min..container_max);
 
-            while value < max {
-                // Check if the upper 16 bits match the previous value, if so the value goes
-                // into the same container and we can just append to that one
-                if (prev ^ value) >> 16 == 0 {
-                    self.containers.get_unchecked_mut(c_index)
-                        .add(value as u16);
-                }
-                else {
-                    c_index = self.add_fetch_container(value);
-                }
-
-                prev = value;
-                value += 1;
+               src -= 1;
             }
+            else {
+                if let Some(container) = Container::from_range(container_min..container_max) {
+                    self.containers.insert(dst as usize, container);
+                    self.keys.insert(dst as usize, key);
+                }
+            }
+
+            dst -= 1;
         }
     }
     
@@ -192,11 +236,11 @@ impl RoaringBitmap {
     }
     
     /// Remove a value from the bitmap
-    pub fn remove(&mut self, x: u32) {
-        let x_high = (x >> 16) as u16;
+    pub fn remove(&mut self, value: u32) {
+        let x_high = (value >> 16) as u16;
         
         if let Some(i) = self.get_index(&x_high) {
-            self.containers[i].remove(x as u16);
+            self.containers[i].remove(value as u16);
             
             if self.containers[i].cardinality() == 0 {
                 self.containers.pop();
@@ -215,8 +259,8 @@ impl RoaringBitmap {
         let min_key = (range.start >> 16) as u16;
         let max_key = (range.end >> 16) as u16;
 
-        let src = array::count_less(&self.keys, min_key);
-        let dst = src;
+        let mut src = array::count_less(&self.keys, min_key);
+        let mut dst = src;
 
         while src < self.keys.len() && self.keys[src] <= max_key {
             let container_min = if min_key == self.keys[src] { min as u16 } else { 0 };
@@ -268,12 +312,82 @@ impl RoaringBitmap {
     
     /// Check if the bitmap contains a value
     pub fn contains(&self, value: u32) -> bool {
-        unimplemented!()
+        let high = (value >> 16) as u16;
+
+        if let Some(i) = self.get_index(&high) {
+            return self.containers[i].contains(value as u16);
+        }
+
+        false
     }
     
     /// Check if the bitmap contains a range of values
     pub fn contains_range(&self, range: Range<u32>) -> bool {
-        unimplemented!()
+        // We always contain the empty set
+        if range.len() == 0 {
+            return true;
+        }
+
+        // Do an optimized single value contains if there's only one element in the set
+        if range.len() == 1 {
+            return self.contains(range.start);
+        }
+
+        // Do a ranged contains operation
+        let key_min = (range.start >> 16) as u16;
+        let key_max = (range.end >> 16) as u16;
+        let key_span = (key_max - key_min) as usize;
+
+        // Key range exceeds those stored in this bitmap, can't possibly contain the set
+        if self.keys.len() < key_span + 1 {
+            return false;
+        }
+
+        let ci_min = self.get_index(&key_min);
+        let ci_max = self.get_index(&key_max);
+
+        // One or both containers don't exist in this bitmap
+        if ci_min.is_none() || ci_max.is_none() {
+            return false;
+        }
+
+        let ci_min = ci_min.unwrap();
+        let ci_max = ci_max.unwrap();
+
+        // Not enough intermediate keys are present
+        if ci_max - ci_min != key_span {
+            return false;
+        }
+
+        let val_min = range.start as u16;
+        let val_max = range.end as u16;
+        let container = &self.containers[ci_min];
+
+        // Min and max are the same, do contains on the single container
+        if key_min == key_max {
+            return container.contains_range(val_min..val_max);
+        }
+
+        // Check if the min container contains [val_min-container_max]
+        if !container.contains_range(val_min..std::u16::MAX) {
+            return false;
+        }
+
+        // Check if the max container contains [container_min-val_max]
+        let container = &self.containers[ci_max];
+        if !container.contains_range(0..val_max) {
+            return false;
+        }
+
+        // Check if all containers in between are full
+        for container in self.containers[(ci_min + 1)..(ci_max - 1)].iter() {
+            if !container.is_full() {
+                return false;
+            }
+        }
+
+        // Range is contained in the bitmap
+        true
     }
 
     /// Get the length of the bitmap
@@ -301,6 +415,7 @@ impl RoaringBitmap {
     }
     
     /// Clear the contents of this bitmap
+    #[inline]
     pub fn clear(&mut self) {
         self.containers.clear();
         self.keys.clear();

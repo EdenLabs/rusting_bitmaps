@@ -7,6 +7,8 @@ use crate::container::*;
 
 use super::bitset_ops;
 
+// TODO: Make sure nothing in here uses cardinality directly as it's lazily evaluated
+
 /// The size of the bitset in 64bit words
 pub const BITSET_SIZE_IN_WORDS: usize = 1024;
 
@@ -49,13 +51,13 @@ impl BitsetContainer {
     }
 
     /// Set all the bits within the range denoted by [min-max)
-    pub fn set_range(&mut self, range: Range<u32>) {
+    pub fn set_range(&mut self, range: Range<usize>) {
         if range.len() == 0 {
             return;
         }
 
-        let min = range.start as usize;
-        let max = range.end as usize;
+        let min = range.start;
+        let max = range.end;
 
         assert!(max < BITSET_SIZE_IN_WORDS * 64);
 
@@ -121,25 +123,23 @@ impl BitsetContainer {
         self.cardinality += ((word ^ new_word) >> 1) as usize;
     }
 
-    // TODO: Unify these index types
-
-    /// Unset all the bits between [min-max]
-    pub fn unset_range(&mut self, min: usize, max: usize) {
-        if min == max {
-            self.unset(min);
+    /// Unset all the bits between [min-max)
+    pub fn unset_range(&mut self, range: Range<usize>) {
+        if range.len() == 1 {
+            self.unset(range.start);
             return;
         }
 
-        let first_word = min >> 6;
-        let last_word = (max - 1) >> 6;
+        let first_word = range.start >> 6;
+        let last_word = (range.end - 1) >> 6;
 
-        self.bitset[first_word] ^= !(!0 << (min % 64));
+        self.bitset[first_word] ^= !(!0 << (range.start % 64));
 
         for word in first_word..last_word {
             self.bitset[word] = !self.bitset[word];
         }
 
-        self.bitset[last_word] ^= !0 >> ((!max + 1) % 64)
+        self.bitset[last_word] ^= !0 >> ((!range.end + 1) % 64)
     }
 
     /// Clear all bits in the bitset
@@ -185,8 +185,8 @@ impl BitsetContainer {
 
     /// Add all values in [min-max) to the bitset
     #[inline]
-    pub fn add_range(&mut self, range: Range<u32>) {
-        self.set_range(range)
+    pub fn add_range(&mut self, range: Range<u16>) {
+        self.set_range((range.start as usize)..(range.end as usize))
     }
 
     /// Add `value` from the set and return true if it was removed
@@ -216,12 +216,9 @@ impl BitsetContainer {
     }
 
     /// Check if all bits within a range are true
-    pub fn get_range(&self, min: u16, max: u16) -> bool {
-        assert!(min < max);
-        assert!(max < (BITSET_SIZE_IN_WORDS * 64) as u16);
-
-        let start = (min >> 6) as usize;
-        let end = (max >> 6) as usize;
+    pub fn get_range(&self, range: Range<u16>) -> bool {
+        let start = (range.start >> 6) as usize;
+        let end = ((range.end - 1) >> 6) as usize;
 
         let first = !((1 << (start & 0x3F)) - 1);
         let last = (1 << (end & 0x3F)) - 1;
@@ -288,18 +285,26 @@ impl BitsetContainer {
     }
 
     /// Check if the bitset contains a specific value
+    #[inline]
     pub fn contains(&self, value: u16) -> bool {
         self.get(value)
     }
 
-    /// Check if the bitset contains all bits in the range [min-max]
-    pub fn contains_range(&self, min: u16, max: u16) -> bool {
-        self.get_range(min, max)
+    /// Check if the bitset contains all bits in the range [min-max)
+    #[inline]
+    pub fn contains_range(&self, range: Range<u16>) -> bool {
+        self.get_range(range)
+    }
+
+    #[inline]
+    pub fn is_full(&self) -> bool {
+        self.cardinality() == BITSET_SIZE_IN_WORDS * 64
     }
 
     /// The cardinality of the bitset
+    #[inline]
     pub fn cardinality(&self) -> usize {
-        self.cardinality as usize
+        self.cardinality
     }
 
     pub fn cardinality_range(&self, range: Range<u16>) -> usize {
@@ -457,8 +462,8 @@ impl<'a> From<&'a RunContainer> for BitsetContainer {
 
         let mut bitset = BitsetContainer::new();
         for run in container.iter() {
-            let min = run.value as u32;
-            let max = (run.length - 1) as u32;
+            let min = run.value as usize;
+            let max = (run.length - 1) as usize;
 
             bitset.set_range(min..max);
         }
@@ -590,10 +595,7 @@ impl Difference<RunContainer> for BitsetContainer {
         bitset.copy_from(self);
 
         for run in other.iter() {
-            bitset.unset_range(
-                run.value as usize,
-                (run.sum() + 1) as usize
-            );
+            bitset.unset_range((run.value as usize)..((run.sum() + 1) as usize));
         }
 
         if bitset.cardinality() <= DEFAULT_MAX_SIZE {
@@ -672,7 +674,7 @@ impl Subset<RunContainer> for BitsetContainer {
 impl Negation for BitsetContainer {
     fn negate(&self, out: &mut Container) {
         let mut bitset = self.clone();
-        bitset.unset_range(0, self.cardinality());
+        bitset.unset_range(0..self.cardinality());
 
         if bitset.cardinality() > DEFAULT_MAX_SIZE {
             *out = Container::Bitset(bitset);

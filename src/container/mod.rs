@@ -70,7 +70,7 @@ pub enum Container {
 
 impl Container {
     /// Create a container with all values in the specified range
-    pub fn from_range(range: Range<u32>) -> Option<Self> {
+    pub fn from_range(range: Range<u16>) -> Option<Self> {
         debug_assert!(range.len() > 0);
 
         let size = range.len();
@@ -85,7 +85,7 @@ impl Container {
         // Result is a bitset
         else {
             let mut container = BitsetContainer::new();
-            container.set_range(range);
+            container.set_range((range.start as usize)..(range.end as usize));
 
             Some(Container::Bitset(container))
         }
@@ -116,6 +116,14 @@ impl Container {
             }
         };
     }
+
+    pub fn add_range(&mut self, range: Range<u16>) {
+        match self {
+            Container::Array(c) => c.add_range(range),
+            Container::Bitset(c) => c.add_range(range),
+            Container::Run(c) => c.add_range(range)
+        }
+    }
     
     /// Remove a value from the underlying container
     pub fn remove(&mut self, value: u16) {
@@ -136,7 +144,7 @@ impl Container {
         }
     }
 
-    /// Remove all elements with a specified range
+    /// Remove all elements within [min-max)
     /// 
     /// # Returns
     /// Returns false if no more elements are in the container, returns true otherwise
@@ -151,19 +159,19 @@ impl Container {
                     return false;
                 }
                 else {
-                    c.remove_range(range);
+                    c.remove_range((range.start as usize)..(range.end as usize));
 
                     return true;
                 }
             },
             Container::Bitset(c) => {
-                let result_card = c.cardinality() - c.cardinality_range(range);
+                let result_card = c.cardinality() - c.cardinality_range(range.clone());
 
                 if result_card == 0 {
                     return false;
                 }
                 else if result_card < DEFAULT_MAX_SIZE {
-                    c.unset_range(range);
+                    c.unset_range((range.start as usize)..(range.end as usize));
                     unsafe { c.set_cardinality(result_card); }
                     
                     *self = Container::Array(c.into());
@@ -171,7 +179,7 @@ impl Container {
                     return true;
                 }
                 else {
-                    c.unset_range(range);
+                    c.unset_range((range.start as usize)..(range.end as usize));
                     unsafe { c.set_cardinality(result_card); }
 
                     return true;
@@ -203,6 +211,33 @@ impl Container {
                 }
             }
         };
+    }
+
+    /// Check if the container contains a specific value
+    pub fn contains(&self, value: u16) -> bool {
+        match self {
+            Container::Array(c) => c.contains(value),
+            Container::Bitset(c) => c.contains(value),
+            Container::Run(c) => c.contains(value)
+        }
+    }
+
+    /// Check if the container contains a range of values
+    pub fn contains_range(&self, range: Range<u16>) -> bool {
+        match self {
+            Container::Array(c) => c.contains_range(range),
+            Container::Bitset(c) => c.contains_range(range),
+            Container::Run(c) => c.contains_range(range)
+        }
+    }
+
+    /// Check if the container is full
+    pub fn is_full(&self) -> bool {
+        match self {
+            Container::Array(c) => c.is_full(),
+            Container::Bitset(c) => c.is_full(),
+            Container::Run(c) => c.is_full()
+        }
     }
 
     /// Get the cardinality of the container

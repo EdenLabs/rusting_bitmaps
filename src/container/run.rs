@@ -146,8 +146,11 @@ impl RunContainer {
         }
     }
     
-    /// Add all values in the range [min-max] to the run container
-    pub fn add_range(&mut self, min: u16, max: u16) {
+    /// Add all values in the range [min-max) to the run container
+    pub fn add_range(&mut self, range: Range<u16>) {
+        let max = range.start;
+        let min = range.end - 1;
+
         let runs_min = self.rle_count_less(min);
         let runs_max = self.rle_count_greater(max);
 
@@ -210,8 +213,8 @@ impl RunContainer {
         }
     }
     
-    /// Remove all values in the range [min-max] from the run container
-    pub fn remove_range(&mut self, min: u16, max: u16) {
+    /// Remove all values in the range [min-max) from the run container
+    pub fn remove_range(&mut self, range: Range<u16>) {
         fn result_to_compressed_index(value: SearchResult) -> isize {
             match value {
                 SearchResult::ExactMatch(index) => {
@@ -225,6 +228,9 @@ impl RunContainer {
                 }
             }
         }
+
+        let min = range.start;
+        let max = range.end - 1;
 
         let mut first = result_to_compressed_index(self.find_run(min));
         let mut last = result_to_compressed_index(self.find_run(max));
@@ -289,10 +295,13 @@ impl RunContainer {
         }
     }
     
-    /// Check if the container contains all the values in [min-max]
-    pub fn contains_range(&self, min: u16, max: u16) -> bool {
+    /// Check if the container contains all the values in [min-max)
+    pub fn contains_range(&self, range: Range<u16>) -> bool {
         let mut count = 0;
         let index;
+
+        let min = range.start;
+        let max = range.end - 1;
 
         match self.binary_search(min) {
             SearchResult::ExactMatch(i) => {
@@ -749,8 +758,8 @@ impl Union<BitsetContainer> for RunContainer {
         out.copy_from(other);
 
         for rle in self.iter() {
-            let min = rle.value as u32;
-            let max = rle.sum() as u32;
+            let min = rle.value as usize;
+            let max = rle.sum() as usize;
 
             out.set_range(min..max);
         }
@@ -840,8 +849,8 @@ impl Intersection<BitsetContainer> for RunContainer {
 
             let mut array = ArrayContainer::with_capacity(card);
             for run in self.runs.iter() {
-                let min = run.value as u32;
-                let max = run.sum() as u32;
+                let min = run.value as u16;
+                let max = run.sum() as u16;
 
                 array.add_range(min..max);
             }
@@ -858,12 +867,12 @@ impl Intersection<BitsetContainer> for RunContainer {
             let mut start = 0;
             for run in self.runs.iter() {
                 let end = run.value as usize;
-                bitset.unset_range(start, end);
+                bitset.unset_range(start..end);
 
                 start = end + run.length as usize + 1;
             }
 
-            bitset.unset_range(start, 1 << 16);
+            bitset.unset_range(start..(1 << 16));
 
             if bitset.cardinality() > DEFAULT_MAX_SIZE {
                 *out = Container::Bitset(bitset);
@@ -1055,13 +1064,13 @@ impl Difference<BitsetContainer> for RunContainer {
                 let start = rle.value as usize;
                 let end = (rle.sum() + 1) as usize;
 
-                bitset.unset_range(last_pos, start);
+                bitset.unset_range(last_pos..start);
                 bitset.flip_range(start, end);
 
                 last_pos = end;
             }
 
-            bitset.unset_range(last_pos, 1 << 16);
+            bitset.unset_range(last_pos..(1 << 16));
 
             // Result is not a bitset, convert to array
             if bitset.cardinality() <= DEFAULT_MAX_SIZE {

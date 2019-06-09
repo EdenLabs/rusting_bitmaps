@@ -150,7 +150,7 @@ impl ArrayContainer {
     }
 
     /// Add all values within the specified range
-    pub fn add_range(&mut self, range: Range<u32>) {
+    pub fn add_range(&mut self, range: Range<u16>) {
         assert!(range.len() > 0);
 
         // Resize to fit all new elements
@@ -182,16 +182,14 @@ impl ArrayContainer {
     }
 
     /// Remove all elements within the spefied range, exclusive
-    pub fn remove_range(&mut self, min: usize, max: usize) {
-        assert!(min < max);
-
-        if (min..max).len() == 0 || max > self.len() {
+    pub fn remove_range(&mut self, range: Range<usize>) {
+        if range.len() == 0 || range.end as usize > self.len() {
             return;
         }
 
-        let range = max..self.array.len();
+        let len = self.len();
 
-        self.array.copy_within(range, min);
+        self.array.copy_within((range.end)..len, range.start);
     }
 
     /// Check if the array contains a specified value
@@ -199,26 +197,25 @@ impl ArrayContainer {
         self.array.binary_search(&value).is_ok()
     }
 
-    /// Check if the array contains all values within [min-max] (exclusive)
-    pub fn contains_range(&self, min: u16, max: u16) -> bool {
-        assert!(min < max);
+    /// Check if the array contains all values within [min-max)
+    pub fn contains_range(&self, range: Range<u16>) -> bool {
+        let rs = range.start;
+        let re = range.end - 1;
 
-        let min = min as usize;
-        let max = max as usize;
+        let min = exponential_search(&self.array, self.len(), rs);
+        let max = exponential_search(&self.array, self.len(), re);
 
-        if min as usize > self.len() || max as usize > self.len() {
-            return false;
+        if let (Ok(min_index), Ok(max_index)) = (min, max) {
+            return max_index - min_index == (re - rs) as usize && self.array[min_index] == rs && self.array[max_index] == re;
         }
 
-        let min_val = exponential_search(&self.array, self.len(), min as u16);
-        let max_val = exponential_search(&self.array, self.len(), (max - 1) as u16);
+        false
+    }
 
-        match (min_val, max_val) {
-            (Ok(min_index), Ok(max_index)) =>  {
-                max_index - min_index == max - min
-            },
-            _ => false
-        }
+    /// Check if the array is full
+    #[inline]
+    pub fn is_full(&self) -> bool {
+        self.array.len() == DEFAULT_MAX_SIZE
     }
 
     pub fn select(&self, rank: u32, start_rank: &mut u32) -> Option<u16> {
