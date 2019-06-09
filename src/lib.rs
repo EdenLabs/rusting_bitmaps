@@ -19,6 +19,7 @@
 //       make it explicit that the containers only contain the lower 16 bits of a value in the bitmap
 // TODO: Add cleaner conversion between range types
 // TODO: Inline trivial fns
+// TODO: Eliminate all bounds checks in critical paths
 
 mod roaring;
 mod container;

@@ -32,8 +32,6 @@ use std::arch::x86_64::{
     _mm_or_si128
 };
 
-use crate::utils::min;
-
 use super::{
     scalar_difference,
     scalar_intersect
@@ -55,7 +53,7 @@ pub fn intersect(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
     }
     
     // Ensure that out has enough space to hold the contents
-    let max_len = min(a.len(), b.len());
+    let max_len = a.len().min(b.len());
     if out.capacity() < max_len {
         out.reserve(max_len);
     }

@@ -1,23 +1,3 @@
-/// Get the max of two values
-pub fn max<T: Copy + PartialOrd>(a: T, b: T) -> T {
-    if a < b {
-        b
-    }
-    else {
-        a
-    }
-}
-
-/// Get the min of two values
-pub fn min<T: Copy + PartialOrd>(a: T, b: T) -> T {
-    if a < b {
-        a
-    }
-    else {
-        b
-    }
-}
-
 /// Compare the memory representation of two slices using the platform's vector instructions if appropriate
 pub fn mem_equals<T: PartialEq>(a: &[T], b: &[T]) -> bool {
     if a.len() != b.len() {

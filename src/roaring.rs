@@ -2,8 +2,9 @@
 
 use std::ops::{Range};
 
+use crate::utils;
 use crate::container::*;
-use crate::container::array;
+use crate::container::array_ops;
 
 // TODO: Add support for custom allocators
 // TODO: Implement checked variants?
@@ -170,8 +171,8 @@ impl RoaringBitmap {
         let span = (max_key - min_key) as isize;
         
         // Determine lengths
-        let prefix_len = array::count_less(&self.keys, min_key) as isize;
-        let suffix_len = array::count_greater(&self.keys, max_key) as isize;
+        let prefix_len = array_ops::count_less(&self.keys, min_key) as isize;
+        let suffix_len = array_ops::count_greater(&self.keys, max_key) as isize;
         let common_len = (self.keys.len() as isize) - prefix_len - suffix_len;
 
         // Reserve extra space for the new containers
@@ -259,7 +260,7 @@ impl RoaringBitmap {
         let min_key = (range.start >> 16) as u16;
         let max_key = (range.end >> 16) as u16;
 
-        let mut src = array::count_less(&self.keys, min_key);
+        let mut src = array_ops::count_less(&self.keys, min_key);
         let mut dst = src;
 
         while src < self.keys.len() && self.keys[src] <= max_key {
@@ -504,68 +505,315 @@ impl RoaringBitmap {
     }
 
     /// Check if this bitmap is a subset of other
-    pub fn subset_of(&self, other: &RoaringBitmap) -> RoaringBitmap {
-        unimplemented!()
+    pub fn subset_of(&self, other: &Self) -> bool {
+        // Convention used is as follows
+        // 0 = self
+        // 1 = other
+
+        let len0 = self.containers.len();   // lengths
+        let len1 = other.containers.len();
+
+        let mut i0 = 0; // Indices
+        let mut i1 = 0;
+        
+        while i0 < len0 && i1 < len1 {
+            let k0 = self.keys[i0];     // Keys
+            let k1 = other.keys[i1];
+
+            if k0 == k1 {
+                let c0 = &self.containers[i0]; // Containers
+                let c1 = &self.containers[i1];
+
+                if !c0.is_subset(c1) {
+                    return false;
+                }
+                else {
+                    i0 += 1;
+                    i1 += 1;
+                }
+            }
+            else if k0 < k1 {
+                return false;
+            }
+            else {
+                i1 = array_ops::advance_until(&other.keys, i1, k0);
+            }
+        }
+        
+        i0 == len0
     }
 
     /// Compute the Jaccard index between `self` and `other`. 
     /// (Also known as the Tanimoto distance or Jaccard similarity coefficient)
     /// 
     /// Returns `None` if both bitmaps are empty
-    pub fn jaccard_index(&self, other: &RoaringBitmap) -> Option<f64> {
-        unimplemented!()
+    pub fn jaccard_index(&self, other: &Self) -> Option<f64> {
+        if self.is_empty() && other.is_empty() {
+            None
+        }
+        else {
+            let c0 = self.cardinality();
+            let c1 = other.cardinality();
+            let shared = self.and_cardinality(other);
+
+            Some((shared as f64) / ((c0 + c1 - shared) as f64))
+        }
     }
 
     /// Or this bitmap with `other` (union)
-    pub fn or(&self, other: &RoaringBitmap) -> RoaringBitmap {
-        unimplemented!()
+    pub fn or(&self, other: &Self) -> Self {
+                let len0 = self.cardinality();
+        let len1 = other.cardinality();
+
+        if len0 == 0 {
+            return other.clone();
+        }
+
+        if len1 == 0 {
+            return self.clone();
+        }
+
+        let mut result = Self::with_capacity(len0 + len1);
+        let mut i0 = 0;
+        let mut i1 = 0;
+
+        while i0 < len0 && i1 < len1 {
+            let k0 = self.keys[i0];
+            let k1 = other.keys[i1];
+
+            if k0 == k1 {
+                let c0 = &self.containers[i0];
+                let c1 = &other.containers[i1];
+                let c = c0.or(c1);
+
+                if !c.is_empty() {
+                    result.containers.push(c);
+                    result.keys.push(k0);
+                }
+
+                i0 += 1;
+                i1 += 1;
+            }
+            else if k0 < k1 {
+                let c0 = &self.containers[i0];
+                
+                result.containers.push(c0.clone());
+                result.keys.push(k0);
+
+                i0 += 1;
+            }
+            else {
+                let c1 = &other.containers[i1];
+
+                result.containers.push(c1.clone());
+                result.keys.push(k1);
+
+                i1 += 1;
+            }
+        }
+        
+        if i0 == len0 {
+            result.containers.extend_from_slice(&other.containers[i1..len1]);
+            result.keys.extend_from_slice(&other.keys[i1..len1]);
+        }
+        
+        if i1 == len1 {
+            result.containers.extend_from_slice(&self.containers[i0..len0]);
+            result.keys.extend_from_slice(&self.keys[i0..len0]);
+        }
+
+        result
     }
     
     /// And this bitmap with `other` (intersect)
-    pub fn and(&self, other: &RoaringBitmap) -> RoaringBitmap {
-        unimplemented!()
+    pub fn and(&self, other: &Self) -> Self {
+        let len0 = self.cardinality();
+        let len1 = other.cardinality();
+
+        let capacity = len0.min(len1);
+        let mut result = Self::with_capacity(capacity);
+
+        let mut i0 = 0;
+        let mut i1 = 0;
+
+        while i0 < len0 && i1 < len1 {
+            let k0 = self.keys[i0];
+            let k1 = other.keys[i1];
+
+            if k0 == k1 {
+                let c0 = &self.containers[i0];
+                let c1 = &other.containers[i1];
+                let c = c0.and(c1);
+
+                if !c.is_empty() {
+                    result.containers.push(c);
+                    result.keys.push(k0);
+                }
+
+                i0 += 1;
+                i1 += 1;
+            }
+            else if k0 < k1 {
+                i0 = array_ops::advance_until(&self.keys, i0, k1);
+            }
+            else {
+                i1 = array_ops::advance_until(&other.keys, i1, k0);
+            }
+        }
+
+        result
     }
 
     /// And not this bitmap with `other` (difference)
-    pub fn and_not(&self, other: &RoaringBitmap) -> RoaringBitmap {
-        unimplemented!()
+    pub fn and_not(&self, other: &Self) -> Self {
+        let len0 = self.cardinality();
+        let len1 = other.cardinality();
+        
+        if len0 == 0 {
+            return RoaringBitmap::new();
+        }
+
+        if len1 == 0 {
+            return self.clone();
+        }
+
+        let mut result = RoaringBitmap::with_capacity(len0);
+        let mut i0 = 0;
+        let mut i1 = 0;
+
+        while i0 < len0 && i1 < len1 {
+            let k0 = self.keys[i0];
+            let k1 = other.keys[i1];
+
+            if k0 == k1 {
+                let c0 = &self.containers[i0];
+                let c1 = &other.containers[i1];
+                let c = c0.and_not(c1);
+
+                if !c.is_empty() {
+                    result.containers.push(c);
+                    result.keys.push(k0);
+                }
+                
+                i0 += 1;
+                i1 += 1;
+            }
+            else if k0 < k1 {
+                let i0_next = array_ops::advance_until(&self.keys, i0, k1);
+
+                result.containers.extend_from_slice(&self.containers[i0..i0_next]);
+                result.keys.extend_from_slice(&self.keys[i0..i0_next]);
+
+                i0 = i0_next;
+            }
+            else {
+                i1 = array_ops::advance_until(&other.keys, i1, k0);
+            }
+        }
+
+        if i1 == len1 {
+            result.containers.extend_from_slice(&self.containers[i0..len0]);
+            result.keys.extend_from_slice(&self.keys[i0..len0]);
+        }
+
+        result
     }
 
     /// Xor this bitmap with `other` ()
-    pub fn xor(&self, other: &RoaringBitmap) -> RoaringBitmap {
-        unimplemented!()
+    pub fn xor(&self, other: &Self) -> Self {
+        let len0 = self.cardinality();
+        let len1 = other.cardinality();
+
+        if len0 == 0 {
+            return other.clone();
+        }
+
+        if len1 == 0 {
+            return self.clone();
+        }
+
+        let mut result = Self::with_capacity(len0 + len1);
+        let mut i0 = 0;
+        let mut i1 = 0;
+
+        while i0 < len0 && i1 < len1 {
+            let k0 = self.keys[i0];
+            let k1 = other.keys[i1];
+
+            if k0 == k1 {
+                let c0 = &self.containers[i0];
+                let c1 = &other.containers[i1];
+                let c = c0.xor(c1);
+
+                if !c.is_empty() {
+                    result.containers.push(c);
+                    result.keys.push(k0);
+                }
+
+                i0 += 1;
+                i1 += 1;
+            }
+            else if k0 < k1 {
+                let c0 = &self.containers[i0];
+                
+                result.containers.push(c0.clone());
+                result.keys.push(k0);
+
+                i0 += 1;
+            }
+            else {
+                let c1 = &other.containers[i1];
+
+                result.containers.push(c1.clone());
+                result.keys.push(k1);
+
+                i1 += 1;
+            }
+        }
+        
+        if i0 == len0 {
+            result.containers.extend_from_slice(&other.containers[i1..len1]);
+            result.keys.extend_from_slice(&other.keys[i1..len1]);
+        }
+        
+        if i1 == len1 {
+            result.containers.extend_from_slice(&self.containers[i0..len0]);
+            result.keys.extend_from_slice(&self.keys[i0..len0]);
+        }
+
+        result
     }
 
     /// Invert all elements in this bitmap
-    pub fn not(&self) -> RoaringBitmap {
+    pub fn not(&self) -> Self {
         unimplemented!()
     }
 
     /// Same as [`or`] but operates in place on `self`
     /// 
     /// [`or`]: RoaringBitmap::or
-    pub fn inplace_or(&mut self, other: &RoaringBitmap) {
+    pub fn inplace_or(&mut self, other: &Self) {
         unimplemented!()
     }
 
     /// Same as [`and`] but operates in place on `self`
     /// 
     /// [`and`]: RoaringBitmap::and
-    pub fn inplace_and(&mut self, other: &RoaringBitmap) {
+    pub fn inplace_and(&mut self, other: &Self) {
         unimplemented!()
     }
 
     /// Same as [`and_not`] but operates in place on `self`
     /// 
     /// [`and_not`]: RoaringBitmap::and_not
-    pub fn inplace_and_not(&mut self, other: &RoaringBitmap) {
+    pub fn inplace_and_not(&mut self, other: &Self) {
         unimplemented!()
     }
     
     /// Same as [`xor`] but operates in place on `self`
     /// 
     /// [`xor`]: RoaringBitmap::xor
-    pub fn inplace_xor(&mut self, other: &RoaringBitmap) {
+    pub fn inplace_xor(&mut self, other: &Self) {
         unimplemented!()
     }
 
@@ -576,7 +824,78 @@ impl RoaringBitmap {
         unimplemented!()
     }
 
-    /// Get the container index for a given key
+    /// Compute the cardinality of `or` on `self` and `other` without storing the result
+    /// 
+    /// # Remarks
+    /// This only computes cardinality in place, no allocations are made
+    pub fn or_cardinality(&self, other: &Self) -> usize {
+        let c0 = self.cardinality();
+        let c1 = other.cardinality();
+        let shared = self.and_cardinality(other);
+
+        c0 + c1 - shared
+    }
+
+    /// Compute the cardinality of `and` on `self` and `other` without storing the result
+    /// 
+    /// # Remarks
+    /// This computes cardinality in place, no allocations are made
+    pub fn and_cardinality(&self, other: &Self) -> usize {
+        let len0 = self.containers.len();
+        let len1 = other.containers.len();
+
+        let mut result = 0;
+        let mut i0 = 0;
+        let mut i1 = 0;
+
+        while i0 < len0 && i1 < len1 {
+            let k0 = self.keys[i0];
+            let k1 = other.keys[i1];
+
+            if k0 == k1 {
+                let c0 = &self.containers[i0];
+                let c1 = &other.containers[i1];
+
+                result += c0.and_cardinality(c1);
+
+                i0 += 1;
+                i1 += 1;
+            }
+            else if k0 < k1 {
+                i0 = array_ops::advance_until(&self.keys, i0, k1);
+            }
+            else {
+                i1 = array_ops::advance_until(&other.keys, i1, k0);
+            }
+        }
+
+        result
+    }
+
+    /// Compute the cardinality of `and_not` on `self` and `other` without storing the result
+    /// 
+    /// # Remarks
+    /// This computes cardinality in place, no allocations are made
+    pub fn and_not_cardinality(&self, other: &Self) -> usize {
+        let c0 = self.cardinality();
+        let shared = self.and_cardinality(other);
+
+        c0 - shared
+    }
+
+    /// Compute the cardinality of `xor` on `self` and `other` without storing the result
+    /// 
+    /// # Remarks
+    /// This computes cardinality in place, no allocations are made
+    pub fn xor_cardinality(&self, other: &Self) -> usize {
+        let c0 = self.cardinality();
+        let c1 = other.cardinality();
+        let shared = self.and_cardinality(other);
+
+        c0 + c1 - 2 * shared
+    }
+
+    /// Find the index for a given key
     #[inline]
     fn get_index(&self, x: &u16) -> Option<usize> {
         self.keys.binary_search(x)

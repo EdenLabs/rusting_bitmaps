@@ -1,6 +1,5 @@
-pub mod array;
-
-mod array_ops;
+mod array;
+pub mod array_ops;
 mod bitset;
 mod bitset_ops;
 mod run;
@@ -151,8 +150,8 @@ impl Container {
     pub fn remove_range(&mut self, range: Range<u16>) -> bool {
         match self {
             Container::Array(c) => {
-                let vals_greater = array::count_greater(&c[..], range.end as u16);// TODO: Make sure these don't truncate
-                let vals_less = array::count_less(&c[0..(c.len() - vals_greater)], range.start as u16);
+                let vals_greater = array_ops::count_greater(&c[..], range.end as u16);// TODO: Make sure these don't truncate
+                let vals_less = array_ops::count_less(&c[0..(c.len() - vals_greater)], range.start as u16);
                 let result_card = vals_less + vals_greater;
 
                 if result_card == 0 {
@@ -240,6 +239,15 @@ impl Container {
         }
     }
 
+    /// Check if the container is empty
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Container::Array(c) => c.cardinality() == 0,
+            Container::Bitset(c) => c.cardinality() == 0,
+            Container::Run(c) => c.is_empty()
+        }
+    }
+
     /// Get the cardinality of the container
     pub fn cardinality(&self) -> usize {
         match self {
@@ -282,5 +290,35 @@ impl Container {
             Container::Bitset(c) => c.select(rank, start_rank),
             Container::Run(c) => c.select(rank, start_rank)
         }
-    } 
+    }
+
+    /// Check whether self is a subset of other
+    pub fn is_subset(&self, other: &Self) -> bool {
+        unimplemented!()
+    }
+
+    /// Perform an `or` operation between `self` and `other`
+    pub fn or(&self, other: &Self) -> Self {
+        unimplemented!()
+    }
+
+    /// Perform an `and` operation between `self` and `other`
+    pub fn and(&self, other: &Self) -> Self {
+        unimplemented!()
+    }
+
+    /// Perform an `and not` operation between `self` and `other`
+    pub fn and_not(&self, other: &Self) -> Self {
+        unimplemented!()
+    }
+
+    /// Perform an `xor` operation between `self` and `other`
+    pub fn xor(&self, other: &Self) -> Self {
+        unimplemented!()
+    }
+
+    /// Compute the cardinality of an `and` operation between `self` and `other`
+    pub fn and_cardinality(&self, other: &Self) -> usize {
+        unimplemented!()
+    }
 }

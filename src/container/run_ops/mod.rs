@@ -1,4 +1,3 @@
-use crate::utils::max;
 use crate::container::run::Rle16;
 
 /// Check if the container is full
@@ -145,7 +144,7 @@ pub fn intersect(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
                 }
             }
             else {
-                let latest_start = max(start_a, start_b);
+                let latest_start = start_a.max(start_b);
                 
                 let earliest_end;
                 if end_a == end_b {

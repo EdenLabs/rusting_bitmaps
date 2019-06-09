@@ -164,8 +164,8 @@ impl RunContainer {
         else {
             let common_min = self.runs[runs_min].value;
             let common_max = self.runs[runs_min + common - 1].sum();
-            let result_min = utils::min(common_min, min);
-            let result_max = utils::max(common_max, max);
+            let result_min = common_min.min(min);
+            let result_max = common_max.max(max);
 
             self.runs[runs_min] = Rle16::new(result_min, result_max - result_min);
             self.runs.splice((runs_min + 1)..runs_max, iter::empty());
@@ -474,7 +474,7 @@ impl RunContainer {
         let size_as_run = RunContainer::serialized_size(self.num_runs());
         let size_as_bitset = BitsetContainer::serialized_size();
         let size_as_array = ArrayContainer::serialized_size(cardinality);
-        let min_size_other = utils::min(size_as_array, size_as_bitset);
+        let min_size_other = size_as_array.min(size_as_bitset);
 
         // Run is still smallest, leave as is
         if size_as_run < min_size_other {
@@ -813,8 +813,7 @@ impl Intersection<ArrayContainer> for RunContainer {
                     array_index = array_ops::advance_until(
                         &other,
                         array_index,
-                        rle.value,
-                        other.cardinality()
+                        rle.value
                     );
                 }
                 else {
@@ -987,7 +986,7 @@ impl Difference<ArrayContainer> for RunContainer {
                     let start = run.value;
                     let end = run.sum() + 1;
 
-                    index = array_ops::advance_until(&other, index, start, other.len());
+                    index = array_ops::advance_until(&other, index, start);
 
                     if index >= other.cardinality() {
                         for i in start..end {
