@@ -92,48 +92,52 @@ pub fn exponential_search<T>(slice: &[T], size: usize, key: T) -> Result<usize, 
     return slice[(bound / 2)..((bound + 1).min(size))].binary_search(&key);
 }
 
-#[inline(always)]
-pub fn union(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
-    #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
-        simd::union(a, b, out);
+pub fn or(a: &[u16], b: &[u16]) -> Vec<u16> {
+    // Setup
+
+    // 256 bit simd
+    #[cfg(target_feature = "avx2")]
+    {
+
     }
 
-    #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))] {
-        scalar_union(a, b, out);
+    // 128 bit simd
+    #[cfg(target_feature = "sse4.2")]
+    {
+
     }
+
+    // Scalar
+
+    unimplemented!()
 }
 
-#[inline(always)]
-pub fn intersect(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
-    #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
-        simd::intersect(a, b, out);
-    }
-
-    #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))] {
-        scalar_intersect(a, b, out);
-    }
+pub fn and(a: &[u16], b: &[u16]) -> Vec<u16> {
+    unimplemented!()
 }
 
-#[inline(always)]
-pub fn difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
-    #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
-        simd::difference(a, b, out);
-    }
-
-    #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))] {
-        scalar_difference(a, b, out);
-    }
+pub fn and_not(a: &[u16], b: &[u16]) -> Vec<u16> {
+    unimplemented!()
 }
 
-#[inline(always)]
-pub fn symmetric_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
-    #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))] {
-        simd::symmetric_difference(a, b, out);
-    }
+pub fn xor(a: &[u16], b: &[u16]) -> Vec<u16> {
+    unimplemented!()
+}
 
-    #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))] {
-        scalar_symmetric_difference(a, b, out);
-    }
+pub fn inplace_or(a: &mut Vec<u16>, b: &[u16]) {
+    unimplemented!()
+}
+
+pub fn inplace_and(a: &mut Vec<u16>, b: &[u16]) {
+    unimplemented!()
+}
+
+pub fn inplace_and_not(a: &mut Vec<u16>, b: &[u16]) {
+    unimplemented!()
+}
+
+pub fn inplace_xor(a: &mut Vec<u16>, b: &[u16]) {
+    unimplemented!()
 }
 
 /// Calculate the difference (`A \ B`) between two slices using scalar instructions

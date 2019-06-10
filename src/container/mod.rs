@@ -17,7 +17,10 @@ pub const DEFAULT_MAX_SIZE: usize = 4096;
 /// The set union operation
 trait SetOr<T> {
     fn or(&self, other: &T) -> Container;
+}
 
+/// The inplace set union operation
+trait InplaceSetOr<T> {
     fn inplace_or(&mut self, other: &T);
 }
 
@@ -25,15 +28,21 @@ trait SetOr<T> {
 trait SetAnd<T> {
     fn and(&self, other: &T) -> Container;
 
-    fn inplace_and(&mut self, other: &T);
-
     fn and_cardinality(&self, other: &T) -> usize;
+}
+
+/// The inplace set and operation
+trait InplaceSetAnd<T> {
+    fn inplace_and(&mut self, other: &T);
 }
 
 /// The set difference operation
 trait SetAndNot<T> {
     fn and_not(&self, other: &T) -> Container;
+}
 
+/// The inplace set difference operation
+trait InplaceSetAndNot {
     fn inplace_and_not(&mut self, other: &T);
 }
 
@@ -41,6 +50,11 @@ trait SetAndNot<T> {
 trait SetXor<T> {
     fn xor(&self, other: &T) -> Container;
 
+    fn inplace_xor(&mut self, other: &T);
+}
+
+/// The inplace set symmetric difference operation
+trait InplaceSetXor<T> {
     fn inplace_xor(&mut self, other: &T);
 }
 

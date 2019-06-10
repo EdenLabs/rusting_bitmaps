@@ -493,58 +493,74 @@ impl DerefMut for BitsetContainer {
     }
 }
 
-impl Union<Self> for BitsetContainer {
-    type Output = Self;
-
-    fn union_with(&self, other: &Self, out: &mut Self::Output) {
+impl SetOr<Self> for BitsetContainer {
+    fn or(&self, other: &Self) -> Container {
+        /*
         unsafe {
             let cardinality = bitset_ops::union(&self.bitset, &other.bitset, &mut out.bitset);
             out.cardinality = cardinality;
         }
+        */
+        unimplemented!()
+    }
+
+    fn inplace_or(&mut self, other: &Self) {
+        unimplemented!()
     }
 }
 
-impl Union<ArrayContainer> for BitsetContainer {
-    type Output = BitsetContainer;
-
-    fn union_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
+impl SetOr<ArrayContainer> for BitsetContainer {
+    fn or(&self, other: &ArrayContainer) -> Container {
+        /*
         out.copy_from(self);
         out.set_list(&other);
+        */
+        unimplemented!()
+    }
+
+    fn inplace_or(&mut self, other: &ArrayContainer) {
+        unimplemented!()
     }
 }
 
-impl Union<RunContainer> for BitsetContainer {
-    type Output = BitsetContainer;
+impl SetOr<RunContainer> for BitsetContainer {
+    fn or(&self, other: &RunContainer) -> Container {
+        //other.union_with(self, out)
+        unimplemented!()
+    }
 
-    fn union_with(&self, other: &RunContainer, out: &mut Self::Output) {
-        other.union_with(self, out)
+    fn inplace_or(&mut self, other: &RunContainer) {
+        unimplemented!()
     }
 }
 
-impl Intersection<Self> for BitsetContainer {
-    type Output = Self;
-
-    fn intersect_with(&self, other: &Self, out: &mut Self::Output) {
+impl SetAnd<Self> for BitsetContainer {
+    fn and(&self, other: &Self, out: &mut Self::Output) {
+        /*
         unsafe {
             let cardinality = bitset_ops::intersect(&self.bitset, &other.bitset, &mut out.bitset);
             out.cardinality = cardinality;
         }
+        */
+        unimplemented!()
     }
 }
 
-impl Intersection<ArrayContainer> for BitsetContainer {
-    type Output = ArrayContainer;
-
-    fn intersect_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
+impl SetAnd<ArrayContainer> for BitsetContainer {
+    fn and(&self, other: &ArrayContainer, out: &mut Self::Output) {
+        /*
         other.intersect_with(self, out)
+        */
+        unimplemented!()
     }
 }
 
-impl Intersection<RunContainer> for BitsetContainer {
-    type Output = Container;
-    
-    fn intersect_with(&self, other: &RunContainer, out: &mut Self::Output) {
+impl SetAnd<RunContainer> for BitsetContainer {
+    fn and(&self, other: &RunContainer, out: &mut Self::Output) {
+        /*
         other.intersect_with(self, out)
+        */
+        unimplemented!()
     }
 }
 

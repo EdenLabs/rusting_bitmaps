@@ -4,7 +4,7 @@ use std::slice::Iter;
 
 use crate::utils::mem_equals;
 use crate::container::*;
-use crate::container::array_ops::*;
+use crate::container::array_ops;
 
 /// An array container. Elements are sorted numerically and represented as individual values in the array
 #[derive(Clone, Debug)]
@@ -180,8 +180,8 @@ impl ArrayContainer {
         let rs = range.start;
         let re = range.end - 1;
 
-        let min = exponential_search(&self.array, self.len(), rs);
-        let max = exponential_search(&self.array, self.len(), re);
+        let min = array_ops::exponential_search(&self.array, self.len(), rs);
+        let max = array_ops::exponential_search(&self.array, self.len(), re);
 
         if let (Ok(min_index), Ok(max_index)) = (min, max) {
             return max_index - min_index == (re - rs) as usize && self.array[min_index] == rs && self.array[max_index] == re;
@@ -368,22 +368,17 @@ impl<'a> From<&'a RunContainer> for ArrayContainer {
 
 impl SetOr<Self> for ArrayContainer {
     fn or(&self, other: &Self) -> Container {
-        //union(&self.array, &other.array, &mut out.array);
-        unimplemented!()
-    }
+        let result = ArrayContainer {
+            array: array_ops::or(&self.array, &other.array)
+        };
 
-    fn inplace_or(&mut self, other: &Self) {
-        unimplemented!()
+        Container::Array(result);
     }
 }
 
 impl SetOr<BitsetContainer> for ArrayContainer {
     fn or(&self, other: &BitsetContainer) -> Container {
         //other.union_with(self, out)
-        unimplemented!()
-    }
-
-    fn inplace_or(&mut self, other: &BitsetContainer) {
         unimplemented!()
     }
 }
@@ -393,19 +388,20 @@ impl SetOr<RunContainer> for ArrayContainer {
         //other.union_with(self, out)
         unimplemented!()
     }
-
-    fn inplace_or(&mut self, other: &RunContainer) {
-        unimplemented!()
-    }
 }
 
 impl SetAnd<Self> for ArrayContainer {
     fn and(&self, other: &Self) -> Container {
-        //intersect(&self.array, &other.array, &mut out.array);
-        unimplemented!()
-    }
+        let result = ArrayContainer {
+            array: array_ops::and(&self.array, &other.array)
+        };
 
-    fn inplace_and(&mut self, other: &Self) {
+        Container::Array(result);
+    }
+}
+
+impl InplaceSetAnd<Self> for ArrayContainer {
+    fn inplace_and(&mut self, other: &Self){
         unimplemented!()
     }
 }
@@ -432,10 +428,6 @@ impl SetAnd<BitsetContainer> for ArrayContainer {
         */
         unimplemented!()
     }
-
-    fn inplace_and(&mut self, other: &BitsetContainer) {
-        unimplemented!()
-    }
 }
 
 impl SetAnd<RunContainer> for ArrayContainer {
@@ -443,20 +435,15 @@ impl SetAnd<RunContainer> for ArrayContainer {
         //other.intersect_with(self, out)
         unimplemented!()
     }
-
-    fn inplace_and(&mut self, other: &RunContainer) {
-        unimplemented!()
-    }
 }
 
 impl SetAndNot<Self> for ArrayContainer {
     fn and_not(&self, other: &Self) -> Container {
-        //difference(&self.array, &other.array, &mut out.array);
-        unimplemented!()
-    }
+        let result = ArrayContainer {
+            array: array_ops::and_not(&self.array, &other.array)
+        };
 
-    fn inplace_and_not(&mut self, other: &Self) {
-        unimplemented!()
+        Container::Array(result);
     }
 }
 
@@ -477,10 +464,6 @@ impl SetAndNot<BitsetContainer> for ArrayContainer {
             out.set_cardinality(card);
         }
         */
-        unimplemented!()
-    }
-
-    fn inplace_and_not(&mut self, other: &BitsetContainer) {
         unimplemented!()
     }
 }
@@ -539,49 +522,15 @@ impl SetAndNot<RunContainer> for ArrayContainer {
         */
         unimplemented!()
     }
-
-    fn inplace_and_not(&mut self, other: &RunContainer) {
-        unimplemented!()
-    }
 }
 
 impl SetXor<Self> for ArrayContainer {
     fn xor(&self, other: &Self) -> Container {
-        /*
-        let total_cardinality = self.cardinality() + other.cardinality();
-        
-        // Output is an array container, calculate and return
-        if total_cardinality <= DEFAULT_MAX_SIZE {
-            let mut result = ArrayContainer::with_capacity(total_cardinality);
-            
-            symmetric_difference(
-                &self.array,
-                &other.array,
-                &mut result.array
-            );
+        let result = ArrayContainer {
+            array: array_ops::xor(&self.array, &other.array)
+        };
 
-            *out = Container::Array(result);
-            return;
-        }
-
-        // Output may be a bitset container, calculate it one as an 
-        // intermediate representation and convert if necessary
-        let mut result = BitsetContainer::from(self.clone());// TODO: Avoid the double alloc here
-        result.flip_list(&other.array);
-
-        // Check if the result is small enough to fit in an array, if so convert
-        if result.cardinality() <= DEFAULT_MAX_SIZE {
-            *out = Container::Array(result.into());
-        }
-        else {
-            *out = Container::Bitset(result);
-        }
-        */
-        unimplemented!()
-    }
-
-    fn inplace_xor(&mut self, other: &Self) {
-        unimplemented!()
+        Container::Array(result);
     }
 }
 
@@ -601,10 +550,6 @@ impl SetXor<BitsetContainer> for ArrayContainer {
             *out = Container::Bitset(result);
         }
         */
-        unimplemented!()
-    }
-
-    fn inplace_xor(&mut self, other: &BitsetContainer) {
         unimplemented!()
     }
 }
@@ -631,10 +576,6 @@ impl SetXor<RunContainer> for ArrayContainer {
             bitset.symmetric_difference_with(self, out);
         }
         */
-        unimplemented!()
-    }
-
-    fn inplace_xor(&mut self, other: &RunContainer) {
         unimplemented!()
     }
 }
