@@ -9,6 +9,8 @@ pub use self::array::ArrayContainer;
 pub use self::bitset::BitsetContainer;
 pub use self::run::RunContainer;
 
+use std::mem;
+use std::ptr;
 use std::ops::Range;
 
 // NOTE: Inplace variants consume self and return either self or a new container
@@ -65,18 +67,22 @@ macro_rules! op {
                 Container::Array(c0) => match other {
                     Container::Array(c1) => c0.$fn_name(c1),
                     Container::Bitset(c1) => c0.$fn_name(c1),
-                    Container::Run(c1) => c0.$fn_name(c1)
+                    Container::Run(c1) => c0.$fn_name(c1),
+                    Container::None => unreachable!()
                 },
                 Container::Bitset(c0) => match other {
                     Container::Array(c1) => c0.$fn_name(c1),
                     Container::Bitset(c1) => c0.$fn_name(c1),
-                    Container::Run(c1) => c0.$fn_name(c1)
+                    Container::Run(c1) => c0.$fn_name(c1),
+                    Container::None => unreachable!()
                 },
                 Container::Run(c0) => match other {
                     Container::Array(c1) => c0.$fn_name(c1),
                     Container::Bitset(c1) => c0.$fn_name(c1),
-                    Container::Run(c1) => c0.$fn_name(c1)
-                }
+                    Container::Run(c1) => c0.$fn_name(c1),
+                    Container::None => unreachable!()
+                },
+                Container::None => unreachable!()
             }
         }
     }
@@ -84,24 +90,33 @@ macro_rules! op {
 
 macro_rules! inplace {
     ($fn_name: ident) => {
-        pub fn $fn_name(self, other: &Self) -> Container {
-            match self {
+        pub fn $fn_name(&mut self, other: &Self) {
+            let owned = mem::replace(self, Container::None);
+            let result = match owned {
                 Container::Array(c0) => match other {
                     Container::Array(c1) => c0.$fn_name(c1),
                     Container::Bitset(c1) => c0.$fn_name(c1),
-                    Container::Run(c1) => c0.$fn_name(c1)
+                    Container::Run(c1) => c0.$fn_name(c1),
+                    Container::None => unreachable!()
                 },
                 Container::Bitset(c0) => match other {
                     Container::Array(c1) => c0.$fn_name(c1),
                     Container::Bitset(c1) => c0.$fn_name(c1),
-                    Container::Run(c1) => c0.$fn_name(c1)
+                    Container::Run(c1) => c0.$fn_name(c1),
+                    Container::None => unreachable!()
                 },
                 Container::Run(c0) => match other {
                     Container::Array(c1) => c0.$fn_name(c1),
                     Container::Bitset(c1) => c0.$fn_name(c1),
-                    Container::Run(c1) => c0.$fn_name(c1)
-                }
-            }
+                    Container::Run(c1) => c0.$fn_name(c1),
+                    Container::None => unreachable!()
+                },
+                Container::None => unreachable!()
+            };
+
+            debug_assert!(!result.is_none());
+
+            mem::replace(self, result);
         }
     }
 }
@@ -109,6 +124,9 @@ macro_rules! inplace {
 /// Enum representing a container of any type
 #[derive(Clone, Debug)]
 pub enum Container {
+    /// Sentinal for an empty container
+    None,
+
     /// Array container
     Array(ArrayContainer),
 
@@ -144,12 +162,22 @@ impl Container {
         }
     }
 
+    pub fn is_none(&self) -> bool {
+        match self {
+            Container::Array(c) => false,
+            Container::Bitset(_c) => false,
+            Container::Run(c) => false,
+            Container::None => true
+        }
+    }
+
     /// Shrink the container it fit it's content
     pub fn shrink_to_fit(&mut self) {
         match self {
             Container::Array(c) => c.shrink_to_fit(),
             Container::Bitset(_c) => return,            // Bitsets are fixed in size
-            Container::Run(c) => c.shrink_to_fit()
+            Container::Run(c) => c.shrink_to_fit(),
+            Container::None => unreachable!()
         }
     }
 
@@ -166,7 +194,8 @@ impl Container {
             },
             Container::Run(c) => {
                 c.add(value);
-            }
+            },
+            Container::None => unreachable!()
         };
     }
 
@@ -174,7 +203,8 @@ impl Container {
         match self {
             Container::Array(c) => c.add_range(range),
             Container::Bitset(c) => c.add_range(range),
-            Container::Run(c) => c.add_range(range)
+            Container::Run(c) => c.add_range(range),
+            Container::None => unreachable!()
         }
     }
     
@@ -193,7 +223,8 @@ impl Container {
             },
             Container::Run(c) => {
                 c.remove(value);
-            }
+            },
+            Container::None => unreachable!()
         }
     }
 
@@ -262,7 +293,8 @@ impl Container {
                     *self = Container::Bitset(c.into());
                     return true;
                 }
-            }
+            },
+            Container::None => unreachable!()
         };
     }
 
@@ -271,7 +303,8 @@ impl Container {
         match self {
             Container::Array(c) => c.contains(value),
             Container::Bitset(c) => c.contains(value),
-            Container::Run(c) => c.contains(value)
+            Container::Run(c) => c.contains(value),
+            Container::None => unreachable!()
         }
     }
 
@@ -280,7 +313,8 @@ impl Container {
         match self {
             Container::Array(c) => c.contains_range(range),
             Container::Bitset(c) => c.contains_range(range),
-            Container::Run(c) => c.contains_range(range)
+            Container::Run(c) => c.contains_range(range),
+            Container::None => unreachable!()
         }
     }
 
@@ -289,7 +323,8 @@ impl Container {
         match self {
             Container::Array(c) => c.is_full(),
             Container::Bitset(c) => c.is_full(),
-            Container::Run(c) => c.is_full()
+            Container::Run(c) => c.is_full(),
+            Container::None => unreachable!()
         }
     }
 
@@ -298,7 +333,8 @@ impl Container {
         match self {
             Container::Array(c) => c.cardinality() == 0,
             Container::Bitset(c) => c.cardinality() == 0,
-            Container::Run(c) => c.is_empty()
+            Container::Run(c) => c.is_empty(),
+            Container::None => unreachable!()
         }
     }
 
@@ -307,7 +343,8 @@ impl Container {
         match self {
             Container::Array(c) => c.cardinality(),
             Container::Bitset(c) => c.cardinality(),
-            Container::Run(c) => c.cardinality()
+            Container::Run(c) => c.cardinality(),
+            Container::None => unreachable!()
         }
     }
 
@@ -316,7 +353,8 @@ impl Container {
         match self {
             Container::Array(c) => c.min(),
             Container::Bitset(c) => c.min(),
-            Container::Run(c) => c.min()
+            Container::Run(c) => c.min(),
+            Container::None => unreachable!()
         }
     }
 
@@ -325,7 +363,8 @@ impl Container {
         match self {
             Container::Array(c) => c.max(),
             Container::Bitset(c) => c.max(),
-            Container::Run(c) => c.max()
+            Container::Run(c) => c.max(),
+            Container::None => unreachable!()
         }
     }
 
@@ -334,7 +373,8 @@ impl Container {
         match self {
             Container::Array(c) => c.rank(value),
             Container::Bitset(c) => c.rank(value),
-            Container::Run(c) => c.rank(value)
+            Container::Run(c) => c.rank(value),
+            Container::None => unreachable!()
         }
     }
 
@@ -342,7 +382,8 @@ impl Container {
         match self {
             Container::Array(c) => c.select(rank, start_rank),
             Container::Bitset(c) => c.select(rank, start_rank),
-            Container::Run(c) => c.select(rank, start_rank)
+            Container::Run(c) => c.select(rank, start_rank),
+            Container::None => unreachable!()
         }
     }
 
@@ -366,7 +407,8 @@ impl Container {
         match self {
             Container::Array(c) => c.not(range),
             Container::Bitset(c) => c.not(range),
-            Container::Run(c) => c.not(range)
+            Container::Run(c) => c.not(range),
+            Container::None => unreachable!()
         }
     }
 

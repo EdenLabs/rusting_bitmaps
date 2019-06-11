@@ -872,14 +872,102 @@ impl RoaringBitmap {
     /// 
     /// [`or`]: RoaringBitmap::or
     pub fn inplace_or(&mut self, other: &Self) {
-        unimplemented!()
+        let len0 = self.cardinality();
+        let len1 = other.cardinality();
+
+        // Other is the empty set, self is unchanged
+        if len1 == 0 {
+            return;
+        }
+
+        // Self is the empty set, copy all of other
+        if len0 == 0 {
+            self.copy_from(other);
+            return;
+        }
+
+        // Handle shared containers in place
+        let mut i0 = 0;
+        let mut i1 = 0;
+
+        while i0 < len0 && i1 < len1 {
+            let k0 = self.keys[i0];
+            let k1 = self.keys[i1];
+
+            if k0 == k1 {
+                let c0 = &mut self.containers[i0];
+
+                if !c0.is_full() {
+                    c0.inplace_or(&other.containers[i1]);
+                }
+
+                i0 += 1;
+                i1 += 1;
+            }
+            else if k0 < k1 {
+                i0 += 1;
+            }
+            else {
+                let c1 = other.containers[i1].clone();
+                self.containers.insert(i0, c1);
+                self.keys.insert(i0, k1);
+
+                i0 += 1;
+                i1 += 1;
+            }
+        }
+
+        // Copy in the remaining contents from other
+        if i0 == len0 {
+            self.containers.extend_from_slice(&other.containers[i1..]);
+            self.keys.extend_from_slice(&other.keys[i1..])
+        }
     }
 
     /// Same as [`and`] but operates in place on `self`
     /// 
     /// [`and`]: RoaringBitmap::and
     pub fn inplace_and(&mut self, other: &Self) {
-        unimplemented!()
+        let len0 = self.cardinality();
+        let len1 = other.cardinality();
+        
+        let mut i0 = 0;
+        let mut i1 = 0;
+
+        while i0 < len0 && i1 < len1 {
+            let k0 = self.keys[i0];
+            let k1 = other.keys[i1];
+
+            if k0 == k1 {
+                let c0 = &mut self.containers[i0];
+                let c1 = &other.containers[i1];
+
+                c0.inplace_and(c1);
+
+                i0 += 1;
+                i1 += 1;
+            }
+            else if k0 < k1 {
+                // Remove any elements in self not shared between the vectors
+                let iend = array_ops::advance_until(&self.keys, i0, k1);
+
+                self.containers.drain(i0..iend);
+                self.keys.drain(i0..iend);
+
+                i0 = iend;
+            }
+            else {
+                // Keep advancing other till we find a match again
+                i1 = array_ops::advance_until(&other.keys, i1, k0);
+            }
+        }
+
+        // Other ran out of elements, remove the remainder from self since
+        // they obviously don't intersect
+        if i0 < len0 {
+            self.containers.drain(i0..len0);
+            self.keys.drain(i0..len0);
+        }
     }
 
     /// Same as [`and_not`] but operates in place on `self`
