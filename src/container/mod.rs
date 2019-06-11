@@ -11,17 +11,16 @@ pub use self::run::RunContainer;
 
 use std::ops::Range;
 
+// NOTE: Inplace variants consume self and return either self or a new container
+
 /// Default maximum size of an array container before it is converted to another type
 pub const DEFAULT_MAX_SIZE: usize = 4096;
 
 /// The set union operation
 trait SetOr<T> {
     fn or(&self, other: &T) -> Container;
-}
 
-/// The inplace set union operation
-trait InplaceSetOr<T> {
-    fn inplace_or(&mut self, other: &T);
+    fn inplace_or(self, other: &T) -> Container;
 }
 
 /// The set intersection operation
@@ -29,33 +28,22 @@ trait SetAnd<T> {
     fn and(&self, other: &T) -> Container;
 
     fn and_cardinality(&self, other: &T) -> usize;
-}
 
-/// The inplace set and operation
-trait InplaceSetAnd<T> {
-    fn inplace_and(&mut self, other: &T);
+    fn inplace_and(self, other: &T) - > Container;
 }
 
 /// The set difference operation
 trait SetAndNot<T> {
     fn and_not(&self, other: &T) -> Container;
-}
 
-/// The inplace set difference operation
-trait InplaceSetAndNot {
-    fn inplace_and_not(&mut self, other: &T);
+    fn inplace_and_not(self, other: &T) -> Container;
 }
 
 /// The set symmetric difference operation
 trait SetXor<T> {
     fn xor(&self, other: &T) -> Container;
 
-    fn inplace_xor(&mut self, other: &T);
-}
-
-/// The inplace set symmetric difference operation
-trait InplaceSetXor<T> {
-    fn inplace_xor(&mut self, other: &T);
+    fn inplace_xor(self, other: &T) -> Container;
 }
 
 /// The set subset operation
@@ -67,7 +55,7 @@ trait Subset<T> {
 trait SetNot {
     fn not(&self) -> Container;
 
-    fn inplace_not(&mut self);
+    fn inplace_not(self) -> Container;
 }
 
 macro_rules! op {
