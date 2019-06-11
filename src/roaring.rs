@@ -530,7 +530,7 @@ impl RoaringBitmap {
                 let c0 = &self.containers[i0]; // Containers
                 let c1 = &self.containers[i1];
 
-                if !c0.is_subset(c1) {
+                if !c0.subset_of(c1) {
                     return false;
                 }
                 else {

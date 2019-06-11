@@ -655,15 +655,15 @@ impl Subset<RunContainer> for ArrayContainer {
 }
 
 impl SetNot for ArrayContainer {
-    fn not(&self) -> Container {
+    fn not(&self, range: Range<u16>) -> Container {
         let mut bitset = BitsetContainer::new();
         bitset.set_all();
-        bitset.clear_list(&self.array);
+        bitset.clear_list(&self.array[(range.start as usize)..(range.end as usize)]);
 
         Container::Bitset(bitset)
     }
 
-    fn inplace_not(self) -> Container {
+    fn inplace_not(self, range: Range<u16>) -> Container {
         unimplemented!()
     }
 }

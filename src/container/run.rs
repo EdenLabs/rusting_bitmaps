@@ -1231,11 +1231,11 @@ impl Subset<BitsetContainer> for RunContainer {
 }
 
 impl SetNot for RunContainer {
-    fn not(&self) -> Container {
+    fn not(&self, range: Range<u16>) -> Container {
         unimplemented!()
     }
 
-    fn inplace_not(self) -> Container {
+    fn inplace_not(self, range: Range<u16>) -> Container {
         unimplemented!()
     }
 }

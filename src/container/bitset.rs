@@ -717,9 +717,9 @@ impl Subset<RunContainer> for BitsetContainer {
 }
 
 impl SetNot for BitsetContainer {
-    fn not(&self) -> Container {
+    fn not(&self, range: Range<u16>) -> Container {
         let mut bitset = self.clone();
-        bitset.unset_range(0..self.cardinality());
+        bitset.unset_range((range.start as usize)..(range.end as usize));
 
         if bitset.cardinality() > DEFAULT_MAX_SIZE {
             Container::Bitset(bitset)
@@ -729,7 +729,7 @@ impl SetNot for BitsetContainer {
         }
     }
 
-    fn inplace_not(self) -> Container {
+    fn inplace_not(self, range: Range<u16>) -> Container {
         unimplemented!()
     }
 }

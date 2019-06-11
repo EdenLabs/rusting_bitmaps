@@ -53,14 +53,14 @@ trait Subset<T> {
 
 /// The inverse set operation
 trait SetNot {
-    fn not(&self) -> Container;
+    fn not(&self, range: Range<u16>) -> Container;
 
-    fn inplace_not(self) -> Container;
+    fn inplace_not(self, range: Range<u16>) -> Container;
 }
 
 macro_rules! op {
-    ($fn_name: ident) => {
-        pub fn $fn_name(&self, other: &Self) -> Self {
+    ($fn_name: ident, $ret_val: ty) => {
+        pub fn $fn_name(&self, other: &Self) -> $ret_val {
             match self {
                 Container::Array(c0) => match other {
                     Container::Array(c1) => c0.$fn_name(c1),
@@ -347,51 +347,31 @@ impl Container {
     }
 
     /// Check whether self is a subset of other
-    pub fn is_subset(&self, other: &Self) -> bool {
-        unimplemented!()
-    }
+    op!(subset_of, bool);
 
     /// Perform an `or` operation between `self` and `other`
-    op!(or);
+    op!(or, Self);
 
     /// Perform an `and` operation between `self` and `other`
-    op!(and);
+    op!(and, Self);
 
     /// Perform an `and not` operation between `self` and `other`
-    op!(and_not);
+    op!(and_not, Self);
 
     /// Perform an `xor` operation between `self` and `other`
-    op!(xor);
+    op!(xor, Self);
 
     /// Compute the negation of this container within the specified range
     pub fn not(&self, range: Range<u16>) -> Self {
         match self {
-            Container::Array(c) => c.not(),
-            Container::Bitset(c) => c.not(),
-            Container::Run(c) => c.not()
+            Container::Array(c) => c.not(range),
+            Container::Bitset(c) => c.not(range),
+            Container::Run(c) => c.not(range)
         }
     }
 
     /// Compute the cardinality of an `and` operation between `self` and `other`
-    pub fn and_cardinality(&self, other: &Self) -> usize {
-        match self {
-            Container::Array(c0) => match other {
-                Container::Array(c1) => c0.and_cardinality(c1),
-                Container::Bitset(c1) => c0.and_cardinality(c1),
-                Container::Run(c1) => c0.and_cardinality(c1)
-            },
-            Container::Bitset(c0) => match other {
-                Container::Array(c1) => c0.and_cardinality(c1),
-                Container::Bitset(c1) => c0.and_cardinality(c1),
-                Container::Run(c1) => c0.and_cardinality(c1)
-            },
-            Container::Run(c0) => match other {
-                Container::Array(c1) => c0.and_cardinality(c1),
-                Container::Bitset(c1) => c0.and_cardinality(c1),
-                Container::Run(c1) => c0.and_cardinality(c1)
-            }
-        }
-    }
+    op!(and_cardinality, usize);
 
     /// Compute the `or` of self `self` and `other` storing the result in `self`
     inplace!(inplace_or);
