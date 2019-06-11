@@ -372,7 +372,7 @@ impl SetOr<Self> for ArrayContainer {
             array: array_ops::or(&self.array, &other.array)
         };
 
-        Container::Array(result);
+        Container::Array(result)
     }
     
     fn inplace_or(self, other: &Self) -> Container {
@@ -382,8 +382,7 @@ impl SetOr<Self> for ArrayContainer {
 
 impl SetOr<BitsetContainer> for ArrayContainer {
     fn or(&self, other: &BitsetContainer) -> Container {
-        //other.union_with(self, out)
-        unimplemented!()
+        SetOr::or(other, self)
     }
     
     fn inplace_or(self, other: &BitsetContainer) -> Container {
@@ -393,8 +392,7 @@ impl SetOr<BitsetContainer> for ArrayContainer {
 
 impl SetOr<RunContainer> for ArrayContainer {
     fn or(&self, other: &RunContainer) -> Container {
-        //other.union_with(self, out)
-        unimplemented!()
+        SetOr::or(other, self)
     }
     
     fn inplace_or(self, other: &RunContainer) -> Container {
@@ -408,7 +406,11 @@ impl SetAnd<Self> for ArrayContainer {
             array: array_ops::and(&self.array, &other.array)
         };
 
-        Container::Array(result);
+        Container::Array(result)
+    }
+    
+    fn and_cardinality(&self, other: &Self) -> usize {
+        unimplemented!()
     }
     
     fn inplace_and(self, other: &Self) -> Container {
@@ -418,10 +420,7 @@ impl SetAnd<Self> for ArrayContainer {
 
 impl SetAnd<BitsetContainer> for ArrayContainer {
     fn and(&self, other: &BitsetContainer) -> Container {
-        /*
-        if out.capacity() < self.cardinality() {
-            out.reserve(self.cardinality() - out.capacity());
-        }
+        let mut result = ArrayContainer::with_capacity(self.cardinality());
 
         unsafe {
             let mut new_card = 0;
@@ -429,13 +428,17 @@ impl SetAnd<BitsetContainer> for ArrayContainer {
 
             for i in 0..card {
                 let key = *self.array.get_unchecked(i);
-                *out.array.get_unchecked_mut(new_card) = key;
+                *result.array.get_unchecked_mut(new_card) = key;
                 new_card += other.contains(key) as usize;
             }
 
-            out.array.set_len(new_card);
+            result.array.set_len(new_card);
         }
-        */
+
+        Container::Array(result)
+    }
+
+    fn and_cardinality(&self, other: &BitsetContainer) -> usize {
         unimplemented!()
     }
     
@@ -446,7 +449,10 @@ impl SetAnd<BitsetContainer> for ArrayContainer {
 
 impl SetAnd<RunContainer> for ArrayContainer {
     fn and(&self, other: &RunContainer) -> Container {
-        //other.intersect_with(self, out)
+        SetAnd::and(other, self)
+    }
+
+    fn and_cardinality(&self, other: &RunContainer) -> usize {
         unimplemented!()
     }
     
@@ -461,7 +467,7 @@ impl SetAndNot<Self> for ArrayContainer {
             array: array_ops::and_not(&self.array, &other.array)
         };
 
-        Container::Array(result);
+        Container::Array(result)
     }
     
     fn inplace_and_not(self, other: &Self) -> Container {
@@ -471,22 +477,19 @@ impl SetAndNot<Self> for ArrayContainer {
 
 impl SetAndNot<BitsetContainer> for ArrayContainer {
     fn and_not(&self, other: &BitsetContainer) -> Container {
-        /*
-        if out.capacity() < self.cardinality() {
-            out.reserve(self.cardinality() - out.capacity());
-        }
+        let mut result = ArrayContainer::with_capacity(self.cardinality());
 
         unsafe {
             let mut card = 0;
             for key in self.array.iter() {
-                *out.get_unchecked_mut(card) = *key;
+                *result.get_unchecked_mut(card) = *key;
                 card += !other.contains(*key) as usize;
             }
 
-            out.set_cardinality(card);
+            result.set_cardinality(card);
         }
-        */
-        unimplemented!()
+
+        Container::Array(result)
     }
     
     fn inplace_and_not(self, other: &BitsetContainer) -> Container {
@@ -501,7 +504,7 @@ impl SetAndNot<RunContainer> for ArrayContainer {
         if other.num_runs() == 0 {
             result.copy_from(self);
             
-            return Container::ArrayContainer(result);
+            return Container::Array(result);
         }
 
         unsafe {
@@ -514,7 +517,7 @@ impl SetAndNot<RunContainer> for ArrayContainer {
             while i < self.cardinality() {
                 let val = *self.array.get_unchecked(0) as usize;
                 if val < run_start {
-                    out.push(val as u16);
+                    result.push(val as u16);
                     continue;
                 }
 
@@ -543,7 +546,8 @@ impl SetAndNot<RunContainer> for ArrayContainer {
                 i -= 1;
             }
         }
-        unimplemented!()
+        
+        Container::Array(result)
     }
     
     fn inplace_and_not(self, other: &RunContainer) -> Container {
@@ -557,7 +561,7 @@ impl SetXor<Self> for ArrayContainer {
             array: array_ops::xor(&self.array, &other.array)
         };
 
-        Container::Array(result);
+        Container::Array(result)
     }
     
     fn inplace_xor(self, other: &Self) -> Container {
@@ -595,11 +599,11 @@ impl SetXor<RunContainer> for ArrayContainer {
 
         // Process as an array since the final result is probably an array
         if other.cardinality() <= DEFAULT_MAX_SIZE {
-            return SetXor::<ArrayContainer>::xor(other.into(), self);
+            return SetXor::xor(other.into(), self);
         }
         // Process as a bitset since the final result may be a bitset
         else {
-            return SetXor::<BitsetContainer>::xor(other.into(), self);
+            return SetXor::xor(other.into(), self);
         }
     }
     

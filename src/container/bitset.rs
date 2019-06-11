@@ -495,79 +495,96 @@ impl DerefMut for BitsetContainer {
 
 impl SetOr<Self> for BitsetContainer {
     fn or(&self, other: &Self) -> Container {
-        /*
+        let mut result = BitsetContainer::new();
+
         unsafe {
-            let cardinality = bitset_ops::union(&self.bitset, &other.bitset, &mut out.bitset);
-            out.cardinality = cardinality;
+            let cardinality = bitset_ops::union(&self.bitset, &other.bitset, &mut result.bitset);
+            result.cardinality = cardinality;
         }
-        */
-        unimplemented!()
+
+        Container::Bitset(result)
     }
 
-    fn inplace_or(&mut self, other: &Self) {
+    fn inplace_or(self, other: &Self) -> Container {
         unimplemented!()
     }
 }
 
 impl SetOr<ArrayContainer> for BitsetContainer {
     fn or(&self, other: &ArrayContainer) -> Container {
-        /*
-        out.copy_from(self);
-        out.set_list(&other);
-        */
-        unimplemented!()
+        let mut result = BitsetContainer::new();
+        result.copy_from(self);
+        result.set_list(&other);
+
+        Container::Bitset(result)
     }
 
-    fn inplace_or(&mut self, other: &ArrayContainer) {
+    fn inplace_or(self, other: &ArrayContainer) -> Container {
         unimplemented!()
     }
 }
 
 impl SetOr<RunContainer> for BitsetContainer {
     fn or(&self, other: &RunContainer) -> Container {
-        //other.union_with(self, out)
-        unimplemented!()
+        SetOr::or(other, self)
     }
 
-    fn inplace_or(&mut self, other: &RunContainer) {
+    fn inplace_or(self, other: &RunContainer) -> Container {
         unimplemented!()
     }
 }
 
 impl SetAnd<Self> for BitsetContainer {
-    fn and(&self, other: &Self, out: &mut Self::Output) {
-        /*
+    fn and(&self, other: &Self) -> Container {
+        let mut result = BitsetContainer::new();
+
         unsafe {
-            let cardinality = bitset_ops::intersect(&self.bitset, &other.bitset, &mut out.bitset);
-            out.cardinality = cardinality;
+            let cardinality = bitset_ops::intersect(&self.bitset, &other.bitset, &mut result.bitset);
+            result.cardinality = cardinality;
         }
-        */
+
+        Container::Bitset(result)
+    }
+
+    fn and_cardinality(&self, other: &Self) -> usize {
+        unimplemented!()
+    }
+
+    fn inplace_and(self, other: &Self) -> Container {
         unimplemented!()
     }
 }
 
 impl SetAnd<ArrayContainer> for BitsetContainer {
-    fn and(&self, other: &ArrayContainer, out: &mut Self::Output) {
-        /*
-        other.intersect_with(self, out)
-        */
+    fn and(&self, other: &ArrayContainer) -> Container {
+        SetAnd::and(other, self)
+    }
+
+    fn and_cardinality(&self, other: &ArrayContainer) -> usize {
+        unimplemented!()
+    }
+
+    fn inplace_and(self, other: &ArrayContainer) -> Container {
         unimplemented!()
     }
 }
 
 impl SetAnd<RunContainer> for BitsetContainer {
-    fn and(&self, other: &RunContainer, out: &mut Self::Output) {
-        /*
-        other.intersect_with(self, out)
-        */
+    fn and(&self, other: &RunContainer) -> Container {
+        SetAnd::and(other, self)
+    }
+
+    fn and_cardinality(&self, other: &RunContainer) -> usize {
+        unimplemented!()
+    }
+
+    fn inplace_and(self, other: &RunContainer) -> Container {
         unimplemented!()
     }
 }
 
-impl Difference<Self> for BitsetContainer {
-    type Output = Container;
-
-    fn difference_with(&self, other: &Self, out: &mut Self::Output) {
+impl SetAndNot<Self> for BitsetContainer {
+    fn and_not(&self, other: &Self) -> Container {
         unsafe {
             let mut bitset = BitsetContainer::new();
             let cardinality = bitset_ops::difference(
@@ -577,36 +594,40 @@ impl Difference<Self> for BitsetContainer {
             );
 
             if cardinality <= DEFAULT_MAX_SIZE {
-                *out = Container::Array(bitset.into());
+                Container::Array(bitset.into())
             }
             else {
-                *out = Container::Bitset(bitset);
+                Container::Bitset(bitset)
             }
         }
     }
+
+    fn inplace_and_not(self, other: &Self) -> Container {
+        unimplemented!()
+    }
 }
 
-impl Difference<ArrayContainer> for BitsetContainer {
-    type Output = Container;
-
-    fn difference_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
+impl SetAndNot<ArrayContainer> for BitsetContainer {
+    fn and_not(&self, other: &ArrayContainer) -> Container {
         let mut bitset = BitsetContainer::new();
         bitset.copy_from(self);
         bitset.clear_list(&other);
 
         if bitset.cardinality() <= DEFAULT_MAX_SIZE {
-            *out = Container::Array(bitset.into());
-            return;
+            Container::Array(bitset.into())
         }
+        else {
+            Container::Bitset(bitset)
+        }
+    }
 
-        *out = Container::Bitset(bitset);
+    fn inplace_and_not(self, other: &ArrayContainer) -> Container {
+        unimplemented!()
     }
 }
 
-impl Difference<RunContainer> for BitsetContainer {
-    type Output = Container;
-
-    fn difference_with(&self, other: &RunContainer, out: &mut Self::Output) {
+impl SetAndNot<RunContainer> for BitsetContainer {
+    fn and_not(&self, other: &RunContainer) -> Container {
         let mut bitset = BitsetContainer::new();
         bitset.copy_from(self);
 
@@ -615,47 +636,55 @@ impl Difference<RunContainer> for BitsetContainer {
         }
 
         if bitset.cardinality() <= DEFAULT_MAX_SIZE {
-            *out = Container::Array(bitset.into());
-            return;
+            Container::Array(bitset.into())
         }
+        else {
+            Container::Bitset(bitset)
+        }
+    }
 
-        *out = Container::Bitset(bitset);
+    fn inplace_and_not(self, other: &RunContainer) -> Container {
+        unimplemented!()
     }
 }
 
-impl SymmetricDifference<Self> for BitsetContainer {
-    type Output = Container;
-
-    fn symmetric_difference_with(&self, other: &Self, out: &mut Self::Output) {
+impl SetXor<Self> for BitsetContainer {
+    fn xor(&self, other: &Self) -> Container {
         let mut result = BitsetContainer::new();
         let cardinality = unsafe {
             bitset_ops::symmetric_difference(&self.bitset, &other.bitset, &mut result.bitset)
         };
 
         if cardinality <= DEFAULT_MAX_SIZE {
-            *out = Container::Array(result.into());
-            return;
+            Container::Array(result.into())
         }
         else {
-            *out = Container::Bitset(result);
-            return;
+            Container::Bitset(result)
         }
     }
-}
 
-impl SymmetricDifference<ArrayContainer> for BitsetContainer {
-    type Output = Container;
-
-    fn symmetric_difference_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
-        other.symmetric_difference_with(self, out)
+    fn inplace_xor(self, other: &Self) -> Container {
+        unimplemented!()
     }
 }
 
-impl SymmetricDifference<RunContainer> for BitsetContainer {
-    type Output = Container;
+impl SetXor<ArrayContainer> for BitsetContainer {
+    fn xor(&self, other: &ArrayContainer) -> Container {
+        SetXor::xor(other, self)
+    }
 
-    fn symmetric_difference_with(&self, other: &RunContainer, out: &mut Self::Output) {
-        other.symmetric_difference_with(self, out)
+    fn inplace_xor(self, other: &ArrayContainer) -> Container {
+        unimplemented!()
+    }
+}
+
+impl SetXor<RunContainer> for BitsetContainer {
+    fn xor(&self, other: &RunContainer) -> Container {
+        SetXor::xor(other, self)
+    }
+
+    fn inplace_xor(self, other: &RunContainer) -> Container {
+        unimplemented!()
     }
 }
 
@@ -687,16 +716,20 @@ impl Subset<RunContainer> for BitsetContainer {
     }
 }
 
-impl Negation for BitsetContainer {
-    fn negate(&self, out: &mut Container) {
+impl SetNot for BitsetContainer {
+    fn not(&self) -> Container {
         let mut bitset = self.clone();
         bitset.unset_range(0..self.cardinality());
 
         if bitset.cardinality() > DEFAULT_MAX_SIZE {
-            *out = Container::Bitset(bitset);
+            Container::Bitset(bitset)
         }
         else {
-            *out = Container::Array(bitset.into());
+            Container::Array(bitset.into())
         }
+    }
+
+    fn inplace_not(self) -> Container {
+        unimplemented!()
     }
 }

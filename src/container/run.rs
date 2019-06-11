@@ -691,24 +691,27 @@ impl DerefMut for RunContainer {
     }
 }
 
-impl Union<Self> for RunContainer {
-    type Output = Self;
+impl SetOr<Self> for RunContainer {
+    fn or(&self, other: &Self) -> Container {
+        let mut result = RunContainer::new();
+        run_ops::union(&self.runs, &other.runs, &mut result.runs);
 
-    fn union_with(&self, other: &Self, out: &mut Self::Output) {
-        run_ops::union(&self.runs, &other.runs, &mut out.runs);
+        Container::Run(result)
+    }
+    
+    fn inplace_or(self, other: &Self) -> Container {
+        unimplemented!()
     }
 }
 
-impl Union<ArrayContainer> for RunContainer {
-    type Output = Self;
-
-    fn union_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
+impl SetOr<ArrayContainer> for RunContainer {
+    fn or(&self, other: &ArrayContainer) -> Container {
         if self.is_full() {
-            out.copy_from(self);
-            return;
+            return Container::Run(self.clone());
         }
 
-        out.reserve(2 * other.cardinality() + self.runs.len());
+        let mut result = RunContainer::new();
+        result.reserve(2 * other.cardinality() + self.runs.len());
 
         let mut rle_index = 0;
         let mut array_index = 0;
@@ -716,80 +719,95 @@ impl Union<ArrayContainer> for RunContainer {
 
         if self.runs[rle_index].value <= other[array_index] {
             prev_rle = self.runs[rle_index];
-            out.runs.push(prev_rle);
+            result.runs.push(prev_rle);
             rle_index += 1;
         }
         else {
             prev_rle = Rle16::new(other[array_index], 0);
-            out.runs.push(prev_rle);
+            result.runs.push(prev_rle);
             array_index += 1;
         }
 
         while rle_index < self.runs.len() && array_index < other.cardinality() {
             if self.runs[rle_index].value < other[array_index] {
-                unsafe { run_ops::append(&mut out.runs, &self.runs[rle_index], &mut prev_rle) };// TODO: Refactor this
+                unsafe { run_ops::append(&mut result.runs, &self.runs[rle_index], &mut prev_rle) };// TODO: Refactor this
                 rle_index += 1;
             }
             else {
-                run_ops::append_value(&mut out.runs, other[array_index], &mut prev_rle);
+                run_ops::append_value(&mut result.runs, other[array_index], &mut prev_rle);
                 array_index += 1;
             }
         }
 
         if array_index < other.cardinality() {
             while array_index < other.cardinality() {
-                run_ops::append_value(&mut out.runs, other[array_index], &mut prev_rle);
+                run_ops::append_value(&mut result.runs, other[array_index], &mut prev_rle);
                 array_index += 1;
             }
         }
         else {
             while rle_index < self.runs.len() {
-                unsafe { run_ops::append(&mut out.runs, &self.runs[rle_index], &mut prev_rle) };
+                unsafe { run_ops::append(&mut result.runs, &self.runs[rle_index], &mut prev_rle) };
                 rle_index += 1;
             }
         }
+
+        Container::Run(result)
+    }
+
+    fn inplace_or(self, other: &ArrayContainer) -> Container {
+        unimplemented!()
     }
 }
 
-impl Union<BitsetContainer> for RunContainer {
-    type Output = BitsetContainer;
-
-    fn union_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
-        out.copy_from(other);
+impl SetOr<BitsetContainer> for RunContainer {
+    fn or(&self, other: &BitsetContainer) -> Container {
+        let mut result = BitsetContainer::new();
+        result.copy_from(other);
 
         for rle in self.iter() {
             let min = rle.value as usize;
             let max = rle.sum() as usize;
 
-            out.set_range(min..max);
+            result.set_range(min..max);
         }
+
+        Container::Bitset(result)
+    }
+
+    fn inplace_or(self, other: &BitsetContainer) -> Container {
+        unimplemented!()
     }
 }
 
-impl Intersection<Self> for RunContainer {
-    type Output = Self;
+impl SetAnd<Self> for RunContainer {
+    fn and(&self, other: &Self) -> Container {
+        let mut result = RunContainer::new();
+        run_ops::intersect(&self.runs, &other.runs, &mut result.runs);
 
-    fn intersect_with(&self, other: &Self, out: &mut Self::Output) {
-        run_ops::intersect(&self.runs, &other.runs, &mut out.runs);
+        Container::Run(result)
+    }
+
+    fn and_cardinality(&self, other: &Self) -> usize {
+        unimplemented!()
+    }
+
+    fn inplace_and(self, other: &Self) -> Container {
+        unimplemented!()
     }
 }
 
-impl Intersection<ArrayContainer> for RunContainer {
-    type Output = ArrayContainer;
-
-    fn intersect_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
+impl SetAnd<ArrayContainer> for RunContainer {
+    fn and(&self, other: &ArrayContainer) -> Container {
         if self.is_full() {
-            out.copy_from(other);
-            return;
-        }
-
-        if out.capacity() < other.cardinality() {
-            out.reserve(other.cardinality() - out.capacity());
+            return Container::Array(other.clone());
         }
 
         if self.runs.len() == 0 {
-            return;
+            return Container::Array(ArrayContainer::new());
         }
+
+        let mut result = ArrayContainer::with_capacity(other.cardinality());
 
         unsafe {
             let mut rle_index = 0;
@@ -803,7 +821,7 @@ impl Intersection<ArrayContainer> for RunContainer {
                     rle_index += 1;
 
                     if rle_index == self.runs.len() {
-                        return;
+                        break;
                     }
 
                     rle = self.runs[rle_index];
@@ -817,27 +835,31 @@ impl Intersection<ArrayContainer> for RunContainer {
                     );
                 }
                 else {
-                    out.push(value);
+                    result.push(value);
                     array_index += 1;
                 }
             }
         }
+
+        Container::Array(result)
+    }
+
+    fn and_cardinality(&self, other: &ArrayContainer) -> usize {
+        unimplemented!()
+    }
+
+    fn inplace_and(self, other: &ArrayContainer) -> Container {
+        unimplemented!()
     }
 }
 
-impl Intersection<BitsetContainer> for RunContainer {
-    type Output = Container;
-
-    fn intersect_with(&self, other: &BitsetContainer, out: &mut Container) {
+impl SetAnd<BitsetContainer> for RunContainer {
+    fn and(&self, other: &BitsetContainer) -> Container {
         if self.is_full() {
-            *out = {
-                let mut bitset = BitsetContainer::new();
-                bitset.copy_from(other);
+            let mut bitset = BitsetContainer::new();
+            bitset.copy_from(other);
 
-                Container::Bitset(bitset)
-            };
-            
-            return;
+            return Container::Bitset(bitset);
         }
 
         let mut card = self.cardinality();
@@ -854,9 +876,7 @@ impl Intersection<BitsetContainer> for RunContainer {
                 array.add_range(min..max);
             }
 
-            *out = Container::Array(array);
-
-            return;
+            return Container::Array(array);
         }
         else {
             let mut bitset = BitsetContainer::new();
@@ -874,41 +894,45 @@ impl Intersection<BitsetContainer> for RunContainer {
             bitset.unset_range(start..(1 << 16));
 
             if bitset.cardinality() > DEFAULT_MAX_SIZE {
-                *out = Container::Bitset(bitset);
-                return;
+                Container::Bitset(bitset)
             }
             else {
-                *out = Container::Array(bitset.into());
+                Container::Array(bitset.into())
             }
-            
-            return;
         }
+    }
+
+    fn and_cardinality(&self, other: &BitsetContainer) -> usize {
+        unimplemented!()
+    }
+    
+    fn inplace_and(self, other: &BitsetContainer) -> Container {
+        unimplemented!()
     }
 }
 
-impl Difference<Self> for RunContainer {
-    type Output = Container;
-
-    fn difference_with(&self, other: &Self, out: &mut Self::Output) {
+impl SetAndNot<Self> for RunContainer {
+    fn and_not(&self, other: &Self) -> Container {
         let mut r = RunContainer::new();
         run_ops::difference(&self.runs, &other.runs, &mut r.runs);
 
-        *out = r.into_efficient_container();
+        r.into_efficient_container()
+    }
+
+    fn inplace_and_not(self, other: &Self) -> Container {
+        unimplemented!()
     }
 }
 
-impl Difference<ArrayContainer> for RunContainer {
-    type Output = Container;
-
-    fn difference_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
+impl SetAndNot<ArrayContainer> for RunContainer {
+    fn and_not(&self, other: &ArrayContainer) -> Container {
         const ARBITRARY_THRESHOLD: usize = 32;
 
         let cardinality = self.cardinality();
 
         if cardinality < ARBITRARY_THRESHOLD {
             if other.cardinality() == 0 {
-                *out = Container::Run(self.clone());
-                return;
+                return Container::Run(self.clone());
             }
 
             let mut result = RunContainer::with_capacity(cardinality + other.cardinality());
@@ -972,8 +996,7 @@ impl Difference<ArrayContainer> for RunContainer {
                     }
                 }
 
-                *out = result.into_efficient_container();
-                return;
+                return result.into_efficient_container();
             }
         }
 
@@ -1025,20 +1048,20 @@ impl Difference<ArrayContainer> for RunContainer {
                 }
             }
             
-            *out = Container::Array(array);
-            
-            return;
+            return Container::Array(array);
         }
 
         let bitset: BitsetContainer = self.into();
-        bitset.difference_with(other, out);// TODO: In place variants
+        bitset.and_not(other)// TODO: In place variants
+    }
+
+    fn inplace_and_not(self, other: &ArrayContainer) -> Container {
+        unimplemented!()
     }
 }
 
-impl Difference<BitsetContainer> for RunContainer {
-    type Output = Container;
-
-    fn difference_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
+impl SetAndNot<BitsetContainer> for RunContainer {
+    fn and_not(&self, other: &BitsetContainer) -> Container {
         let cardinality = self.cardinality();
         
         // Result is an array
@@ -1052,7 +1075,7 @@ impl Difference<BitsetContainer> for RunContainer {
                 }
             }
 
-            *out = Container::Array(array);
+            Container::Array(array)
         }
         // Result may be a bitset
         else {
@@ -1073,28 +1096,23 @@ impl Difference<BitsetContainer> for RunContainer {
 
             // Result is not a bitset, convert to array
             if bitset.cardinality() <= DEFAULT_MAX_SIZE {
-                *out = Container::Array(bitset.into());
-                return;
+                Container::Array(bitset.into())
             }
             // Result is a bitset
             else {
-                *out = Container::Bitset(bitset);
+                Container::Bitset(bitset)
             }
         }
     }
+
+    fn inplace_and_not(self, other: &BitsetContainer) -> Container {
+        unimplemented!()
+    }
 }
 
-impl SymmetricDifference<Self> for RunContainer {
-    type Output = RunContainer;
-
-    fn symmetric_difference_with(&self, other: &Self, out: &mut Self::Output) {
-        let current = out.capacity();
-        let needed = self.num_runs() + other.num_runs();
-        if current < needed {
-            out.reserve(needed - current);
-        }
-
-    
+impl SetXor<Self> for RunContainer {
+    fn xor(&self, other: &Self) -> Container {
+        let mut result = RunContainer::with_capacity(self.num_runs() + other.num_runs());
         let mut i_0 = 0;
         let mut i_1 = 0;
 
@@ -1104,38 +1122,44 @@ impl SymmetricDifference<Self> for RunContainer {
                 let r1 = other.runs.get_unchecked(i_1);
 
                 if r0.value <= r1.value {
-                    run_ops::append_exclusive(&mut out.runs, r0.value, r0.length);
+                    run_ops::append_exclusive(&mut result.runs, r0.value, r0.length);
                     i_0 += 1;
                 }
                 else {
-                    run_ops::append_exclusive(&mut out.runs, r1.value, r1.length);
+                    run_ops::append_exclusive(&mut result.runs, r1.value, r1.length);
                     i_1 += 1;
                 }
             }
         }
 
         for run in &self.runs[i_0..self.runs.len()] {
-            run_ops::append_exclusive(&mut out.runs, run.value, run.length);
+            run_ops::append_exclusive(&mut result.runs, run.value, run.length);
         }
 
         for run in &self.runs[i_1..other.runs.len()] {
-            run_ops::append_exclusive(&mut out.runs, run.value, run.length);
+            run_ops::append_exclusive(&mut result.runs, run.value, run.length);
         }
+
+        Container::Run(result)
+    }
+
+    fn inplace_xor(self, other: &Self) -> Container {
+        unimplemented!()
     }
 }
 
-impl SymmetricDifference<ArrayContainer> for RunContainer {
-    type Output = Container;
+impl SetXor<ArrayContainer> for RunContainer {
+    fn xor(&self, other: &ArrayContainer) -> Container {
+        SetXor::xor(other, self)
+    }
 
-    fn symmetric_difference_with(&self, other: &ArrayContainer, out: &mut Self::Output) {
-        other.symmetric_difference_with(self, out)
+    fn inplace_xor(self, other: &ArrayContainer) -> Container {
+        unimplemented!()
     }
 }
 
-impl SymmetricDifference<BitsetContainer> for RunContainer {
-    type Output = Container;
-
-    fn symmetric_difference_with(&self, other: &BitsetContainer, out: &mut Self::Output) {
+impl SetXor<BitsetContainer> for RunContainer {
+    fn xor(&self, other: &BitsetContainer) -> Container {
         let mut result = other.clone();
 
         for rle in self.runs.iter() {
@@ -1143,11 +1167,15 @@ impl SymmetricDifference<BitsetContainer> for RunContainer {
         }
 
         if result.cardinality() < DEFAULT_MAX_SIZE {
-            *out = Container::Array(result.into());
-            return;
+            Container::Array(result.into())
         }
+        else {
+            Container::Bitset(result)
+        }
+    }
 
-        *out = Container::Bitset(result);
+    fn inplace_xor(self, other: &BitsetContainer) -> Container {
+        unimplemented!()
     }
 }
 
@@ -1198,6 +1226,16 @@ impl Subset<ArrayContainer> for RunContainer {
 
 impl Subset<BitsetContainer> for RunContainer {
     fn subset_of(&self, other: &BitsetContainer) -> bool {
+        unimplemented!()
+    }
+}
+
+impl SetNot for RunContainer {
+    fn not(&self) -> Container {
+        unimplemented!()
+    }
+
+    fn inplace_not(self) -> Container {
         unimplemented!()
     }
 }

@@ -29,7 +29,7 @@ trait SetAnd<T> {
 
     fn and_cardinality(&self, other: &T) -> usize;
 
-    fn inplace_and(self, other: &T) - > Container;
+    fn inplace_and(self, other: &T) -> Container;
 }
 
 /// The set difference operation
@@ -84,7 +84,7 @@ macro_rules! op {
 
 macro_rules! inplace {
     ($fn_name: ident) => {
-        pub fn $fn_name(&mut self, other: &Self) {
+        pub fn $fn_name(self, other: &Self) -> Container {
             match self {
                 Container::Array(c0) => match other {
                     Container::Array(c1) => c0.$fn_name(c1),
