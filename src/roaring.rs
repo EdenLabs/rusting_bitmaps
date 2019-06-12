@@ -939,16 +939,27 @@ impl RoaringBitmap {
             let k1 = other.keys[i1];
 
             if k0 == k1 {
-                let c0 = &mut self.containers[i0];
-                let c1 = &other.containers[i1];
+                let is_empty = {
+                    let c0 = &mut self.containers[i0];
+                    let c1 = &other.containers[i1];
 
-                c0.inplace_and(c1);
-
-                i0 += 1;
-                i1 += 1;
+                    c0.inplace_and(c1);
+                    c0.is_empty()
+                };
+                
+                if is_empty {
+                    self.containers.remove(i0);
+                    self.keys.remove(i0);
+                    
+                    len0 -= 1;
+                }
+                else {
+                    i0 += 1;
+                    i1 += 1;
+                }
             }
+            // Remove any elements in self not shared between the bitmaps
             else if k0 < k1 {
-                // Remove any elements in self not shared between the vectors
                 let iend = array_ops::advance_until(&self.keys, i0, k1);
 
                 self.containers.drain(i0..iend);
@@ -956,8 +967,8 @@ impl RoaringBitmap {
 
                 i0 = iend;
             }
+            // Skip past all elements not in ourself
             else {
-                // Keep advancing other till we find a match again
                 i1 = array_ops::advance_until(&other.keys, i1, k0);
             }
         }
@@ -974,7 +985,52 @@ impl RoaringBitmap {
     /// 
     /// [`and_not`]: RoaringBitmap::and_not
     pub fn inplace_and_not(&mut self, other: &Self) {
-        unimplemented!()
+        let len0 = self.cardinality();
+        let len1 = other.cardinality();
+        
+        // If either is the empty set then there are no chanegs to be made
+        if len0 == 0 || len1 == 0 {
+            return;
+        }
+        
+        let i0 = 0;
+        let i1 = 0;
+        
+        while i0 < len0 && i1 < len1 {
+            let k0 = self.keys[i0];
+            let k1 = other.keys[i1];
+            
+            // Key exists in both bitmaps, compare containers
+            if k0 == k1 {
+                let is_empty = {
+                    let c0 = &mut self.containers[i0];
+                    let c1 = &other.containers[i1];
+
+                    c0.inplace_and_not(c0, c1);
+                    c0.is_empty()
+                };
+                
+                // Remove the container if it was emptied
+                if is_empty {
+                    self.containers.remove(i0);
+                    self.keys.remove(i0);
+                    
+                    len0 -= 1;
+                }
+                else {
+                    i0 += 1;
+                    i1 += 1;
+                }
+            }
+            // Keys don't exist in the other bitmap, keep them
+            else if k0 < k1 {
+                i0 = array_ops::advance_until(&self.keys, i0, k1);
+            }
+            // Keys don't exist in this bitmap, skip
+            else {
+                i1 = array_ops::advance_until(&other.keys, i1, k0);
+            }
+        }
     }
     
     /// Same as [`xor`] but operates in place on `self`
