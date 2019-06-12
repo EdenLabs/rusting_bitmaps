@@ -791,7 +791,7 @@ impl RoaringBitmap {
     }
 
     /// Negate all elements within `range` in this bitmap
-    pub fn flip(&self, range: Range<u32>) -> Self {
+    pub fn not(&self, range: Range<u32>) -> Self {
         let mut result = Self::new();
 
         let mut start_high = (range.start >> 16) as u16;
@@ -928,7 +928,7 @@ impl RoaringBitmap {
     /// 
     /// [`and`]: RoaringBitmap::and
     pub fn inplace_and(&mut self, other: &Self) {
-        let len0 = self.cardinality();
+        let mut len0 = self.cardinality();
         let len1 = other.cardinality();
         
         let mut i0 = 0;
@@ -985,7 +985,7 @@ impl RoaringBitmap {
     /// 
     /// [`and_not`]: RoaringBitmap::and_not
     pub fn inplace_and_not(&mut self, other: &Self) {
-        let len0 = self.cardinality();
+        let mut len0 = self.cardinality();
         let len1 = other.cardinality();
         
         // If either is the empty set then there are no chanegs to be made
@@ -993,8 +993,8 @@ impl RoaringBitmap {
             return;
         }
         
-        let i0 = 0;
-        let i1 = 0;
+        let mut i0 = 0;
+        let mut i1 = 0;
         
         while i0 < len0 && i1 < len1 {
             let k0 = self.keys[i0];
@@ -1006,7 +1006,7 @@ impl RoaringBitmap {
                     let c0 = &mut self.containers[i0];
                     let c1 = &other.containers[i1];
 
-                    c0.inplace_and_not(c0, c1);
+                    c0.inplace_and_not(c1);
                     c0.is_empty()
                 };
                 
@@ -1037,14 +1037,112 @@ impl RoaringBitmap {
     /// 
     /// [`xor`]: RoaringBitmap::xor
     pub fn inplace_xor(&mut self, other: &Self) {
-        unimplemented!()
+        let mut len0 = self.cardinality();
+        let len1 = other.cardinality();
+
+        // No items in other, self is unchanged
+        if len1 == 0 {
+            return;
+        }
+
+        // Self is empty, we contain everything in other
+        if len0 == 0 {
+            self.clear();
+            self.copy_from(other);
+            return;
+        }
+
+        let mut i0 = 0;
+        let mut i1 = 0;
+        while i0 < len0 && i1 < len1 {
+            let k0 = self.keys[i0];
+            let k1 = other.keys[i1];
+
+            if k0 == k1 {
+                let is_empty = {
+                    let c0 = &mut self.containers[i0];
+                    let c1 = &other.containers[i1];
+
+                    c0.inplace_xor(c1);
+                    c0.is_empty()
+                };
+
+                if is_empty {
+                    self.containers.remove(i0);
+
+                    len0 -= 1;
+                }
+                else {
+                    i0 += 1;
+                }
+
+                i1 += 1;
+            }
+            else if k0 < k1 {
+                i0 += 1;
+            }
+            else {
+                let c1 = &other.containers[i1];
+
+                self.containers.insert(i0, c1.clone());
+                self.keys.insert(i0, k1);
+
+                i0 += 1;
+                i1 += 1;
+                len0 += 1;
+            }
+        }
+
+        if i0 == len0 {
+            self.containers.extend_from_slice(&other.containers[i1..]);
+            self.keys.extend_from_slice(&other.keys[i1..]);
+        }
     }
 
     /// Same as [`not`] but operates in place on `self`
     /// 
     /// [`not`]: RoaringBitmap::not
-    pub fn inplace_not(&mut self) {
-        unimplemented!()
+    pub fn inplace_not(&mut self, range: Range<u32>) {
+        let mut high_start = (range.start >> 16) as u16;
+        let mut high_end = (range.end >> 16) as u16;
+        let low_start = range.start as u16;
+        let low_end = range.end as u16;
+
+        // Keys are the same, just do it in place
+        if high_start == high_end {
+            if let Some(i) = self.get_index(&high_start) {
+                self.containers[i].not(low_start..low_end);
+            }
+
+            high_start += 1;
+        }
+        else {
+            // First container is a partial one, flip in place
+            if low_start > 0 {
+                if let Some(i) = self.get_index(&high_start) {
+                    self.containers[i].not(low_start..std::u16::MAX);
+                }
+            }
+
+            if low_end != std::u16::MAX {
+                high_end -= 1;
+            }
+
+            for bound in high_start..high_end {
+                if let Some(i) = self.get_index(&bound) {
+                    self.containers[i].not(0..std::u16::MAX);
+                }
+            }
+
+            // End is a partial container, flip in place
+            if low_end != std::u16::MAX {
+                high_end += 1;
+
+                if let Some(i) = self.get_index(&high_end) {
+                    self.containers[i].not(0..low_end);
+                }
+            }
+        }
     }
 
     /// Compute the cardinality of `or` on `self` and `other` without storing the result
