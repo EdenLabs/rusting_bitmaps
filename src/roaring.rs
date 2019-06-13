@@ -2,9 +2,7 @@
 
 use std::ops::{Range};
 
-use crate::utils;
-use crate::container::*;
-use crate::container::array_ops;
+use crate::container::{self, *, array_ops};
 
 // TODO: Add support for custom allocators
 // TODO: Implement checked variants?
@@ -1113,8 +1111,6 @@ impl RoaringBitmap {
             if let Some(i) = self.get_index(&high_start) {
                 self.containers[i].not(low_start..low_end);
             }
-
-            high_start += 1;
         }
         else {
             // First container is a partial one, flip in place
@@ -1221,5 +1217,68 @@ impl RoaringBitmap {
     fn get_index(&self, x: &u16) -> Option<usize> {
         self.keys.binary_search(x)
             .ok()
+    }
+    
+    fn iter(&self) -> Iter {
+        let iter = {
+            if self.containers.len() > 0 {
+                self.containers[0].iter()
+            }
+            else {
+                container::Iter::empty()
+            }
+        };
+        
+        Iter {
+            containers: &self.containers,
+            keys: &self.keys,
+            iter: iter,
+            index: 0
+        }
+    }
+}
+
+/// An iterator over a roaring bitmap
+pub struct Iter<'a> {
+    /// The containers we're iterating
+    containers: &'a Vec<Container>,
+    
+    /// The keys we're iterating
+    keys: &'a Vec<u16>,
+    
+    /// The container iterator we're currently iterating
+    iter: container::Iter<'a>,
+    
+    /// The index of the container we're iterating
+    index: usize
+}
+
+impl<'a> Iterator for Iter<'a> {
+    type Item = u32;
+    
+    fn next(&mut self) -> Option<Self::Item> {
+        // Try to advance the container iterator
+        let mut item = self.iter.next();
+
+        // If we reached the end of the iterator try to advance to the next container
+        if item.is_none() {
+            let next_index = self.index + 1;
+            if next_index < self.containers.len() {
+                // Advance the index
+                self.index = next_index;
+                self.iter = self.containers[next_index].iter();
+                
+                // Get the next value
+                item = self.iter.next();
+            }
+        }
+
+        item.map(|low| {
+            let key = unsafe { 
+                *self.keys.get_unchecked(self.index) 
+            };
+
+            ((key as u32) << 16) | (low as u32)
+        })
     }
 }

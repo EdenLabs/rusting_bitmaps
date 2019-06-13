@@ -10,8 +10,9 @@ pub use self::bitset::BitsetContainer;
 pub use self::run::RunContainer;
 
 use std::mem;
-use std::ptr;
 use std::ops::Range;
+use std::slice;
+use std::iter::Iterator;
 
 // NOTE: Inplace variants consume self and return either self or a new container
 
@@ -164,9 +165,9 @@ impl Container {
 
     pub fn is_none(&self) -> bool {
         match self {
-            Container::Array(c) => false,
+            Container::Array(_c) => false,
             Container::Bitset(_c) => false,
-            Container::Run(c) => false,
+            Container::Run(_c) => false,
             Container::None => true
         }
     }
@@ -426,4 +427,52 @@ impl Container {
 
     /// Compute the `xor` of self `self` and `other` storing the result in `self`
     inplace!(inplace_xor);
+    
+    /// Get a generic iterator over the container values
+    pub fn iter(&self) -> Iter {
+        let iter = match self {
+            Container::Array(c) => ContainerIter::Array(c.iter()),
+            Container::Bitset(c) => ContainerIter::Bitset(c.iter()),
+            Container::Run(c) => ContainerIter::Run(c.iter()),
+            Container::None => unreachable!()
+        };
+        
+        Iter {
+            iter: iter
+        }
+    }
+}
+
+/// An enum containing the iterators for various containers
+enum ContainerIter<'a> {
+    None,
+    Array(slice::Iter<'a, u16>),
+    Bitset(bitset::Iter<'a>),
+    Run(run::Iter<'a>)
+}
+
+/// An iterator over the values in a container
+pub struct Iter<'a> {
+    iter: ContainerIter<'a>
+}
+
+impl<'a> Iter<'a> {
+    pub fn empty() -> Self {
+        Iter {
+            iter: ContainerIter::None
+        }
+    }
+}
+
+impl<'a> Iterator for Iter<'a> {
+    type Item = u16;
+    
+    fn next(&mut self) -> Option<Self::Item> {
+         match &mut self.iter {
+            ContainerIter::None => None,
+            ContainerIter::Array(c) => c.next().map(|v| *v),
+            ContainerIter::Bitset(c) => c.next(),
+            ContainerIter::Run(c) => c.next()
+        }
+    }
 }

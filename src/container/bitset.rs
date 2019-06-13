@@ -1,6 +1,6 @@
-use std::slice::{Iter, IterMut};
 use std::ops::{Deref, DerefMut};
 use std::mem;
+use std::iter::Iterator;
 
 use crate::utils;
 use crate::container::*;
@@ -403,13 +403,8 @@ impl BitsetContainer {
     }
 
     /// Get an iterator over the words of the bitset
-    pub fn iter(&self) -> Iter<u64> {
-        self.bitset.iter()
-    }
-
-    /// Get a mutable iterator over the words of the bitset
-    pub fn iter_mut(&mut self) -> IterMut<u64> {
-        self.bitset.iter_mut()
+    pub fn iter(&self) -> Iter {
+        unimplemented!()
     }
 }
 
@@ -461,7 +456,7 @@ impl<'a> From<&'a RunContainer> for BitsetContainer {
         let cardinality = container.cardinality();
 
         let mut bitset = BitsetContainer::new();
-        for run in container.iter() {
+        for run in container.iter_runs() {
             let min = run.value as usize;
             let max = (run.length - 1) as usize;
 
@@ -631,7 +626,7 @@ impl SetAndNot<RunContainer> for BitsetContainer {
         let mut bitset = BitsetContainer::new();
         bitset.copy_from(self);
 
-        for run in other.iter() {
+        for run in other.iter_runs() {
             bitset.unset_range((run.value as usize)..((run.sum() + 1) as usize));
         }
 
@@ -730,6 +725,19 @@ impl SetNot for BitsetContainer {
     }
 
     fn inplace_not(self, range: Range<u16>) -> Container {
+        unimplemented!()
+    }
+}
+
+/// An iterator over the values of a bitset
+pub struct Iter<'a> {
+    bitset: &'a BitsetContainer
+}
+
+impl<'a> Iterator for Iter<'a> {
+    type Item = u16;
+    
+    fn next(&mut self) -> Option<Self::Item> {
         unimplemented!()
     }
 }

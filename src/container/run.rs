@@ -1,8 +1,9 @@
-use std::slice::{Iter, IterMut};
 use std::ops::{Deref, DerefMut};
 use std::iter;
 use std::mem;
 use std::fmt;
+use std::iter::Iterator;
+use std::slice;
 
 use crate::utils;
 use crate::container::*;
@@ -397,17 +398,7 @@ impl RunContainer {
         self.runs.clear();
         self.runs.copy_from_slice(&other.runs);
     }
-    
-    /// Get an iterator over the runs of this container
-    pub fn iter(&self) -> Iter<Rle16> {
-        self.runs.iter()
-    }
-    
-    /// Get a mutable iterator over the runs of this container
-    pub fn iter_mut(&mut self) -> IterMut<Rle16> {
-        self.runs.iter_mut()
-    }
-    
+
     /// Get the minimum value of this container
     pub fn min(&self) -> Option<u16> {
         if self.runs.len() == 0 {
@@ -488,6 +479,17 @@ impl RunContainer {
 
         // Bitset is smallest, convert
         return Container::Bitset(self.into());
+    }
+    
+    /// Iterate over the values of the run container
+    pub fn iter(&self) -> Iter {
+        unimplemented!()
+    }
+    
+    /// Iterate over the runs of the run container
+    #[inline]
+    pub fn iter_runs(&self) -> slice::Iter<Rle16> {
+        self.runs.iter()
     }
 
     /// Perform a binary search for a given key in the set
@@ -765,7 +767,7 @@ impl SetOr<BitsetContainer> for RunContainer {
         let mut result = BitsetContainer::new();
         result.copy_from(other);
 
-        for rle in self.iter() {
+        for rle in self.iter_runs() {
             let min = rle.value as usize;
             let max = rle.sum() as usize;
 
@@ -1236,6 +1238,19 @@ impl SetNot for RunContainer {
     }
 
     fn inplace_not(self, range: Range<u16>) -> Container {
+        unimplemented!()
+    }
+}
+
+/// An iterator over the values of a run structure
+pub struct Iter<'a> {
+    run: &'a RunContainer
+}
+
+impl<'a> Iterator for Iter<'a> {
+    type Item = u16;
+    
+    fn next(&mut self) -> Option<Self::Item> {
         unimplemented!()
     }
 }

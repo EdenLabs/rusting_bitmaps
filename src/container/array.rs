@@ -353,7 +353,7 @@ impl<'a> From<&'a RunContainer> for ArrayContainer {
         let cardinality = container.cardinality();
 
         let mut array = ArrayContainer::with_capacity(cardinality);
-        for run in container.iter() {
+        for run in container.iter_runs() {
             let run_start = run.value;
             let run_end = run_start + run.length;
 

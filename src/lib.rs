@@ -19,8 +19,6 @@
 // TODO: Look at using Align<T, A> for enforcing alignment on the internal vecs with aligned loads and see whether that has a performance impact
 // TODO: Rename the set operations to the binary equivalent to avoid confusion for developers
 // TODO: Update api's to be idiomatic rust
-// TODO: Update all value ops into containers to take `u16` and all indexing ops to take `usize` for consistency and to
-//       make it explicit that the containers only contain the lower 16 bits of a value in the bitmap
 // TODO: Inline trivial fns
 // TODO: Eliminate all bounds checks in critical paths
 
