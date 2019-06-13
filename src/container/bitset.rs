@@ -404,7 +404,12 @@ impl BitsetContainer {
 
     /// Get an iterator over the words of the bitset
     pub fn iter(&self) -> Iter {
-        unimplemented!()
+        Iter {
+            words: &self.bitset,
+            word_index: 0,
+            word: self.bitset[0],
+            base: 0
+        }
     }
 }
 
@@ -416,12 +421,14 @@ impl BitsetContainer {
 }
 
 impl From<ArrayContainer> for BitsetContainer {
+    #[inline]
     fn from(container: ArrayContainer) -> Self {
         From::from(&container)
     }
 }
 
 impl<'a> From<&'a mut ArrayContainer> for BitsetContainer {
+    #[inline]
     fn from(container: &'a mut ArrayContainer) -> Self {
         From::from(&*container)
     }
@@ -430,22 +437,21 @@ impl<'a> From<&'a mut ArrayContainer> for BitsetContainer {
 impl<'a> From<&'a ArrayContainer> for BitsetContainer {
     fn from(container: &'a ArrayContainer) -> Self {
         let mut bitset = BitsetContainer::new();
-
-        for value in container.iter() {
-            bitset.set(*value as usize);
-        }
+        bitset.set_list(&container);
 
         bitset
     }
 }
 
 impl From<RunContainer> for BitsetContainer {
+    #[inline]
     fn from(container: RunContainer) -> Self {
         From::from(&container)
     }
 }
 
 impl<'a> From<&'a mut RunContainer> for BitsetContainer {
+    #[inline]
     fn from(container: &'a mut RunContainer) -> Self {
         From::from(&*container)
     }
@@ -731,13 +737,45 @@ impl SetNot for BitsetContainer {
 
 /// An iterator over the values of a bitset
 pub struct Iter<'a> {
-    bitset: &'a BitsetContainer
+    /// The list of words in the bitset
+    words: &'a [u64],
+
+    /// The current word index in the bitset
+    word_index: usize,
+
+    /// The current word being processed
+    word: u64,
+
+    /// The current number up to the start of the word
+    base: u32
 }
 
 impl<'a> Iterator for Iter<'a> {
     type Item = u16;
     
     fn next(&mut self) -> Option<Self::Item> {
-        unimplemented!()
+        if self.word_index < self.words.len() {
+            let w = self.word;
+            let t = self.word & (!self.word + 1);
+            let r = 64 - (w.leading_zeros() + 1);
+
+            self.word = w ^ t;
+
+            // Check if that was the last bit in the word, if so advance for the next pass
+            if self.word == 0 {
+                self.word_index += 1;
+
+                if self.word_index < self.words.len() {
+                    self.word = unsafe { *self.words.get_unchecked(self.word_index) };
+                    self.base += 64;
+                }
+            }
+
+            // Guaranteed to not truncate due to how containers work
+            Some((r + self.base) as u16)
+        }
+        else {
+            None
+        }
     }
 }

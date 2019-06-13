@@ -609,12 +609,14 @@ impl RunContainer {
 }
 
 impl From<ArrayContainer> for RunContainer {
+    #[inline]
     fn from(container: ArrayContainer) -> Self {
         From::from(&container)
     }
 }
 
 impl<'a> From<&'a mut ArrayContainer> for RunContainer {
+    #[inline]
     fn from(container: &'a mut ArrayContainer) -> Self {
         From::from(&*container)
     }
@@ -656,12 +658,14 @@ impl<'a> From<&'a ArrayContainer> for RunContainer {
 }
 
 impl From<BitsetContainer> for RunContainer {
+    #[inline]
     fn from(container: BitsetContainer) -> Self {
         From::from(&container)
     }
 }
 
 impl<'a> From<&'a mut BitsetContainer> for RunContainer {
+    #[inline]
     fn from(container: &'a mut BitsetContainer) -> Self {
         From::from(&*container)
     }

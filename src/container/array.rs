@@ -1,6 +1,7 @@
 use std::mem;
+use std::ptr;
 use std::ops::{Deref, DerefMut, Range};
-use std::slice::Iter;
+use std::slice::{self, Iter};
 
 use crate::utils::mem_equals;
 use crate::container::*;
@@ -37,6 +38,18 @@ impl ArrayContainer {
     pub fn cardinality(&self) -> usize {
         // Len is the same as the cardinality for raw sets of integers
         self.array.len()
+    }
+
+    /// Get the number of values in the array
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.array.len()
+    }
+
+    /// Clear the contents of the array container
+    #[inline]
+    pub fn clear(&mut self) {
+        self.array.clear()
     }
 
     /// Set the cardinality of the array container
@@ -283,6 +296,18 @@ impl ArrayContainer {
     pub fn iter(&self) -> Iter<u16> {
         self.array.iter()
     }
+
+    /// Get a pointer to the array
+    #[inline]
+    pub fn as_ptr(&self) -> *const u16 {
+        self.array.as_ptr()
+    }
+
+    /// Get a mutable pointer to the array
+    #[inline]
+    pub fn as_mut_ptr(&mut self) -> *mut u16 {
+        self.array.as_mut_ptr()
+    }
 }
 
 impl ArrayContainer {
@@ -319,12 +344,14 @@ impl PartialEq for ArrayContainer {
 impl Eq for ArrayContainer { }
 
 impl From<BitsetContainer> for ArrayContainer {
+    #[inline]
     fn from(container: BitsetContainer) -> Self {
         From::from(&container)
     }
 }
 
 impl<'a> From<&'a mut BitsetContainer> for ArrayContainer {
+    #[inline]
     fn from(container: &'a mut BitsetContainer) -> Self {
         From::from(&*container)
     }
@@ -332,17 +359,26 @@ impl<'a> From<&'a mut BitsetContainer> for ArrayContainer {
 
 impl<'a> From<&'a BitsetContainer> for ArrayContainer {
     fn from(container: &'a BitsetContainer) -> Self {
-        unimplemented!()
+        let len = container.len();
+        let mut array = ArrayContainer::with_capacity(len);
+        
+        for value in container.iter() {
+            array.push(value);
+        }
+
+        array
     }
 }
 
 impl From<RunContainer> for ArrayContainer {
+    #[inline]
     fn from(container: RunContainer) -> Self {
         From::from(&container)
     }
 }
 
 impl<'a> From<&'a mut RunContainer> for ArrayContainer {
+    #[inline]
     fn from(container: &'a mut RunContainer) -> Self {
         From::from(&*container)
     }
@@ -375,8 +411,65 @@ impl SetOr<Self> for ArrayContainer {
         Container::Array(result)
     }
     
-    fn inplace_or(self, other: &Self) -> Container {
-        unimplemented!()
+    fn inplace_or(mut self, other: &Self) -> Container {
+        let max_cardinality = self.len() + other.len();
+        
+        // Contents will end up as an array container, work inplace
+        if max_cardinality <= DEFAULT_MAX_SIZE {
+            // Make sure the contents will fit
+            let required = max_cardinality - self.capacity();
+            if required > 0 {
+                self.reserve(required);
+            }
+
+            unsafe {
+                // Offset the contents of self so we can put the result in the beginning of the array
+                let start = self.as_mut_ptr();
+                let end = start.add(other.len());
+
+                ptr::copy_nonoverlapping(start, end, self.len());
+
+                // Run the optimized union code on the contents
+                let s0 = slice::from_raw_parts(end, self.len());
+                let s1 = other.array.as_slice();
+
+                unimplemented!()
+            }
+
+            Container::Array(self)
+        }
+        // Contents will probably end up as a bitset
+        else {
+            let mut bitset = BitsetContainer::new();
+            bitset.set_list(&self);
+            bitset.set_list(&other);
+
+            // Result is going to be an array, convert back
+            let len = bitset.len();
+            if len <= DEFAULT_MAX_SIZE {
+                let required = len - self.capacity();
+                if required > 0 {
+                    self.reserve(required);
+                }
+
+                // Load the contenst of the bitset into the array
+                self.clear();
+
+                let mut iter = bitset.iter();
+                let mut value = iter.next();
+                while value.is_some() {
+                    self.push(value.unwrap());
+
+                    value = iter.next();
+                }
+
+                Container::Array(self)
+            }
+            // Result remains a bitset
+            else {
+                Container::Bitset(bitset)
+            }
+        }
     }
 }
 
