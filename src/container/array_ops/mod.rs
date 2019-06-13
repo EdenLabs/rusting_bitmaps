@@ -124,22 +124,6 @@ pub fn xor(a: &[u16], b: &[u16]) -> Vec<u16> {
     unimplemented!()
 }
 
-pub fn inplace_or(a: &mut Vec<u16>, b: &[u16]) {
-    unimplemented!()
-}
-
-pub fn inplace_and(a: &mut Vec<u16>, b: &[u16]) {
-    unimplemented!()
-}
-
-pub fn inplace_and_not(a: &mut Vec<u16>, b: &[u16]) {
-    unimplemented!()
-}
-
-pub fn inplace_xor(a: &mut Vec<u16>, b: &[u16]) {
-    unimplemented!()
-}
-
 /// Calculate the difference (`A \ B`) between two slices using scalar instructions
 ///
 /// # Assumptions

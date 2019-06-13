@@ -1,6 +1,8 @@
 #![feature(const_fn)]
 #![feature(copy_within)]
 
+#![feature(const_generics)]
+
 // TODO: Enable these lints after sketching out the api
 //#![deny(missing_docs)]
 #![deny(bare_trait_objects)]
@@ -27,3 +29,8 @@ mod container;
 mod utils;
 
 pub use roaring::RoaringBitmap;
+
+// TODO: Maybe move this into it's own crate
+pub struct Aligned<T, const N: usize> {
+    inner: T
+}
