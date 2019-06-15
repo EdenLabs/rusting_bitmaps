@@ -1,7 +1,6 @@
 #![feature(const_fn)]
-#![feature(copy_within)]
-
 #![feature(const_generics)]
+#![feature(copy_within)]
 #![feature(ptr_offset_from)]
 
 // TODO: Enable these lints after sketching out the api
@@ -25,16 +24,68 @@
 // TODO: Inline trivial fns
 // TODO: Eliminate all bounds checks in critical paths
 
-mod roaring;
 mod container;
+mod roaring;
+mod simd;
 mod utils;
 
-#[cfg(test)]
-mod test;
+//#[cfg(test)]
+//mod test;
 
 pub use roaring::RoaringBitmap;
 
-// TODO: Maybe move this into it's own crate
+use std::fmt;
+use std::ops::{Deref, DerefMut};
+
+// TODO: Export from eden as standalone crate and link that instead to avoid parallel impls
+//       and to allow access to collections generic over the allocator used.
+
+/// A marker wrapper for a type aligned to an `N` byte boundary
 pub struct Aligned<T, const N: usize> {
-    inner: T
+    /// The inner value
+    pub(crate) inner: T
+}
+
+impl<T, const N: usize> Aligned<T, {N}> {
+    /// Mark a value as aligned to `N` 
+    /// 
+    /// # Safety
+    /// This assumes that the value or it's contents are indeed aligned to `N`.
+    /// Violation of this assumption is highly likely to cause UB
+    pub unsafe fn new(value: T) -> Self {
+        Self {
+            inner: value
+        }
+    }
+
+    /// Unwrap and yield the inner value
+    pub fn unwrap(self) -> T {
+        self.inner
+    }
+}
+
+impl<T, const N: usize> Deref for Aligned<T, {N}> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.inner
+    }
+}
+
+impl<T, const N: usize> DerefMut for Aligned<T, {N}> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
+}
+
+impl<T: fmt::Debug, const N: usize> fmt::Debug for Aligned<T, {N}> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self.inner, f)
+    }
+}
+
+impl<T: fmt::Display, const N: usize> fmt::Display for Aligned<T, {N}> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self.inner, f)
+    }
 }

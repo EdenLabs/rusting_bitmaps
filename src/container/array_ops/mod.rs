@@ -1,7 +1,7 @@
 //! This module provides a unified interface for SIMD accelerated operations for array containers.
 //! If compiled without vector extensions then these will fall back to a scalar approach
 
-mod avx;
+//mod avx;
 mod sse;
 mod scalar;
 
@@ -12,17 +12,17 @@ use crate::Aligned;
 /// # Safety
 ///  - Assumes that `out` has enough space to contain the full result
 ///  - Assumes that `out` is aligned to 32 bytes
-pub unsafe fn or(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) {
+pub unsafe fn or(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
     
     #[cfg(target_feaure = "avx2")]
-    { avx::or(a, b, out); }
+    { avx::or(a, b, out) }
 
     #[cfg(all(target_feature = "sse4.2", not(target_feature = "avx2")))]
-    { sse::or(a, b, out); }
+    { sse::or(a, b, out) }
     
     #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx2")))]
-    { scalar::or(a, b, out); }
+    { scalar::or(*a, *b, out) }
 }
 
 /// Perform the set intersection operation between `a` and `b` outputting the results into `out`
@@ -30,17 +30,17 @@ pub unsafe fn or(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) 
 /// # Safety
 ///  - Assumes that `out` has enough space to contain the full result
 ///  - Assumes that `out` is aligned to 32 bytes
-pub unsafe fn and(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) {
+pub unsafe fn and(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
     
     #[cfg(target_feaure = "avx")]
-    { avx::and(a, b, out); }
+    { avx::and(a, b, out) }
 
     #[cfg(all(target_feature = "sse4.2", not(target_feature = "avx2")))]
-    { sse::and(a, b, out); }
+    { sse::and(a, b, out) }
     
     #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx2")))]
-    { scalar::and(a, b, out); }
+    { scalar::and(*a, *b, out) }
 }
 
 /// Perform the set difference operation between `a` and `b` outputting the results into `out`
@@ -48,17 +48,17 @@ pub unsafe fn and(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16)
 /// # Safety
 ///  - Assumes that `out` has enough space to contain the full result
 ///  - Assumes that `out` is aligned to 32 bytes
-pub unsafe fn and_not(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) {
+pub unsafe fn and_not(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
     
     #[cfg(target_feaure = "avx")]
-    { avx::and_not(a, b, out); }
+    { avx::and_not(a, b, out) }
 
     #[cfg(all(target_feature = "sse4.2", not(target_feature = "avx")))]
-    { sse::and_not(a, b, out); }
+    { sse::and_not(*a, *b, out) }
     
     #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx")))]
-    { scalar::and_not(a, b, out); }
+    { scalar::and_not(*a, *b, out) }
 }
 
 /// Perform the set symmetric difference operation between `a` and `b` outputting the results into `out`
@@ -66,17 +66,17 @@ pub unsafe fn and_not(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut 
 /// # Safety
 ///  - Assumes that `out` has enough space to contain the full result
 ///  - Assumes that `out` is aligned to 32 bytes
-pub unsafe fn xor(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) {
+pub unsafe fn xor(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
     
     #[cfg(target_feaure = "avx")]
-    { avx::xor(a, b, out); }
+    { avx::xor(a, b, out) }
 
     #[cfg(all(target_feature = "sse4.2", not(target_feature = "avx")))]
-    { sse::xor(a, b, out); }
+    { sse::xor(a, b, out) }
     
     #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx")))]
-    { scalar::xor(a, b, out); }
+    { scalar::xor(*a, *b, out) }
 }
 
 // TODO: Clean this mess up
