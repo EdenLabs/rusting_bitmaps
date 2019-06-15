@@ -110,9 +110,17 @@ pub fn symmetric_difference(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
 } 
 
 /// Compute the union (`A ∪ B`) of of two u16 vectors
-pub fn union(a: &[u16], b: &[u16], out: &mut Vec<u16>) {
-    assert!(out.len() == 0);
+pub fn union(a: &[u16], b: &[u16], out: *mut u16) {
+    let len_a = a.len();
+    let len_b = b.len();
+    
+    let ptr_a = a.as_ptr();
+    let ptr_b = b.as_ptr();
+    
+    
 
+    // OLD IMPL
+    
     // Ensure that there's enough space in out to fit the result
     let max_len = a.len() + b.len();
     if out.len() < max_len {

@@ -1,7 +1,83 @@
-mod simd;
+//! This module provides a unified interface for SIMD accelerated operations for array containers.
+//! If compiled without vector extensions then these will fall back to a scalar approach
 
-// TODO: See about moving to aligned loads and having some way to enforce that
-// TODO: Implement the cardinality ops for arrays (is this even necessary with pure vecs?)
+mod avx;
+mod sse;
+mod scalar;
+
+/// Perform the set union operation between `a` and `b` outputting the results into `out`
+/// 
+/// # Safety
+///  - Assumes that `out` has enough space to containe the full result
+///  - Assumes that `out` is aligned to 32 bytes
+pub unsafe fn or(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) {
+    // Conditionally compile in/out the optimial version of the algorithm
+    
+    #[cfg(target_feaure = "avx")]
+    { avx::or(a, b, out); }
+
+    #[cfg(all(target_feature = "sse4.2", not(target_feature = "avx")))]
+    { sse::or(a, b, out); }
+    
+    #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx")))]
+    { scalar::or(a, b, out); }
+}
+
+/// Perform the set intersection operation between `a` and `b` outputting the results into `out`
+/// 
+/// # Safety
+///  - Assumes that `out` has enough space to containe the full result
+///  - Assumes that `out` is aligned to 32 bytes
+pub unsafe fn and(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) {
+    // Conditionally compile in/out the optimial version of the algorithm
+    
+    #[cfg(target_feaure = "avx")]
+    { avx::and(a, b, out); }
+
+    #[cfg(all(target_feature = "sse4.2", not(target_feature = "avx")))]
+    { sse::and(a, b, out); }
+    
+    #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx")))]
+    { scalar::and(a, b, out); }
+}
+
+/// Perform the set difference operation between `a` and `b` outputting the results into `out`
+/// 
+/// # Safety
+///  - Assumes that `out` has enough space to containe the full result
+///  - Assumes that `out` is aligned to 32 bytes
+pub unsafe fn and_not(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) {
+    // Conditionally compile in/out the optimial version of the algorithm
+    
+    #[cfg(target_feaure = "avx")]
+    { avx::and_not(a, b, out); }
+
+    #[cfg(all(target_feature = "sse4.2", not(target_feature = "avx")))]
+    { sse::and_not(a, b, out); }
+    
+    #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx")))]
+    { scalar::and_not(a, b, out); }
+}
+
+/// Perform the set symmetric difference operation between `a` and `b` outputting the results into `out`
+/// 
+/// # Safety
+///  - Assumes that `out` has enough space to containe the full result
+///  - Assumes that `out` is aligned to 32 bytes
+pub unsafe fn xor(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) {
+    // Conditionally compile in/out the optimial version of the algorithm
+    
+    #[cfg(target_feaure = "avx")]
+    { avx::xor(a, b, out); }
+
+    #[cfg(all(target_feature = "sse4.2", not(target_feature = "avx")))]
+    { sse::xor(a, b, out); }
+    
+    #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx")))]
+    { scalar::xor(a, b, out); }
+}
+
+// TODO: Clean this mess up
 
 /// Count the number of elements which are less than the key
 /// 
@@ -90,38 +166,6 @@ pub fn exponential_search<T>(slice: &[T], size: usize, key: T) -> Result<usize, 
     }
 
     return slice[(bound / 2)..((bound + 1).min(size))].binary_search(&key);
-}
-
-pub fn or(a: &[u16], b: &[u16]) -> Vec<u16> {
-    // Setup
-
-    // 256 bit simd
-    #[cfg(target_feature = "avx2")]
-    {
-
-    }
-
-    // 128 bit simd
-    #[cfg(target_feature = "sse4.2")]
-    {
-
-    }
-
-    // Scalar
-
-    unimplemented!()
-}
-
-pub fn and(a: &[u16], b: &[u16]) -> Vec<u16> {
-    unimplemented!()
-}
-
-pub fn and_not(a: &[u16], b: &[u16]) -> Vec<u16> {
-    unimplemented!()
-}
-
-pub fn xor(a: &[u16], b: &[u16]) -> Vec<u16> {
-    unimplemented!()
 }
 
 /// Calculate the difference (`A \ B`) between two slices using scalar instructions
@@ -228,130 +272,3 @@ fn scalar_symmetric_difference<T>(a: &[T], b: &[T], out: &mut Vec<T>)
     }
 }
 
-/// Calculate the union (`A ∪ B`) of two slices using scalar instructions
-///
-/// # Assumptions
-///  - The contents of `a` and `b` are sorted
-fn scalar_union<T>(a: &[T], b: &[T], out: &mut Vec<T>)
-    where T: Copy + Ord + Eq
-{
-    // Second operand is empty, just copy into out
-    if b.len() == 0 {
-        out.extend_from_slice(a);
-        return;
-    }
-
-    // First operand is empty, copy into out
-    if a.len() == 0 {
-        out.extend_from_slice(b);
-        return;
-    }
-
-    unsafe {
-        // Perform union of both operands and append the result into out
-        let mut i_a = 0;
-        let mut i_b = 0;
-        let mut val_a = *a.get_unchecked(i_a);
-        let mut val_b = *b.get_unchecked(i_a);
-
-        loop {
-            // B is greater; append A and advance the iterator
-            if val_a < val_b {
-                out.push(val_a);
-
-                i_a += 1;
-                if i_a >= a.len() {
-                    break;
-                }
-
-                val_a = *a.get_unchecked(i_a);
-            }
-            // A is greater; append b and advance the iterator
-            else if val_b < val_a {
-                out.push(val_b);
-
-                i_b += 1;
-                if i_b >= b.len() {
-                    break;
-                }
-
-                val_b = *b.get_unchecked(i_b);
-            }
-            // A and B are equal; append one and advance the iterators
-            else {
-                out.push(val_a);
-
-                i_a += 1;
-                i_b += 1;
-
-                if i_a >= a.len() {
-                    break;
-                }
-
-                if i_b >= b.len() {
-                    break;
-                }
-
-                val_a = *a.get_unchecked(i_a);
-                val_b = *b.get_unchecked(i_b);
-            }
-        }
-
-        if i_a < a.len() {
-            out.extend_from_slice(&a[i_a..a.len()]);
-        }
-        else if i_b < b.len() {
-            out.extend_from_slice(&b[i_b..b.len()]);
-        }
-    }
-}
-
-/// Calculate the intersection (`A ∩ B`) of two slices using scalar instructions
-///
-/// # Assumptions
-///  - The contents of `a` and `b` are sorted
-fn scalar_intersect<T>(a: &[T], b: &[T], out: &mut Vec<T>)
-    where T: Copy + Ord + Eq
-{
-    if a.len() == 0 || b.len() == 0 {
-        return;
-    }
-
-    unsafe {
-        let mut i_a = 0;
-        let mut i_b = 0;
-        let mut v_a = *a.get_unchecked(i_a);
-        let mut v_b = *b.get_unchecked(i_b);
-
-        loop {
-            while v_a < v_b {
-                i_a += 1;
-                if i_a >= a.len() {
-                    return;
-                }
-
-                v_a = *a.get_unchecked(i_a);
-            }
-
-            while v_a > v_b {
-                i_b += 1;
-                if i_b >= b.len() {
-                    return;
-                }
-
-                v_b = *b.get_unchecked(i_b);
-            }
-
-            if v_a == v_b {
-                out.push(v_a);
-
-                i_a += 1;
-                i_b += 1;
-
-                if i_a > a.len() || i_b >= b.len() {
-                    return;
-                }
-            }
-        }
-    }
-}
