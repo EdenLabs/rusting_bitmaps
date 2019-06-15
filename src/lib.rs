@@ -2,6 +2,7 @@
 #![feature(copy_within)]
 
 #![feature(const_generics)]
+#![feature(ptr_offset_from)]
 
 // TODO: Enable these lints after sketching out the api
 //#![deny(missing_docs)]
@@ -27,6 +28,9 @@
 mod roaring;
 mod container;
 mod utils;
+
+#[cfg(test)]
+mod test;
 
 pub use roaring::RoaringBitmap;
 
