@@ -1,8 +1,5 @@
 use std::slice::Iter;
 
-use serde::{Serialize, Deserialize};
-
-#[derive(Serialize, Deserialize)]
 pub struct TestData {
     cases: Vec<TestCase>
 }
@@ -13,7 +10,6 @@ impl TestData {
     }
 }
 
-#[derive(Serialize, Deserialize)]
 pub struct TestCase {
     pub name: &'static str,
     pub a: Vec<u16>,

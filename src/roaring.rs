@@ -5,7 +5,6 @@ use std::ops::{Range};
 use crate::container::{self, *, array_ops};
 
 // TODO: Add support for custom allocators
-// TODO: Implement checked variants?
 
 /// A Roaring Bitmap
 ///

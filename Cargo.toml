@@ -4,9 +4,8 @@ version = "0.1.0"
 authors = ["Techgeek1 <austin.rife@gmail.com>"]
 edition = "2018"
 
-[dev-dependencies]
-serde = { version = "1.0.92", features = ["derive"] }
-serde_json = { version =  "1.0.39" }
+[dependencies]
+core = { git = "https://github.com/techgeek1/core" }
 
 # Use simd acceleration for the library
 [features]

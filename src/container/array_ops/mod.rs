@@ -5,7 +5,7 @@
 mod sse;
 mod scalar;
 
-use crate::Aligned;
+use core::alloc::Aligned;
 
 /// Perform the set union operation between `a` and `b` outputting the results into `out`
 /// 

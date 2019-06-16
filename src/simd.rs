@@ -7,8 +7,6 @@
 //! Mocks are provided in the event that this is compiled with incompatible settings.
 //! Running a build without vector instructions will panic
 
-// TODO: Macro this up to simplify setup and make it usable for Eden proper
-
 #[allow(unused_imports)]
 use std::arch::x86_64::{
     _popcnt32,
@@ -43,6 +41,8 @@ use std::arch::x86_64::{
     _mm_storeu_si128
 };
 
+pub use consts::*;
+
 /// Convenience macro to simplify avx cfg declarations
 macro_rules! cfg_avx {
     ($($t:tt)*) => {
@@ -59,38 +59,33 @@ macro_rules! cfg_sse {
     };
 }
 
-// Convenience macro for non simd declarations (mockss)
-macro_rules! cfg_none {
-    ($($t:tt)*) => {
-        #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx2")))]
-        $($t)*
-    };
-}
-
-// Register typedefs
-cfg_avx! {
+#[cfg(target_feature = "avx2")]
+mod consts {
     pub type Register = __m256i;
-}
-
-cfg_sse! {
-    pub type Register = __m128i;
-}
-
-cfg_none! {
-    pub type Register = u64;
-}
-
-// Vector sizes
-cfg_avx! {
     pub const SIZE: usize = 16;
+    pub const N: i32 = 15;
+    pub const NM1: i32 = 14;
 }
 
-cfg_sse! {
+#[cfg(all(target_feature = "sse4.2", not(target_feature = "avx2")))]
+mod consts {
+    pub type Register = __m128i;
     pub const SIZE: usize = 8;
+    pub const N: i32 = 7;
+    pub const NM1: i32 = 6;
 }
 
-cfg_none! {
+#[cfg(not(any(target_feature = "sse4.2", target_feature = "avx2")))]
+mod consts {
+    pub type Register = u64;
     pub const SIZE: usize = 4;
+    pub const N: i32 = 3;
+    pub const NM1: i32 = 2;
+}
+
+#[inline(always)]
+pub unsafe fn popcnt32(x: i32) -> i32 {
+    _popcnt32(x)
 }
 
 #[inline(always)]
@@ -166,7 +161,7 @@ pub unsafe fn set1_epi16(a: i16) -> Register {
 }
 
 #[inline(always)]
-pub unsafe fn setzero() -> Register {
+pub unsafe fn setzero_si() -> Register {
     cfg_avx! { _mm256_setzero_si256() }
     cfg_sse! { _mm_setzero_si128() }
 
