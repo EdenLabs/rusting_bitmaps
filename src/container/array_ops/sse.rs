@@ -110,6 +110,337 @@ pub unsafe fn or(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) 
     count
 }
 
+/// Compute the intersection between `a` and `b` and append the result into `out`
+/// 
+/// # Returns
+/// Returns the number of elements appended to `out`
+/// 
+/// # Safety
+/// - Assumes `out` is aligned to 32 bytes and contains enough space to hold the output
+pub unsafe fn and(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) -> usize {
+    // Note on the implementation:
+    // This algorithm uses a SSE version as there is no functional equivalent to the `_mm_cmpistrm`
+    // intrinsic in AVX and replicating it in software is more expensive than falling back to a SSE version
+    // (crude estiamtes are around 50 cycles vs 18 for the SSE code)
+    //
+    // AVX-SSE transition penalties can be avoided by using the VEX encoded versions of the SSE instructions
+    // so as not to impact any AVX code in builds that use it. It's highly recommended to pass `-C target-feature=+avx`
+    // to the compiler to ensure that it generates `vpcmpistrm` instead of `pcmpistrm`.
+
+    use std::arch::x86_64::{
+        __m128i,
+
+        _SIDD_BIT_MASK,
+        _SIDD_CMP_EQUAL_ANY,
+        _SIDD_UWORD_OPS,
+
+        _popcnt32,
+        _mm_cmpestrm,
+        _mm_cmpistrm,
+        _mm_extract_epi32,
+        _mm_load_si128,
+        _mm_shuffle_epi8,
+        _mm_store_si128
+    };
+
+    const SSESIZE: usize = 8;
+    const CMPISTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
+
+    // Both sets are empty, there's no possible intersection
+    if a.len() == 0 || b.len() == 0 {
+        return 0;
+    }
+
+    // The length of one list is shorter than the vector size, fallback to a scalar algorithm
+    if a.len() < SSESIZE || b.len() < SSESIZE {
+        return scalar::and(*a, *b, out);
+    }
+
+    let simd_end_a = a.len() / SSESIZE;
+    let simd_end_b = b.len() / SSESIZE;
+
+    let ptr_a = a.as_ptr();
+    let ptr_b = b.as_ptr();
+
+    let mut i_a = 0;
+    let mut i_b = 0;
+
+    let mut count = 0;
+
+    let mut va;
+    let mut vb;
+
+    // Run a pass using cmpestrm while there's a zero in the block
+    // Since we're repurposing a string instruction we need to handle zeros
+    // which would otherwise be interpreted as an end-of-string and ruin the output 
+    if i_a < simd_end_a && i_b < simd_end_b  {
+        va = _mm_load_si128(ptr_a.add(i_a) as *const __m128i);
+        vb = _mm_load_si128(ptr_b.add(i_b) as *const __m128i);
+    
+        while *ptr_a == 0 || *ptr_b == 0 {
+            let res = _mm_cmpestrm(vb, SSESIZE as i32, va, SSESIZE as i32, CMPISTRM_ARGS);
+            let r = _mm_extract_epi32(res, 0);
+            let sm16 = _mm_load_si128(SHUFFLE_MASK16.as_ptr().add(r as usize) as *const __m128i);
+            let p = _mm_shuffle_epi8(va, sm16);
+
+            _mm_store_si128(out.add(count) as *mut __m128i, p);
+
+            count += _popcnt32(r) as usize;
+
+            let max_a = ptr_a.add(i_a + SSESIZE - 1);
+            let max_b = ptr_b.add(i_b + SSESIZE - 1);
+
+            if *max_a <= *max_b {
+                i_a += SSESIZE;
+                if i_a < simd_end_a {
+                    break;
+                }
+
+                va = _mm_load_si128(ptr_a.add(i_a) as *const __m128i);
+            }
+
+            if *max_b <= *max_a {
+                i_b += SSESIZE;
+                if i_b < simd_end_b {
+                    break;
+                }
+
+                vb = _mm_load_si128(ptr_b.add(i_b) as *const __m128i);
+            }
+        }
+    }
+
+    if i_a < simd_end_a && i_b < simd_end_b  {
+        loop {
+            let res = _mm_cmpistrm(vb, va, CMPISTRM_ARGS);
+            let r = _mm_extract_epi32(res, 0);
+            let sm16 = _mm_load_si128(SHUFFLE_MASK16.as_ptr().add(r as usize) as *const __m128i);
+            let p = _mm_shuffle_epi8(va, sm16);
+
+            _mm_store_si128(out.add(count) as *mut __m128i, p);
+
+            count += _popcnt32(r) as usize;
+
+            let max_a = ptr_a.add(i_a + SSESIZE - 1);
+            let max_b = ptr_b.add(i_a + SSESIZE - 1);
+
+            if *max_a <= *max_b {
+                i_a += SSESIZE;
+                if i_a == simd_end_a {
+                    break;
+                }
+
+                va = _mm_load_si128(ptr_a.add(i_a) as *const u16 as *const __m128i);
+            }
+
+            if *max_b <= *max_a {
+                i_b += SSESIZE;
+                if i_b == simd_end_b {
+                    break;
+                }
+
+                vb = _mm_load_si128(ptr_b.add(i_b) as *const __m128i);
+            }
+        }
+    }
+    
+    while i_a < a.len() && i_b < b.len() {
+        let sa = ptr_a.add(i_a);
+        let sb = ptr_b.add(i_b);
+
+        if *sa < *sb {
+            i_a += 1;
+        }
+        else if *sb < *sa {
+            i_b += 1;
+        }
+        else {
+            *(out.add(count)) = *sa;
+            count += 1;
+            i_a += 1;
+            i_b += 1;
+        }
+    }
+
+    count
+}
+
+/// Compute the difference between `a` and `b` and append the result into `out`
+/// 
+/// # Returns
+/// Returns the number of elements appended to `out`
+/// 
+/// # Safety
+/// - Assumes `out` is aligned to 32 bytes and contains enough space to hold the output
+pub unsafe fn and_not(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) -> usize {
+    // Note on the implementation:
+    // This algorithm uses a SSE version as there is no functional equivalent to the `_mm_cmpistrm`
+    // intrinsic in AVX and replicating it in software is more expensive than falling back to a SSE version
+    // (crude estiamtes are around 50 cycles vs 18 for the SSE code)
+    //
+    // AVX-SSE transition penalties can be avoided by using the VEX encoded versions of the SSE instructions
+    // so as not to impact any AVX code in builds that use it. It's highly recommended to pass `-C target-feature=+avx`
+    // to the compiler to ensure that it generates `vpcmpistrm` instead of `pcmpistrm`.
+    use std::arch::x86_64::{
+        __m128i,
+
+        _SIDD_BIT_MASK,
+        _SIDD_CMP_EQUAL_ANY,
+        _SIDD_UWORD_OPS,
+
+        _popcnt32,
+        _mm_cmpistrm,
+        _mm_extract_epi32,
+        _mm_load_si128,
+        _mm_or_si128,
+        _mm_setzero_si128,
+        _mm_shuffle_epi8,
+        _mm_store_si128
+    };
+
+    const SSESIZE: usize = 8;
+    const CMPISTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
+
+    // A is the empty set therefore there are no elements in A not in B
+    if a.len() == 0 {
+        return 0;
+    }
+    
+    // All elements of A are not in B, copy A into out
+    if b.len() == 0 {
+        let ptr = a.as_ptr();
+        let len = a.len();
+
+        ptr::copy(ptr, out, len);
+
+        return len;
+    }
+
+    // Don't bother with vector processing if there's not enough elements
+    if a.len() < 8 || b.len() < 8 {
+        return scalar::and_not(*a, *b, out);
+    }
+    
+    let simd_len_a = a.len() / SSESIZE;
+    let simd_len_b = b.len() / SSESIZE;
+
+    let ptr_a = a.as_ptr();
+    let ptr_b = b.as_ptr();
+    
+    let mut i_a = 0;
+    let mut i_b = 0;
+    let mut count = 0;
+
+    // Handle any leading 0s so we can effectively use the sse instructions
+    // This is necessary other wise it'll terminate the comparison on a 0 byte
+    if *ptr_a == 0 || *ptr_b == 0 {
+        if *ptr_a == *ptr_b {
+            i_a += 1;
+            i_b += 1;
+        }
+        else if *ptr_a == 0 {
+            *out = *ptr_a;
+            i_a += 1;
+            count += 1;
+        }
+        else {
+            i_b += 1;
+        }
+    }
+
+    if i_a < simd_len_a && i_b < simd_len_b {
+        let mut v_a = _mm_load_si128(ptr_a.add(i_a) as *const __m128i);
+        let mut v_b = _mm_load_si128(ptr_b.add(i_b) as *const __m128i);
+        
+        let mut a_in_b_mask = _mm_setzero_si128();
+        
+        loop {
+            let a_in_b = _mm_cmpistrm(v_b, v_a, CMPISTRM_ARGS);
+            a_in_b_mask = _mm_or_si128(a_in_b_mask, a_in_b);
+        
+            let a_max = ptr_a.add(i_a + 7);
+            let b_max = ptr_b.add(i_b + 7);
+            
+            if *a_max <= *b_max {
+                let mask_difference = _mm_extract_epi32(a_in_b_mask, 0) ^ 0xFF;
+                let shuffle_mask = _mm_load_si128(SHUFFLE_MASK16.as_ptr().add(mask_difference as usize) as *const __m128i);
+                let p = _mm_shuffle_epi8(v_a, shuffle_mask);
+                
+                _mm_store_si128(out.add(count) as *mut __m128i, p);
+                
+                count += _popcnt32(mask_difference) as usize;
+                
+                i_a += SSESIZE;
+                
+                if i_a == simd_len_a {
+                    break;
+                }
+                
+                a_in_b_mask = _mm_setzero_si128();
+                v_a = _mm_load_si128(ptr_a.add(i_a) as *const __m128i);
+            }
+            
+            if b_max <= a_max {
+                i_b += SSESIZE;
+                if i_b == simd_len_b {
+                    break;
+                }
+                
+                v_b = _mm_load_si128(ptr_b.add(i_a) as *const __m128i);
+            }
+        }
+        
+        // Either A or B is at their end, If b is the finished one then finish processing A
+        if i_a < simd_len_a {
+            let mut buffer = [0; 8];
+            let buf_ptr = buffer.as_mut_ptr();
+
+            ptr::copy_nonoverlapping(ptr_b.add(i_b), buf_ptr, b.len() - i_b);
+            v_b = _mm_load_si128(buf_ptr as *const __m128i);
+
+            let a_in_b = _mm_cmpistrm(v_b, v_a, CMPISTRM_ARGS);
+            a_in_b_mask = _mm_or_si128(a_in_b_mask, a_in_b);
+           
+            let in_difference = _mm_extract_epi32(a_in_b_mask, 0) ^ 0xFF;
+            let sm16 = _mm_load_si128(SHUFFLE_MASK16.as_ptr().add(in_difference as usize) as *const __m128i);
+            let p = _mm_shuffle_epi8(v_a, sm16);
+            _mm_store_si128(out.add(count) as *mut __m128i, p);
+
+            count += _popcnt32(in_difference) as usize;
+            i_a += SSESIZE;
+        }
+    }
+    
+    // Finish out with scalar version for any elements that
+    while i_a < a.len() && i_b < b.len() {
+        let sa = ptr_a.add(i_a);
+        let sb = ptr_b.add(i_b);
+
+        if *sb < *sa {
+            i_b += 1;
+        }
+        else if *sa < *sb {
+            *(out.add(count)) = *sa;
+            i_a += 1;
+            count += 1;
+        }
+        else {
+            i_a += 1;
+            i_b += 1;
+        }
+    }
+    
+    // If there's any elements left in A then copy them into the final one
+    if i_a < a.len() {
+        let rem = a.len() - i_a;
+        ptr::copy_nonoverlapping(ptr_a.add(i_a), out.add(count), rem);
+
+        count += rem;
+    }
+
+    count
+}
+
 /// Compute the symmetric difference between `a` and `b` and append the result into `out`
 /// 
 /// # Returns
