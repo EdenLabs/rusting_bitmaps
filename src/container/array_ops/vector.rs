@@ -1,3 +1,4 @@
+use std::mem;
 use std::ptr;
 
 use core::alloc::Aligned;
@@ -72,10 +73,9 @@ pub unsafe fn or(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) 
         last_store = min;
     }
 
-    // TODO: Finish porting this stuffs
     let mut buffer = InlineVec::<u16, {SIZE * 2}>::new();
     let buff_ptr = buffer.as_mut_ptr();
-    let mut buffer_count = store_symmetric(last_store, max, buff_ptr);
+    let mut buffer_count = store_xor(last_store, max, buff_ptr);
     
     let vn = extract_epi16(max, N) as u16;
     let vnm1 = extract_epi16(max, NM1) as u16;
@@ -475,7 +475,7 @@ pub unsafe fn xor(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16)
     merge(v_a, v_b, &mut min, &mut max);
     
     let mut last_store = set1_epi16(-1);
-    count += store_symmetric(last_store, min, out.add(count));
+    count += store_xor(last_store, min, out.add(count));
 
     last_store = min;
 
@@ -496,19 +496,19 @@ pub unsafe fn xor(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16)
             }
 
             merge(v, max, &mut min, &mut max);
-            count += store_symmetric(last_store, min, out.add(count));
+            count += store_xor(last_store, min, out.add(count));
 
             last_store = min;
         }
 
         merge(v, max, &mut min, &mut max);
-        count += store_symmetric(last_store, min, out.add(count));
+        count += store_xor(last_store, min, out.add(count));
         last_store = min;
     }
 
     let mut buffer = InlineVec::<u16, {SIZE * 2}>::new();
     let buff_ptr = buffer.as_mut_ptr();
-    let mut buffer_count = store_symmetric(last_store, max, buff_ptr);
+    let mut buffer_count = store_xor(last_store, max, buff_ptr);
     
     let vn = extract_epi16(max, N) as u16;
     let vnm1 = extract_epi16(max, NM1) as u16;
@@ -561,9 +561,9 @@ pub unsafe fn xor(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16)
     count
 }
 
-unsafe fn store_symmetric(old: Register, new: Register, output: *mut u16) -> usize {
-    let temp_0 = alignr_epi8(new, old, (SIZE as i32) - 4); // TODO: Make this work for an abstracted vector size
-    let temp_1 = alignr_epi8(new, old, (SIZE as i32) - 2);
+unsafe fn store_xor(old: Register, new: Register, output: *mut u16) -> usize {
+    let temp_0 = alignr_epi8(new, old, ((SIZE * mem::size_of::<u16>()) as i32) - 4);
+    let temp_1 = alignr_epi8(new, old, ((SIZE * mem::size_of::<u16>()) as i32) - 2);
     
     let eq_left = cmpeq_epi16(temp_0, temp_1);
     let eq_right = cmpeq_epi16(temp_0, new);
@@ -584,11 +584,11 @@ unsafe fn store_symmetric(old: Register, new: Register, output: *mut u16) -> usi
 }
 
 unsafe fn merge(a: Register, b: Register, min: &mut Register, max: &mut Register) {
-    let mut temp = min_epu16(a, b); // TODO: Make this work for abstracted register sizes
+    let mut temp = min_epu16(a, b);
     *max = max_epu16(a, b);
     temp = alignr_epi8(temp, temp, 2);
 
-    for _i in 0..6 {
+    for _i in 0..(SIZE - 2) {
         *min = min_epu16(temp, *max);
         *max = max_epu16(temp, *max);
         temp = alignr_epi8(*min, *min, 2);
@@ -600,7 +600,7 @@ unsafe fn merge(a: Register, b: Register, min: &mut Register, max: &mut Register
 }
 
 unsafe fn store_union(old: Register, new: Register, output: *mut u16) -> usize {
-    let temp = alignr_epi8(new, old, (SIZE as i32) - 2); // TODO: Make this work for abstracted register sizes
+    let temp = alignr_epi8(new, old, ((SIZE * mem::size_of::<u16>()) as i32) - 2);
     let mask = movemask_epi8(
         packs_epi16(
             cmpeq_epi16(temp, new),
