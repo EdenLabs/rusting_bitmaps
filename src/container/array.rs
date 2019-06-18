@@ -505,7 +505,7 @@ impl SetOr<Self> for ArrayContainer {
                 let s0 = slice::from_raw_parts(end, self.len());
                 let s1 = other.array.as_slice();
 
-                unimplemented!()
+                array_ops::or(s0, s1, start);
             }
 
             Container::Array(self)
@@ -547,11 +547,15 @@ impl SetOr<Self> for ArrayContainer {
 
 impl SetOr<BitsetContainer> for ArrayContainer {
     fn or(&self, other: &BitsetContainer) -> Container {
-        SetOr::or(other, self)
+        // Container can't possibly be an array, realloca as a bitset
+        let mut result = other.clone();
+        result.set_list(&self);
+        
+        Container::Bitset(result)
     }
     
     fn inplace_or(self, other: &BitsetContainer) -> Container {
-        unimplemented!()
+        SetOr::or(&self, other)
     }
 }
 
@@ -561,7 +565,7 @@ impl SetOr<RunContainer> for ArrayContainer {
     }
     
     fn inplace_or(self, other: &RunContainer) -> Container {
-        unimplemented!()
+        SetOr::or(other, self).into_efficient_container()       
     }
 }
 
@@ -588,8 +592,26 @@ impl SetAnd<Self> for ArrayContainer {
         unimplemented!()
     }
     
-    fn inplace_and(self, other: &Self) -> Container {
-        unimplemented!()
+    fn inplace_and(mut self, other: &Self) -> Container {
+        // Shift the elements of self over to accomodate new contents
+        let len = self.len();
+        let req = len.max(other.len());
+        let slack = req + len;
+        if self.capacity() < slack {
+            self.reserve(slack - self.capacity());
+            
+            unsafe {
+                let src = self.as_mut_ptr();
+                let dst = src.add(req);
+                
+                ptr::copy(src, dst, len);
+            }
+        }
+        
+        let card = array_ops::and(&self, &other, self.as_mut_ptr());
+        self.set_len(card);
+        
+        Container::array(self)
     }
 }
 
@@ -614,11 +636,18 @@ impl SetAnd<BitsetContainer> for ArrayContainer {
     }
 
     fn and_cardinality(&self, other: &BitsetContainer) -> usize {
-        unimplemented!()
+        let mut card = 0;
+        for value in self.array.iter() {
+            if other.contains(*value) {
+                card += 1;
+            }
+        }
+        
+        card
     }
     
     fn inplace_and(self, other: &BitsetContainer) -> Container {
-        unimplemented!()
+        SetAnd::and(&self, other)
     }
 }
 
@@ -655,8 +684,25 @@ impl SetAndNot<Self> for ArrayContainer {
         Container::Array(result)
     }
     
-    fn inplace_and_not(self, other: &Self) -> Container {
-        unimplemented!()
+    fn inplace_and_not(mut self, other: &Self) -> Container {
+        // Shift the elements of self over to accomodate new contents
+        let len = self.len();
+        let slack = len * 2;
+        if self.capacity() < slack {
+            self.reserve(slack - self.capacity());
+            
+            unsafe {
+                let src = self.as_mut_ptr();
+                let dst = src.add(len);
+                
+                ptr::copy(src, dst, len);
+            }
+        }
+        
+        let card = array_ops::and_not(&self, &other, self.as_mut_ptr());
+        self.set_len(card);
+        
+        Container::array(self)
     }
 }
 
@@ -678,7 +724,7 @@ impl SetAndNot<BitsetContainer> for ArrayContainer {
     }
     
     fn inplace_and_not(self, other: &BitsetContainer) -> Container {
-        unimplemented!()
+        SetAndNot::(&self, other)
     }
 }
 
@@ -760,7 +806,25 @@ impl SetXor<Self> for ArrayContainer {
     }
     
     fn inplace_xor(self, other: &Self) -> Container {
-        unimplemented!()
+        // Shift the elements of self over to accomodate new contents
+        let len = self.len();
+        let req = len + other.len();
+        let slack = req + len;
+        if self.capacity() < slack {
+            self.reserve(slack - self.capacity());
+            
+            unsafe {
+                let src = self.as_mut_ptr();
+                let dst = src.add(req);
+                
+                ptr::copy(src, dst, len);
+            }
+        }
+        
+        let card = array_ops::xor(&self, &other, self.as_mut_ptr());
+        self.set_len(card);
+        
+        Container::array(self)
     }
 }
 
@@ -781,7 +845,7 @@ impl SetXor<BitsetContainer> for ArrayContainer {
     }
     
     fn inplace_xor(self, other: &BitsetContainer) -> Container {
-        unimplemented!()
+        SetXor::xor(&self, other)
     }
 }
 
@@ -839,7 +903,17 @@ impl Subset<Self> for ArrayContainer {
 
 impl Subset<BitsetContainer> for ArrayContainer {
     fn subset_of(&self, other: &BitsetContainer) -> bool {
-        unimplemented!()
+        if self.len() != other.len() {
+            return false;
+        }
+        
+        for value in self.array.iter() {
+            if !other.contains(*value) {
+                return false;
+            }
+        }
+        
+        true
     }
 }
 
@@ -859,6 +933,10 @@ impl SetNot for ArrayContainer {
     }
 
     fn inplace_not(self, range: Range<u16>) -> Container {
-        unimplemented!()
+        let mut result = BitsetContainer::new();
+        result.set_all();
+        result.clear_list(&self);
+        
+        Container::Bitset(result)
     }
 }
