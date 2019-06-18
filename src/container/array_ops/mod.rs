@@ -11,13 +11,13 @@ use core::alloc::Aligned;
 /// # Safety
 ///  - Assumes that `out` has enough space to contain the full result
 ///  - Assumes that `out` is aligned to 32 bytes
-pub unsafe fn or(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) -> usize {
+pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
     #[cfg(any(target_feature = "sse4.2", target_feature = "avx2"))]
     { vector::or(a, b, out) }
     
     #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx2")))]
-    { scalar::or(*a, *b, out) }
+    { scalar::or(a, b, out) }
 }
 
 /// Perform the set intersection operation between `a` and `b` outputting the results into `out`
@@ -25,13 +25,13 @@ pub unsafe fn or(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) 
 /// # Safety
 ///  - Assumes that `out` has enough space to contain the full result
 ///  - Assumes that `out` is aligned to 32 bytes
-pub unsafe fn and(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) -> usize {
+pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
     #[cfg(any(target_feature = "sse4.2", target_feature = "avx2"))]
     { vector::and(a, b, out) }
     
     #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx2")))]
-    { scalar::and(*a, *b, out) }
+    { scalar::and(a, b, out) }
 }
 
 /// Perform the set difference operation between `a` and `b` outputting the results into `out`
@@ -39,13 +39,13 @@ pub unsafe fn and(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16)
 /// # Safety
 ///  - Assumes that `out` has enough space to contain the full result
 ///  - Assumes that `out` is aligned to 32 bytes
-pub unsafe fn and_not(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) -> usize {
+pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
     #[cfg(any(target_feature = "sse4.2", target_feature = "avx2"))]
     { vector::and_not(a, b, out) }
     
     #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx")))]
-    { scalar::and_not(*a, *b, out) }
+    { scalar::and_not(a, b, out) }
 }
 
 /// Perform the set symmetric difference operation between `a` and `b` outputting the results into `out`
@@ -53,13 +53,13 @@ pub unsafe fn and_not(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut 
 /// # Safety
 ///  - Assumes that `out` has enough space to contain the full result
 ///  - Assumes that `out` is aligned to 32 bytes
-pub unsafe fn xor(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) -> usize {
+pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
     #[cfg(any(target_feature = "sse4.2", target_feature = "avx2"))]
     { vector::xor(a, b, out) }
     
     #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx")))]
-    { scalar::xor(*a, *b, out) }
+    { scalar::xor(a, b, out) }
 }
 
 // TODO: Clean this mess up

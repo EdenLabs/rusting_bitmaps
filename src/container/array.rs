@@ -1,3 +1,4 @@
+use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::mem;
 use std::ptr;
 use std::ops::{Deref, DerefMut, Range};
@@ -17,7 +18,7 @@ impl ArrayContainer {
     /// Create a new array container
     pub fn new() -> Self {
         Self {
-            array: Vec::with_capacity(DEFAULT_MAX_SIZE)
+            array: Vec::new()
         }
     }
 
@@ -315,6 +316,67 @@ impl ArrayContainer {
     pub fn serialized_size(cardinality: usize) -> usize {
         cardinality * mem::size_of::<u16>() + 2
     }
+
+    /// Serialize the array into `buf` according to the roaring format spec
+    #[cfg(target_endian = "little")]
+    pub fn serialize<W: Write>(&self, buf: &mut BufWriter<W>) -> io::Result<usize> {
+        let ptr = self.array.as_ptr() as *const u8;
+        let num_bytes = mem::size_of::<u16>() * self.len();
+        let byte_slice = slice::from_raw_parts(ptr, num_bytes);
+
+        buf.write(byte_slice)
+    }
+
+    #[cfg(target_endian = "big")]
+    pub fn serialize<W: Write>(&self, buf: &mut BufWriter<W>) -> io::Result<usize> {
+        // Specialized version for big endian systems. Not the most optimal but it works
+        let mut count = 0;
+        let mut bytes = [0; 2];
+        for value in self.array.iter() {
+            bytes = value.to_le_bytes();
+            count += buf.write(&bytes)?;
+        }
+
+        Ok(count)
+    }
+
+    /// Deserialize an array container according to the roaring format spec
+    #[cfg(target_endian = "little")]
+    pub fn deserialize<R: Read>(cardinality: usize, buf: &mut BufReader<R>) -> io::Result<Self> {
+        let mut result = ArrayContainer::with_capacity(cardinality);
+        let ptr = result.as_mut_ptr() as *mut u8;
+        let num_bytes = mem::size_of::<u16>() * cardinality;
+        let bytes_slice = slice::from_raw_parts_mut(ptr, num_bytes);
+
+        buf.read_exact(bytes_slice)?;
+
+        Ok(result)
+    }
+
+    #[cfg(target_endian = "big")]
+    pub fn deserialize<R: Read>(cardinality: usize, buf: &mut BufReader<R>) -> io::Result<Self> {
+        let mut result = ArrayContainer::with_capacity(cardinality);
+        
+        unsafe {
+            // Load the data into the array
+            result.array.set_len(cardinality);
+
+            let mut ptr = result.as_mut_ptr() as *mut u8;
+            let slice = slice::from_raw_parts_mut(ptr, cardinality);
+            
+            buf.read_exact(&mut slice)?;
+
+            // Flip byte order for all values to match big endian encoding
+            let ptr_end = ptr.offset(cardinality * mem::size_of::<T>());
+            while ptr < ptr_end {
+                ptr::swap(ptr, ptr.add(1));
+
+                ptr = ptr.add(2);
+            }
+        }
+
+        Ok(result)
+    }
 }
 
 impl Deref for ArrayContainer {
@@ -404,9 +466,19 @@ impl<'a> From<&'a RunContainer> for ArrayContainer {
 
 impl SetOr<Self> for ArrayContainer {
     fn or(&self, other: &Self) -> Container {
-        let result = ArrayContainer {
-            array: array_ops::or(&self.array, &other.array)
-        };
+        let len = self.len() + other.len();
+        let mut result = ArrayContainer::with_capacity(len);
+        let ptr = result.array.as_mut_ptr();
+
+        unsafe {
+            let len = array_ops::or(
+                self.array.as_slice(), 
+                other.array.as_slice(),
+                ptr
+            );
+
+            result.array.set_len(len);
+        }
 
         Container::Array(result)
     }
@@ -495,9 +567,19 @@ impl SetOr<RunContainer> for ArrayContainer {
 
 impl SetAnd<Self> for ArrayContainer {
     fn and(&self, other: &Self) -> Container {
-        let result = ArrayContainer {
-            array: array_ops::and(&self.array, &other.array)
-        };
+        let len = self.len().max(other.len());
+        let mut result = ArrayContainer::with_capacity(len);
+        let ptr = result.array.as_mut_ptr();
+
+        unsafe {
+            let len = array_ops::and(
+                self.array.as_slice(), 
+                other.array.as_slice(),
+                ptr
+            );
+
+            result.array.set_len(len);
+        }
 
         Container::Array(result)
     }
@@ -556,9 +638,19 @@ impl SetAnd<RunContainer> for ArrayContainer {
 
 impl SetAndNot<Self> for ArrayContainer {
     fn and_not(&self, other: &Self) -> Container {
-        let result = ArrayContainer {
-            array: array_ops::and_not(&self.array, &other.array)
-        };
+        let len = self.len().max(other.len());
+        let mut result = ArrayContainer::with_capacity(len);
+        let ptr = result.array.as_mut_ptr();
+
+        unsafe {
+            let len = array_ops::and_not(
+                self.array.as_slice(), 
+                other.array.as_slice(),
+                ptr
+            );
+
+            result.array.set_len(len);
+        }
 
         Container::Array(result)
     }
@@ -650,9 +742,19 @@ impl SetAndNot<RunContainer> for ArrayContainer {
 
 impl SetXor<Self> for ArrayContainer {
     fn xor(&self, other: &Self) -> Container {
-        let result = ArrayContainer {
-            array: array_ops::xor(&self.array, &other.array)
-        };
+        let len = self.len() + other.len();
+        let mut result = ArrayContainer::with_capacity(len);
+        let ptr = result.array.as_mut_ptr();
+
+        unsafe {
+            let len = array_ops::xor(
+                self.array.as_slice(), 
+                other.array.as_slice(),
+                ptr
+            );
+
+            result.array.set_len(len);
+        }
 
         Container::Array(result)
     }

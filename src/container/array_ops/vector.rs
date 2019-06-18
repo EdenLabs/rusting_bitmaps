@@ -1,7 +1,6 @@
 use std::mem;
 use std::ptr;
 
-use core::alloc::Aligned;
 use core::vec::InlineVec;
 
 use crate::simd::*;
@@ -14,10 +13,10 @@ use super::scalar;
 /// Returns the number of elements appended to `out`
 /// 
 /// # Safety
-/// - Assumes `out` is aligned to 32 bytes and contains enough space to hold the output
-pub unsafe fn or(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) -> usize {
+/// - Assumes `out` contains enough space to hold the output
+pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     if a.len() < SIZE || b.len() < SIZE {
-        return scalar::and(*a, *b, out);
+        return scalar::and(a, b, out);
     }
 
     let simd_len_a = a.len() / SIZE;
@@ -116,8 +115,8 @@ pub unsafe fn or(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) 
 /// Returns the number of elements appended to `out`
 /// 
 /// # Safety
-/// - Assumes `out` is aligned to 32 bytes and contains enough space to hold the output
-pub unsafe fn and(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) -> usize {
+/// - Assumes `out` contains enough space to hold the output
+pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Note on the implementation:
     // This algorithm uses a SSE version as there is no functional equivalent to the `_mm_cmpistrm`
     // intrinsic in AVX and replicating it in software is more expensive than falling back to a SSE version
@@ -138,9 +137,9 @@ pub unsafe fn and(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16)
         _mm_cmpestrm,
         _mm_cmpistrm,
         _mm_extract_epi32,
-        _mm_load_si128,
+        _mm_lddqu_si128,
         _mm_shuffle_epi8,
-        _mm_store_si128
+        _mm_storeu_si128
     };
 
     const SSESIZE: usize = 8;
@@ -153,7 +152,7 @@ pub unsafe fn and(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16)
 
     // The length of one list is shorter than the vector size, fallback to a scalar algorithm
     if a.len() < SSESIZE || b.len() < SSESIZE {
-        return scalar::and(*a, *b, out);
+        return scalar::and(a, b, out);
     }
 
     let simd_end_a = a.len() / SSESIZE;
@@ -174,16 +173,16 @@ pub unsafe fn and(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16)
     // Since we're repurposing a string instruction we need to handle zeros
     // which would otherwise be interpreted as an end-of-string and ruin the output 
     if i_a < simd_end_a && i_b < simd_end_b  {
-        va = _mm_load_si128(ptr_a.add(i_a) as *const __m128i);
-        vb = _mm_load_si128(ptr_b.add(i_b) as *const __m128i);
+        va = _mm_lddqu_si128(ptr_a.add(i_a) as *const __m128i);
+        vb = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
     
         while *ptr_a == 0 || *ptr_b == 0 {
             let res = _mm_cmpestrm(vb, SSESIZE as i32, va, SSESIZE as i32, CMPISTRM_ARGS);
             let r = _mm_extract_epi32(res, 0);
-            let sm16 = _mm_load_si128(SHUFFLE_MASK16.as_ptr().add(r as usize) as *const __m128i);
+            let sm16 = _mm_lddqu_si128(SHUFFLE_MASK16.as_ptr().add(r as usize) as *const __m128i);
             let p = _mm_shuffle_epi8(va, sm16);
 
-            _mm_store_si128(out.add(count) as *mut __m128i, p);
+            _mm_storeu_si128(out.add(count) as *mut __m128i, p);
 
             count += _popcnt32(r) as usize;
 
@@ -196,7 +195,7 @@ pub unsafe fn and(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16)
                     break;
                 }
 
-                va = _mm_load_si128(ptr_a.add(i_a) as *const __m128i);
+                va = _mm_lddqu_si128(ptr_a.add(i_a) as *const __m128i);
             }
 
             if *max_b <= *max_a {
@@ -205,7 +204,7 @@ pub unsafe fn and(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16)
                     break;
                 }
 
-                vb = _mm_load_si128(ptr_b.add(i_b) as *const __m128i);
+                vb = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
             }
         }
     }
@@ -214,10 +213,10 @@ pub unsafe fn and(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16)
         loop {
             let res = _mm_cmpistrm(vb, va, CMPISTRM_ARGS);
             let r = _mm_extract_epi32(res, 0);
-            let sm16 = _mm_load_si128(SHUFFLE_MASK16.as_ptr().add(r as usize) as *const __m128i);
+            let sm16 = _mm_lddqu_si128(SHUFFLE_MASK16.as_ptr().add(r as usize) as *const __m128i);
             let p = _mm_shuffle_epi8(va, sm16);
 
-            _mm_store_si128(out.add(count) as *mut __m128i, p);
+            _mm_storeu_si128(out.add(count) as *mut __m128i, p);
 
             count += _popcnt32(r) as usize;
 
@@ -230,7 +229,7 @@ pub unsafe fn and(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16)
                     break;
                 }
 
-                va = _mm_load_si128(ptr_a.add(i_a) as *const u16 as *const __m128i);
+                va = _mm_lddqu_si128(ptr_a.add(i_a) as *const u16 as *const __m128i);
             }
 
             if *max_b <= *max_a {
@@ -239,7 +238,7 @@ pub unsafe fn and(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16)
                     break;
                 }
 
-                vb = _mm_load_si128(ptr_b.add(i_b) as *const __m128i);
+                vb = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
             }
         }
     }
@@ -271,8 +270,8 @@ pub unsafe fn and(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16)
 /// Returns the number of elements appended to `out`
 /// 
 /// # Safety
-/// - Assumes `out` is aligned to 32 bytes and contains enough space to hold the output
-pub unsafe fn and_not(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) -> usize {
+/// - Assumes `out` contains enough space to hold the output
+pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Note on the implementation:
     // This algorithm uses a SSE version as there is no functional equivalent to the `_mm_cmpistrm`
     // intrinsic in AVX and replicating it in software is more expensive than falling back to a SSE version
@@ -291,11 +290,11 @@ pub unsafe fn and_not(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut 
         _popcnt32,
         _mm_cmpistrm,
         _mm_extract_epi32,
-        _mm_load_si128,
+        _mm_lddqu_si128,
         _mm_or_si128,
         _mm_setzero_si128,
         _mm_shuffle_epi8,
-        _mm_store_si128
+        _mm_storeu_si128
     };
 
     const SSESIZE: usize = 8;
@@ -318,7 +317,7 @@ pub unsafe fn and_not(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut 
 
     // Don't bother with vector processing if there's not enough elements
     if a.len() < 8 || b.len() < 8 {
-        return scalar::and_not(*a, *b, out);
+        return scalar::and_not(a, b, out);
     }
     
     let simd_len_a = a.len() / SSESIZE;
@@ -349,8 +348,8 @@ pub unsafe fn and_not(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut 
     }
 
     if i_a < simd_len_a && i_b < simd_len_b {
-        let mut v_a = _mm_load_si128(ptr_a.add(i_a) as *const __m128i);
-        let mut v_b = _mm_load_si128(ptr_b.add(i_b) as *const __m128i);
+        let mut v_a = _mm_lddqu_si128(ptr_a.add(i_a) as *const __m128i);
+        let mut v_b = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
         
         let mut a_in_b_mask = _mm_setzero_si128();
         
@@ -363,10 +362,10 @@ pub unsafe fn and_not(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut 
             
             if *a_max <= *b_max {
                 let mask_difference = _mm_extract_epi32(a_in_b_mask, 0) ^ 0xFF;
-                let shuffle_mask = _mm_load_si128(SHUFFLE_MASK16.as_ptr().add(mask_difference as usize) as *const __m128i);
+                let shuffle_mask = _mm_lddqu_si128(SHUFFLE_MASK16.as_ptr().add(mask_difference as usize) as *const __m128i);
                 let p = _mm_shuffle_epi8(v_a, shuffle_mask);
                 
-                _mm_store_si128(out.add(count) as *mut __m128i, p);
+                _mm_storeu_si128(out.add(count) as *mut __m128i, p);
                 
                 count += _popcnt32(mask_difference) as usize;
                 
@@ -377,7 +376,7 @@ pub unsafe fn and_not(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut 
                 }
                 
                 a_in_b_mask = _mm_setzero_si128();
-                v_a = _mm_load_si128(ptr_a.add(i_a) as *const __m128i);
+                v_a = _mm_lddqu_si128(ptr_a.add(i_a) as *const __m128i);
             }
             
             if b_max <= a_max {
@@ -386,7 +385,7 @@ pub unsafe fn and_not(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut 
                     break;
                 }
                 
-                v_b = _mm_load_si128(ptr_b.add(i_a) as *const __m128i);
+                v_b = _mm_lddqu_si128(ptr_b.add(i_a) as *const __m128i);
             }
         }
         
@@ -396,15 +395,15 @@ pub unsafe fn and_not(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut 
             let buf_ptr = buffer.as_mut_ptr();
 
             ptr::copy_nonoverlapping(ptr_b.add(i_b), buf_ptr, b.len() - i_b);
-            v_b = _mm_load_si128(buf_ptr as *const __m128i);
+            v_b = _mm_lddqu_si128(buf_ptr as *const __m128i);
 
             let a_in_b = _mm_cmpistrm(v_b, v_a, CMPISTRM_ARGS);
             a_in_b_mask = _mm_or_si128(a_in_b_mask, a_in_b);
            
             let in_difference = _mm_extract_epi32(a_in_b_mask, 0) ^ 0xFF;
-            let sm16 = _mm_load_si128(SHUFFLE_MASK16.as_ptr().add(in_difference as usize) as *const __m128i);
+            let sm16 = _mm_lddqu_si128(SHUFFLE_MASK16.as_ptr().add(in_difference as usize) as *const __m128i);
             let p = _mm_shuffle_epi8(v_a, sm16);
-            _mm_store_si128(out.add(count) as *mut __m128i, p);
+            _mm_storeu_si128(out.add(count) as *mut __m128i, p);
 
             count += _popcnt32(in_difference) as usize;
             i_a += SSESIZE;
@@ -447,11 +446,11 @@ pub unsafe fn and_not(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut 
 /// Returns the number of elements appended to `out`
 /// 
 /// # Safety
-/// - Assumes `out` is aligned to 32 bytes and contains enough space to hold the output
-pub unsafe fn xor(a: Aligned<&[u16], 32>, b: Aligned<&[u16], 32>, out: *mut u16) -> usize {
+/// - Assumes `out` contains enough space to hold the output
+pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Use a scalar algorithm if the length of the two vectors is too short to use simd
     if a.len() < SIZE || b.len() < SIZE {
-        return scalar::xor(*a, *b, out);
+        return scalar::xor(a, b, out);
     }
 
     let simd_len_a = a.len() / SIZE;
@@ -619,18 +618,7 @@ unsafe fn store_union(old: Register, new: Register, output: *mut u16) -> usize {
     num_values as usize
 }
 
-#[repr(align(32))]
-struct Align32<T>(T);
-
-impl<T> std::ops::Deref for Align32<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    } 
-}
-
-const UNIQUE_SHUFFLE: Align32<[u8; 4096]> = Align32([
+const UNIQUE_SHUFFLE: [u8; 4096] = [
     0x0,  0x1,  0x2,  0x3,  0x4,  0x5,  0x6,  0x7,  0x8,  0x9,  0xa,  0xb,
     0xc,  0xd,  0xe,  0xf,  0x2,  0x3,  0x4,  0x5,  0x6,  0x7,  0x8,  0x9,
     0xa,  0xb,  0xc,  0xd,  0xe,  0xf,  0xFF, 0xFF, 0x0,  0x1,  0x4,  0x5,
@@ -973,9 +961,9 @@ const UNIQUE_SHUFFLE: Align32<[u8; 4096]> = Align32([
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF
-]);
+];
 
-const SHUFFLE_MASK16: Align32<[u8; 4096]> = Align32([
+const SHUFFLE_MASK16: [u8; 4096] = [
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    0xFF, 0xFF,
@@ -1318,4 +1306,4 @@ const SHUFFLE_MASK16: Align32<[u8; 4096]> = Align32([
     6,    7,    8,    9,    10,   11,   12,   13,   14,   15,   0xFF, 0xFF,
     0,    1,    2,    3,    4,    5,    6,    7,    8,    9,    10,   11,
     12,   13,   14,   15
-]);
+];
