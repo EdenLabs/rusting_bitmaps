@@ -48,7 +48,7 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     #[cfg(any(target_feature = "sse4.2", target_feature = "avx2"))]
     { vector::and_not(a, b, out) }
     
-    #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx")))]
+    #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx2")))]
     { scalar::and_not(a, b, out) }
 }
 
@@ -61,7 +61,7 @@ pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     #[cfg(any(target_feature = "sse4.2", target_feature = "avx2"))]
     { vector::xor(a, b, out) }
     
-    #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx")))]
+    #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx2")))]
     { scalar::xor(a, b, out) }
 }
 
