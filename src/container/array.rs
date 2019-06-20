@@ -565,7 +565,7 @@ impl SetOr<RunContainer> for ArrayContainer {
     }
     
     fn inplace_or(self, other: &RunContainer) -> Container {
-        SetOr::or(other, self).into_efficient_container()       
+        SetOr::or(other, &self)
     }
 }
 
@@ -589,29 +589,32 @@ impl SetAnd<Self> for ArrayContainer {
     }
     
     fn and_cardinality(&self, other: &Self) -> usize {
-        unimplemented!()
+        array_ops::and_cardinality(&self.array, &other.array)
     }
     
     fn inplace_and(mut self, other: &Self) -> Container {
-        // Shift the elements of self over to accomodate new contents
-        let len = self.len();
-        let req = len.max(other.len());
-        let slack = req + len;
-        if self.capacity() < slack {
-            self.reserve(slack - self.capacity());
-            
-            unsafe {
+        unsafe {
+            // Shift the elements of self over to accomodate new contents
+            let len = self.len();
+            let req = len.max(other.len());
+            let slack = req + len;
+            if self.capacity() < slack {
+                self.reserve(slack - self.capacity());
+
                 let src = self.as_mut_ptr();
                 let dst = src.add(req);
-                
+
                 ptr::copy(src, dst, len);
             }
+            
+            let ptr = self.as_ptr();
+            let slice = slice::from_raw_parts(ptr, self.len());
+            
+            let card = array_ops::and(slice, &other, self.as_mut_ptr());
+            self.set_cardinality(card);
         }
         
-        let card = array_ops::and(&self, &other, self.as_mut_ptr());
-        self.set_len(card);
-        
-        Container::array(self)
+        Container::Array(self)
     }
 }
 
@@ -657,11 +660,52 @@ impl SetAnd<RunContainer> for ArrayContainer {
     }
 
     fn and_cardinality(&self, other: &RunContainer) -> usize {
-        unimplemented!()
+        if other.is_full() {
+            return self.len();
+        }
+        
+        if other.num_runs() == 0 {
+            return 0;
+        }
+        
+        unsafe {
+            let ptr_a = self.as_ptr();
+            let ptr_r = other.as_ptr();
+
+            let mut i_a = 0;
+            let mut i_r = 0;
+            let mut card = 0;
+
+            while i_a < self.len() {
+                let value = *(ptr_a.add(i_a));
+                let (mut start, mut end) = (*(ptr_r.add(i_r))).range();
+
+                while end < value {
+                    i_r += 1;
+                    if i_r == other.num_runs() {
+                        return card;
+                    }
+
+                    let se = (*(ptr_r.add(i_r))).range();
+                    start = se.0;
+                    end = se.1;
+                }
+
+                if start > value {
+                    i_a = array_ops::advance_until(&self, i_a, start);
+                }
+                else {
+                    card += 1;
+                    i_a += 1;
+                }
+            }
+        
+            card
+        }
     }
     
     fn inplace_and(self, other: &RunContainer) -> Container {
-        unimplemented!()
+        SetAnd::and(&self, other)
     }
 }
 
@@ -685,24 +729,27 @@ impl SetAndNot<Self> for ArrayContainer {
     }
     
     fn inplace_and_not(mut self, other: &Self) -> Container {
-        // Shift the elements of self over to accomodate new contents
-        let len = self.len();
-        let slack = len * 2;
-        if self.capacity() < slack {
-            self.reserve(slack - self.capacity());
-            
-            unsafe {
+        unsafe {
+            // Shift the elements of self over to accomodate new contents
+            let len = self.len();
+            let slack = len * 2;
+            if self.capacity() < slack {
+                self.reserve(slack - self.capacity());
+
                 let src = self.as_mut_ptr();
                 let dst = src.add(len);
-                
+
                 ptr::copy(src, dst, len);
             }
+            
+            let ptr = self.as_ptr();
+            let slice = slice::from_raw_parts(ptr, self.len());
+
+            let card = array_ops::and_not(slice, &other, self.as_mut_ptr());
+            self.set_cardinality(card);
         }
         
-        let card = array_ops::and_not(&self, &other, self.as_mut_ptr());
-        self.set_len(card);
-        
-        Container::array(self)
+        Container::Array(self)
     }
 }
 
@@ -724,7 +771,7 @@ impl SetAndNot<BitsetContainer> for ArrayContainer {
     }
     
     fn inplace_and_not(self, other: &BitsetContainer) -> Container {
-        SetAndNot::(&self, other)
+        SetAndNot::and_not(&self, other)
     }
 }
 
@@ -782,7 +829,7 @@ impl SetAndNot<RunContainer> for ArrayContainer {
     }
     
     fn inplace_and_not(self, other: &RunContainer) -> Container {
-        unimplemented!()
+        SetAndNot::and_not(&self, other)
     }
 }
 
@@ -805,26 +852,31 @@ impl SetXor<Self> for ArrayContainer {
         Container::Array(result)
     }
     
-    fn inplace_xor(self, other: &Self) -> Container {
-        // Shift the elements of self over to accomodate new contents
-        let len = self.len();
-        let req = len + other.len();
-        let slack = req + len;
-        if self.capacity() < slack {
-            self.reserve(slack - self.capacity());
-            
-            unsafe {
-                let src = self.as_mut_ptr();
-                let dst = src.add(req);
-                
-                ptr::copy(src, dst, len);
+    fn inplace_xor(mut self, other: &Self) -> Container {
+        unsafe {
+            // Shift the elements of self over to accomodate new contents
+            let len = self.len();
+            let req = len + other.len();
+            let slack = req + len;
+            if self.capacity() < slack {
+                self.reserve(slack - self.capacity());
+
+                unsafe {
+                    let src = self.as_mut_ptr();
+                    let dst = src.add(req);
+
+                    ptr::copy(src, dst, len);
+                }
             }
+            
+            let ptr = self.as_ptr();
+            let slice = slice::from_raw_parts(ptr, self.len());
+
+            let card = array_ops::xor(slice, &other, self.as_mut_ptr());
+            self.set_cardinality(card);
         }
         
-        let card = array_ops::xor(&self, &other, self.as_mut_ptr());
-        self.set_len(card);
-        
-        Container::array(self)
+        Container::Array(self)
     }
 }
 
@@ -867,7 +919,7 @@ impl SetXor<RunContainer> for ArrayContainer {
     }
     
     fn inplace_xor(self, other: &RunContainer) -> Container {
-        unimplemented!()
+        SetXor::xor(&self, other)
     }
 }
 
@@ -919,7 +971,38 @@ impl Subset<BitsetContainer> for ArrayContainer {
 
 impl Subset<RunContainer> for ArrayContainer {
     fn subset_of(&self, other: &RunContainer) -> bool {
-        unimplemented!()
+        if self.len() > other.len() {
+            return false;
+        }
+        
+        let ptr_a = self.as_ptr();
+        let ptr_r = other.as_ptr();
+        
+        let mut i_a = 0;
+        let mut i_r = 0;
+        
+        
+        while i_a < self.len() && i_r < other.len() {
+            let (start, end) = (*(ptr_r.add(i_r))).range();
+            let value = *(ptr_a.add(i_a));
+            
+            if value < start {
+                return false;
+            }
+            else if value > end {
+                i_r += 1;
+            }
+            else {
+                i_a += 1;
+            }
+        }
+        
+        if i_a == self.len() {
+            true
+        }
+        else {
+            false
+        }
     }
 }
 
@@ -933,10 +1016,6 @@ impl SetNot for ArrayContainer {
     }
 
     fn inplace_not(self, range: Range<u16>) -> Container {
-        let mut result = BitsetContainer::new();
-        result.set_all();
-        result.clear_list(&self);
-        
-        Container::Bitset(result)
+        SetNot::not(&self, range)
     }
 }

@@ -72,7 +72,8 @@ pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         last_store = min;
     }
 
-    let mut buffer = InlineVec::<u16, {SIZE * 2}>::new();
+    // TEMP: Temporary until const generics stops ICEing when evaluating expressions
+    let mut buffer = InlineVec::<u16, 32>::new();
     let buff_ptr = buffer.as_mut_ptr();
     let mut buffer_count = store_xor(last_store, max, buff_ptr);
     
@@ -262,6 +263,146 @@ pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     }
 
     count
+}
+
+/// Find the cardinality of the intersection between `a` and `b`
+pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
+    // Note on the implementation:
+    // This algorithm uses a SSE version as there is no functional equivalent to the `_mm_cmpistrm`
+    // intrinsic in AVX and replicating it in software is more expensive than falling back to a SSE version
+    // (crude estiamtes are around 50 cycles vs 18 for the SSE code)
+    //
+    // AVX-SSE transition penalties can be avoided by using the VEX encoded versions of the SSE instructions
+    // so as not to impact any AVX code in builds that use it. It's highly recommended to pass `-C target-feature=+avx`
+    // to the compiler to ensure that it generates `vpcmpistrm` instead of `pcmpistrm`.
+
+    use std::arch::x86_64::{
+        __m128i,
+
+        _SIDD_BIT_MASK,
+        _SIDD_CMP_EQUAL_ANY,
+        _SIDD_UWORD_OPS,
+
+        _popcnt32,
+        _mm_cmpestrm,
+        _mm_cmpistrm,
+        _mm_extract_epi32,
+        _mm_lddqu_si128
+    };
+
+    const SSESIZE: usize = 8;
+    const CMPISTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
+
+    // Both sets are empty, there's no possible intersection
+    if a.len() == 0 || b.len() == 0 {
+        return 0;
+    }
+
+    // The length of one list is shorter than the vector size, fallback to a scalar algorithm
+    if a.len() < SSESIZE || b.len() < SSESIZE {
+        return scalar::and_cardinality(a, b);
+    }
+
+    unsafe {
+        let simd_end_a = a.len() / SSESIZE;
+        let simd_end_b = b.len() / SSESIZE;
+
+        let ptr_a = a.as_ptr();
+        let ptr_b = b.as_ptr();
+
+        let mut i_a = 0;
+        let mut i_b = 0;
+
+        let mut count = 0;
+
+        let mut va;
+        let mut vb;
+
+        // Run a pass using cmpestrm while there's a zero in the block
+        // Since we're repurposing a string instruction we need to handle zeros
+        // which would otherwise be interpreted as an end-of-string and ruin the output 
+        if i_a < simd_end_a && i_b < simd_end_b  {
+            va = _mm_lddqu_si128(ptr_a.add(i_a) as *const __m128i);
+            vb = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
+
+            while *ptr_a == 0 || *ptr_b == 0 {
+                let res = _mm_cmpestrm(vb, SSESIZE as i32, va, SSESIZE as i32, CMPISTRM_ARGS);
+                let r = _mm_extract_epi32(res, 0);
+
+                count += _popcnt32(r) as usize;
+
+                let max_a = ptr_a.add(i_a + SSESIZE - 1);
+                let max_b = ptr_b.add(i_b + SSESIZE - 1);
+
+                if *max_a <= *max_b {
+                    i_a += SSESIZE;
+                    if i_a < simd_end_a {
+                        break;
+                    }
+
+                    va = _mm_lddqu_si128(ptr_a.add(i_a) as *const __m128i);
+                }
+
+                if *max_b <= *max_a {
+                    i_b += SSESIZE;
+                    if i_b < simd_end_b {
+                        break;
+                    }
+
+                    vb = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
+                }
+            }
+        }
+
+        if i_a < simd_end_a && i_b < simd_end_b  {
+            loop {
+                let res = _mm_cmpistrm(vb, va, CMPISTRM_ARGS);
+                let r = _mm_extract_epi32(res, 0);
+
+                count += _popcnt32(r) as usize;
+
+                let max_a = ptr_a.add(i_a + SSESIZE - 1);
+                let max_b = ptr_b.add(i_a + SSESIZE - 1);
+
+                if *max_a <= *max_b {
+                    i_a += SSESIZE;
+                    if i_a == simd_end_a {
+                        break;
+                    }
+
+                    va = _mm_lddqu_si128(ptr_a.add(i_a) as *const u16 as *const __m128i);
+                }
+
+                if *max_b <= *max_a {
+                    i_b += SSESIZE;
+                    if i_b == simd_end_b {
+                        break;
+                    }
+
+                    vb = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
+                }
+            }
+        }
+
+        while i_a < a.len() && i_b < b.len() {
+            let sa = ptr_a.add(i_a);
+            let sb = ptr_b.add(i_b);
+
+            if *sa < *sb {
+                i_a += 1;
+            }
+            else if *sb < *sa {
+                i_b += 1;
+            }
+            else {
+                count += 1;
+                i_a += 1;
+                i_b += 1;
+            }
+        }
+
+        count
+    }
 }
 
 /// Compute the difference between `a` and `b` and append the result into `out`
@@ -505,7 +646,7 @@ pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         last_store = min;
     }
 
-    let mut buffer = InlineVec::<u16, {SIZE * 2}>::new();
+    let mut buffer = InlineVec::<u16, 32>::new();
     let buff_ptr = buffer.as_mut_ptr();
     let mut buffer_count = store_xor(last_store, max, buff_ptr);
     

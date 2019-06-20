@@ -1,3 +1,4 @@
+#![allow(unused_variables)]
 
 //! A collection of simd utilities abstracted over the register size.
 //! 

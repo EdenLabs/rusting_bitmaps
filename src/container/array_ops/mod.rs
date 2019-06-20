@@ -4,13 +4,10 @@
 mod vector;
 mod scalar;
 
-use core::alloc::Aligned;
-
 /// Perform the set union operation between `a` and `b` outputting the results into `out`
 /// 
 /// # Safety
 ///  - Assumes that `out` has enough space to contain the full result
-///  - Assumes that `out` is aligned to 32 bytes
 pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
     #[cfg(any(target_feature = "sse4.2", target_feature = "avx2"))]
@@ -24,7 +21,6 @@ pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 /// 
 /// # Safety
 ///  - Assumes that `out` has enough space to contain the full result
-///  - Assumes that `out` is aligned to 32 bytes
 pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
     #[cfg(any(target_feature = "sse4.2", target_feature = "avx2"))]
@@ -34,11 +30,19 @@ pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     { scalar::and(a, b, out) }
 }
 
+pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
+    // Conditionally compile in/out the optimial version of the algorithm
+    #[cfg(any(target_feature = "sse4.2", target_feature = "avx2"))]
+    { vector::and_cardinality(a, b) }
+    
+    #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx2")))]
+    { scalar::and_cardinality(a, b) }
+}
+
 /// Perform the set difference operation between `a` and `b` outputting the results into `out`
 /// 
 /// # Safety
 ///  - Assumes that `out` has enough space to contain the full result
-///  - Assumes that `out` is aligned to 32 bytes
 pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
     #[cfg(any(target_feature = "sse4.2", target_feature = "avx2"))]
@@ -52,7 +56,6 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 /// 
 /// # Safety
 ///  - Assumes that `out` has enough space to contain the full result
-///  - Assumes that `out` is aligned to 32 bytes
 pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
     #[cfg(any(target_feature = "sse4.2", target_feature = "avx2"))]

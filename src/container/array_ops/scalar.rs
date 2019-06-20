@@ -146,6 +146,54 @@ pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     count
 }
 
+/// Find the cardinality of the the intersection of two slices using a scalar algorithm
+/// 
+/// # Remarks
+/// - Assumes that `a` and `b` are sorted. The result is undefined if violated
+pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
+    if a.len() == 0 || b.len() == 0 {
+        return 0;
+    }
+
+    let mut ptr_a = a.as_ptr();
+    let mut ptr_b = b.as_ptr();
+    let ptr_a_end = ptr_a.add(a.len());
+    let ptr_b_end = ptr_b.add(b.len());
+
+    let mut count = 0;
+
+    'outer: loop {
+        while *ptr_a < *ptr_b {
+            ptr_a = ptr_a.add(1);
+
+            if ptr_a >= ptr_a_end {
+                break 'outer;
+            }
+        }
+
+        while *ptr_b < *ptr_a {
+            ptr_b = ptr_b.add(1);
+
+            if ptr_b >= ptr_b_end {
+                break 'outer;
+            }
+        }
+
+        if *ptr_a == *ptr_b {
+            count += 1;
+
+            ptr_a = ptr_a.add(1);
+            ptr_b = ptr_b.add(1);
+
+            if ptr_a >= ptr_a_end || ptr_b >= ptr_b_end {
+                break;
+            }
+        }
+    }
+
+    count
+}
+
 /// Calculate the difference between two slices using a scalar algorithm and return the number of elements in the result
 ///
 /// # Safety
@@ -213,9 +261,6 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 /// # Remarks
 /// - Assumes that `a` and `b` are sorted. The result is undefined if violated
 pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
-    let mut i_a = 0;
-    let mut i_b = 0;
-
     let mut ptr_a = a.as_ptr();
     let mut ptr_b = b.as_ptr();
     let ptr_a_end = ptr_a.add(a.len());

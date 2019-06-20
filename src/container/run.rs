@@ -33,6 +33,10 @@ impl Rle16 {
     pub fn sum(&self) -> u16 {
         self.value + self.length
     }
+    
+    pub fn range(&self) -> (u16, u16) {
+        (self.value, self.value + self.length)
+    }
 }
 
 impl fmt::Debug for Rle16 {
