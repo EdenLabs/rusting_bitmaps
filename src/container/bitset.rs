@@ -249,14 +249,12 @@ impl BitsetContainer {
         return true;
     }
 
-    /// Flip all bits in the range [min-max]
-    pub fn flip_range(&mut self, min: usize, max: usize) {
-        if min == max {
-            return;
-        }
-
-        let first_word = min / 64;
-        let last_word = (max - 1) / 64;
+    /// Flip all bits in the range [min-max)
+    pub fn flip_range(&mut self, range: Range<u16>) {
+        let min = range.start as usize;
+        let max = range.end as usize;
+        let first_word = (min / 64);
+        let last_word = (max / 64);
         
         self.bitset[first_word] ^= !(!0 << (min % 64));
         
@@ -721,7 +719,7 @@ impl SetAnd<ArrayContainer> for BitsetContainer {
     }
 
     fn inplace_and(self, other: &ArrayContainer) -> Container {
-        unimplemented!()
+        SetAnd::and(other, &self)
     }
 }
 
@@ -752,16 +750,13 @@ impl SetAndNot<Self> for BitsetContainer {
 
     fn inplace_and_not(mut self, other: &Self) -> Container {
         unsafe {
-            let ptr = self.as_mut_ptr();
-            
-            // TODO: Probably want to change the signature of these functions
-            //       to avoid implying that `self` remains unchanged
-            bitset_ops::and_not(self.as_ptr(), other.as_ptr(), ptr);
+            let out = self.as_mut_ptr();
+            bitset_ops::and_not(self.as_ptr(), other.as_ptr(), out);
             
             self.invalidate_card();
         }
         
-        Container::Bitset(self)
+        self.into_efficient_container()
     }
 }
 
@@ -808,8 +803,17 @@ impl SetXor<Self> for BitsetContainer {
         }
     }
 
-    fn inplace_xor(self, other: &Self) -> Container {
-        unimplemented!()
+    fn inplace_xor(mut self, other: &Self) -> Container {
+        unsafe {
+            let out = self.as_mut_ptr();
+            bitset_ops::xor(
+                self.as_ptr(),
+                other.as_ptr(),
+                out
+            );
+
+            self.into_efficient_container()
+        }
     }
 }
 
@@ -818,8 +822,9 @@ impl SetXor<ArrayContainer> for BitsetContainer {
         SetXor::xor(other, self)
     }
 
-    fn inplace_xor(self, other: &ArrayContainer) -> Container {
-        unimplemented!()
+    fn inplace_xor(mut self, other: &ArrayContainer) -> Container {
+        self.flip_list(&other);
+        self.into_efficient_container()
     }
 }
 
@@ -828,7 +833,7 @@ impl SetXor<RunContainer> for BitsetContainer {
         SetXor::xor(other, self)
     }
 
-    fn inplace_xor(self, other: &RunContainer) -> Container {
+    fn inplace_xor(mut self, other: &RunContainer) -> Container {
         unimplemented!()
     }
 }
@@ -845,13 +850,23 @@ impl Subset<Self> for BitsetContainer {
             }
         }
 
-        return true;
+        true
     }
 }
 
 impl Subset<ArrayContainer> for BitsetContainer {
     fn subset_of(&self, other: &ArrayContainer) -> bool {
-        unimplemented!()
+        if self.cardinality() > other.cardinality() {
+            return false;
+        }
+
+        for value in self.iter() {
+            if !other.contains(value) {
+                return false;
+            }
+        }
+
+        true
     }
 }
 
@@ -868,8 +883,9 @@ impl SetNot for BitsetContainer {
         bitset.into_efficient_container()
     }
 
-    fn inplace_not(self, range: Range<u16>) -> Container {
-        unimplemented!()
+    fn inplace_not(mut self, range: Range<u16>) -> Container {
+        self.flip_range(range);
+        self.into_efficient_container()
     }
 }
 

@@ -1,3 +1,6 @@
+// Required since code is conditionally compiled out in this module
+#![allow(dead_code)]
+
 use std::mem;
 use std::ptr;
 

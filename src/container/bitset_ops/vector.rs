@@ -1,3 +1,6 @@
+// Required since code is conditionally compiled out in this module
+#![allow(dead_code)]
+
 use crate::{cfg_avx, cfg_sse, cfg_default};
 use crate::simd::*;
 use crate::container::bitset::BITSET_SIZE_IN_WORDS;

@@ -1100,7 +1100,7 @@ impl RoaringBitmap {
     /// 
     /// [`not`]: RoaringBitmap::not
     pub fn inplace_not(&mut self, range: Range<u32>) {
-        let mut high_start = (range.start >> 16) as u16;
+        let high_start = (range.start >> 16) as u16;
         let mut high_end = (range.end >> 16) as u16;
         let low_start = range.start as u16;
         let low_end = range.end as u16;
@@ -1218,7 +1218,8 @@ impl RoaringBitmap {
             .ok()
     }
     
-    fn iter(&self) -> Iter {
+    /// Get an iterator over the values of the bitmap
+    pub fn iter(&self) -> Iter {
         let iter = {
             if self.containers.len() > 0 {
                 self.containers[0].iter()

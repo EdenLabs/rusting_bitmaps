@@ -1088,13 +1088,13 @@ impl SetAndNot<BitsetContainer> for RunContainer {
 
             let mut last_pos = 0;
             for rle in self.runs.iter() {
-                let start = rle.value as usize;
-                let end = (rle.sum() + 1) as usize;
+                let start = rle.value;
+                let end = (rle.sum() + 1);
 
-                bitset.unset_range(last_pos..start);
-                bitset.flip_range(start, end);
+                bitset.unset_range(last_pos..(start as usize));
+                bitset.flip_range(start..end);
 
-                last_pos = end;
+                last_pos = end as usize;
             }
 
             bitset.unset_range(last_pos..(1 << 16));
@@ -1168,7 +1168,7 @@ impl SetXor<BitsetContainer> for RunContainer {
         let mut result = other.clone();
 
         for rle in self.runs.iter() {
-            result.flip_range(rle.value as usize, (rle.sum() + 1) as usize);
+            result.flip_range(rle.value..(rle.sum() + 1));
         }
 
         if result.cardinality() < DEFAULT_MAX_SIZE {
