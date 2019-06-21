@@ -330,19 +330,6 @@ impl ArrayContainer {
         }
     }
 
-    #[cfg(target_endian = "big")]
-    pub fn serialize<W: Write>(&self, buf: &mut BufWriter<W>) -> io::Result<usize> {
-        // Specialized version for big endian systems. Not the most optimal but it works
-        let mut count = 0;
-        let mut bytes = [0; 2];
-        for value in self.array.iter() {
-            bytes = value.to_le_bytes();
-            count += buf.write(&bytes)?;
-        }
-
-        Ok(count)
-    }
-
     /// Deserialize an array container according to the roaring format spec
     #[cfg(target_endian = "little")]
     pub fn deserialize<R: Read>(cardinality: usize, buf: &mut BufReader<R>) -> io::Result<Self> {
@@ -356,31 +343,6 @@ impl ArrayContainer {
 
             Ok(result)
         }
-    }
-
-    #[cfg(target_endian = "big")]
-    pub fn deserialize<R: Read>(cardinality: usize, buf: &mut BufReader<R>) -> io::Result<Self> {
-        let mut result = ArrayContainer::with_capacity(cardinality);
-        
-        unsafe {
-            // Load the data into the array
-            result.array.set_len(cardinality);
-
-            let mut ptr = result.as_mut_ptr() as *mut u8;
-            let slice = slice::from_raw_parts_mut(ptr, cardinality);
-            
-            buf.read_exact(&mut slice)?;
-
-            // Flip byte order for all values to match big endian encoding
-            let ptr_end = ptr.offset(cardinality * mem::size_of::<T>());
-            while ptr < ptr_end {
-                ptr::swap(ptr, ptr.add(1));
-
-                ptr = ptr.add(2);
-            }
-        }
-
-        Ok(result)
     }
 }
 

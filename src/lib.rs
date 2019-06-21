@@ -19,7 +19,6 @@
 //!  - All SIMD ops work on aligned memory instead of unaligned
 
 // TODO: Look at using Align<T, A> for enforcing alignment on the internal vecs with aligned loads and see whether that has a performance impact
-// TODO: Update api's to be idiomatic rust
 // TODO: Inline trivial fns
 // TODO: Eliminate all bounds checks in critical paths
 
