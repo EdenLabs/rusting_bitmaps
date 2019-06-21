@@ -1,7 +1,7 @@
 #![feature(const_fn)]
-#![feature(const_generics)]
 #![feature(copy_within)]
 #![feature(ptr_offset_from)]
+#![feature(slice_partition_dedup)]
 
 // TODO: Enable these lints after sketching out the api
 //#![deny(missing_docs)]

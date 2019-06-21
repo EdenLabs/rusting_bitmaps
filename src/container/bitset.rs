@@ -3,12 +3,10 @@ use std::ops::{Deref, DerefMut};
 use std::mem;
 use std::iter::Iterator;
 
-use crate::utils{self, Lazy};
+use crate::utils;
 use crate::container::*;
 
 use super::bitset_ops;
-
-// TODO: Make sure nothing in here uses cardinality directly as it's lazily evaluated
 
 /// The size of the bitset in 64bit words
 pub const BITSET_SIZE_IN_WORDS: usize = 1024;
@@ -117,7 +115,10 @@ impl BitsetContainer {
 
         self.bitset[word_index] = new_word;
 
-        self.update_card(-((word ^ new_word) >> 1) as isize);
+        let word = word as isize;
+        let new_word = new_word as isize;
+
+        self.update_card(-((word ^ new_word) >> 1));
     }
 
     /// Unset all the bits between [min-max)
@@ -136,7 +137,7 @@ impl BitsetContainer {
             self.bitset[word] = !self.bitset[word];
         }
 
-        self.bitset[last_word] ^= !0 >> ((!range.end + 1) % 64)
+        self.bitset[last_word] ^= !0 >> ((!range.end + 1) % 64);
         
         self.invalidate_card();
     }
@@ -159,7 +160,12 @@ impl BitsetContainer {
             let new_load = load & !(1 << index);
 
             self.bitset[offset as usize] = new_load;
-            self.update_card(-((load ^ new_load) >> index) as isize);
+
+            let load = load as isize;
+            let new_load = new_load as isize;
+            let index = index as isize;
+
+            self.update_card(-((load ^ new_load) >> index));
         }
     }
 
@@ -174,7 +180,7 @@ impl BitsetContainer {
 
         self.bitset[word_index] = new_word;
 
-        let increment = ((word ^ new_word) >> 1) as usize;
+        let increment = ((word ^ new_word) >> 1) as isize;
 
         self.update_card(increment);
 
@@ -198,9 +204,9 @@ impl BitsetContainer {
 
         self.bitset[word_index] = new_word;
 
-        let increment = ((word ^ new_word) >> 1) as usize;
+        let increment = ((word ^ new_word) >> 1) as isize;
 
-        self.update_card(-increment as isize);
+        self.update_card(-increment);
 
         return increment > 0;
     }
@@ -274,6 +280,9 @@ impl BitsetContainer {
                 let load = self.bitset[word_index];
                 let store = load ^ (1 << index);
 
+                let index = index as isize;
+                let load = load as isize;
+
                 self.update_card(1 - 2 * (((1 << index) & load) >> index));// Update with -1 or +1
 
                 self.bitset[word_index] = store;
@@ -307,7 +316,7 @@ impl BitsetContainer {
             Some(card) => card,
             None => {
                 let card = unsafe {
-                    bitset_ops::cardinality(&self.words)
+                    bitset_ops::cardinality(&self)
                 };
                 
                 self.cardinality.set(Some(card));
@@ -317,9 +326,9 @@ impl BitsetContainer {
         }
     }
 
+    /// Get the cardinality of a range in the bitset
     pub fn cardinality_range(&self, range: Range<u16>) -> usize {
         let start = range.start as usize;
-        let end = range.end as usize;
         let len_minus_one = range.len() - 1;
 
         let first_word = start >> 6;
@@ -379,12 +388,69 @@ impl BitsetContainer {
         None
     }
 
+    /// Find the number of values equal to or smaller than `value`
     pub fn rank(&self, value: u16) -> usize {
-        unimplemented!()
+        unsafe {
+            let ptr = self.as_ptr();
+            let end = (value / 64) as usize;
+            let mut sum = 0;
+
+            let mut i = 0;
+            while i < end {
+                sum += (*(ptr.add(i))).count_ones();
+
+                i += 1;
+            }
+
+            let rem = (value as usize) - (i * 64) + 1;
+            let rem_word = (*(ptr.add(i))) << ((64 - rem) & 63);
+            sum += rem_word.count_ones();
+
+            sum as usize
+        }
     }
 
+    /// Find the element of a given rank starting at `start_rank`. Returns None if no element is present and updates `start_rank`
     pub fn select(&self, rank: u32, start_rank: &mut u32) -> Option<u16> {
-        unimplemented!()
+        let card = self.cardinality() as u32;
+        
+        if rank >= *start_rank + card {
+            *start_rank += card;
+
+            return None;
+        }
+
+        unsafe {
+            let ptr = self.as_ptr();
+
+            let mut i = 0;
+            while i < BITSET_SIZE_IN_WORDS {
+                let mut w = *(ptr.add(1));
+                
+                let size = w.count_ones();
+                if rank <= *start_rank + size {
+                    let base = (i * 64) as u32;
+                    
+                    while w != 0 {
+                        let t = w & (!w + 1);
+                        let r = w.leading_zeros();
+
+                        if *start_rank == rank {
+                            return Some((r + base) as u16);
+                        }
+
+                        w ^= t;
+                        *start_rank += 1;
+                    }
+                }
+                else {
+                    *start_rank += size;
+                }
+
+                i += 1;
+            }
+        }
+        unreachable!()
     }
     
     /// Convert self into the most efficient representation
@@ -407,11 +473,14 @@ impl BitsetContainer {
         unsafe {
             let mut next_word = self.bitset[0];
             let mut i = 0;
+            let ptr = self.as_ptr();
 
             while i < BITSET_SIZE_IN_WORDS {
                 let word = next_word;
-                next_word = *self.bitset.get_unchecked(i);
+                next_word = *(ptr.add(i));
                 num_runs += (!word & (word << 1) + ((word >> 63) & !next_word)).count_ones();
+
+                i += 1;
             }
 
             let word = next_word;
@@ -454,7 +523,10 @@ impl BitsetContainer {
                 return;
             },
             Some(card) => {
-                self.cardinality.set(Some(card + change));
+                let card = card as isize;
+                let result = card + change;
+
+                self.cardinality.set(Some(result as usize));
             }
         }
     }
@@ -521,7 +593,9 @@ impl<'a> From<&'a RunContainer> for BitsetContainer {
             bitset.set_range(min..max);
         }
 
-        bitset.set_cardinality(cardinality);
+        // We know this is safe since we're just copying the cardinality from the other
+        // container and that all elements of a run are set
+        unsafe { bitset.set_cardinality(cardinality) };
         bitset
     }
 }
@@ -550,25 +624,31 @@ impl SetOr<Self> for BitsetContainer {
     fn or(&self, other: &Self) -> Container {
         unsafe {
             let mut result = BitsetContainer::new();
-            
-            bitset_ops::or(&self, &other, result.as_mut_ptr());
+            bitset_ops::or(
+                self.as_ptr(), 
+                other.as_ptr(), 
+                result.as_mut_ptr()
+            );
             
             result.invalidate_card();
+            
+            Container::Bitset(result)
         }
-
-        Container::Bitset(result)
     }
 
     fn inplace_or(mut self, other: &Self) -> Container {
         unsafe {
-            let ptr = self.as_mut_ptr();
-            
-            bitset_ops::or(&self, &other, ptr);
+            let out = self.as_mut_ptr();
+            bitset_ops::or(
+                self.as_ptr(), 
+                other.as_ptr(),
+                out
+            );
             
             self.invalidate_card();
+            
+            Container::Bitset(self)
         }
-
-        Container::Bitset(result)
     }
 }
 
@@ -601,11 +681,14 @@ impl SetAnd<Self> for BitsetContainer {
     fn and(&self, other: &Self) -> Container {
         unsafe {
             let mut result = BitsetContainer::new();
-            
-            bitset_ops::and(&self, &other, result.as_mut_ptr());
-        }
+            bitset_ops::and(
+                self.as_ptr(), 
+                other.as_ptr(),
+                result.as_mut_ptr()
+            );
 
-        Container::Bitset(result)
+            Container::Bitset(result)
+        }
     }
 
     fn and_cardinality(&self, other: &Self) -> usize {
@@ -613,10 +696,13 @@ impl SetAnd<Self> for BitsetContainer {
     }
 
     fn inplace_and(mut self, other: &Self) -> Container {
+        // This operation is safe since the and fn reads both values
+        // into their registers then writes the result to output and never
+        // reads again. All operations are guaranteed to only process `BITSET_SIZE_IN_WORDS` words
         unsafe {
-            let ptr = self.as_mut_ptr();
+            let out = self.as_mut_ptr();
             
-            bitset_ops::and(&self, other, ptr);
+            bitset_ops::and(self.as_ptr(), other.as_ptr(), out);
             
             self.invalidate_card();
         }
@@ -658,7 +744,7 @@ impl SetAndNot<Self> for BitsetContainer {
         unsafe {
             let mut result = BitsetContainer::new();
             
-            bitset_ops::and_not(&self, &other, bitset.as_mut_ptr());
+            bitset_ops::and_not(self.as_ptr(), other.as_ptr(), result.as_mut_ptr());
 
             result.into_efficient_container()
         }
@@ -670,7 +756,7 @@ impl SetAndNot<Self> for BitsetContainer {
             
             // TODO: Probably want to change the signature of these functions
             //       to avoid implying that `self` remains unchanged
-            bitset_ops::and_not(&self, &other, ptr);
+            bitset_ops::and_not(self.as_ptr(), other.as_ptr(), ptr);
             
             self.invalidate_card();
         }
@@ -686,7 +772,7 @@ impl SetAndNot<ArrayContainer> for BitsetContainer {
         bitset.into_efficient_container()
     }
 
-    fn inplace_and_not(self, other: &ArrayContainer) -> Container {
+    fn inplace_and_not(mut self, other: &ArrayContainer) -> Container {
         self.clear_list(&other);
         self.into_efficient_container()
     }
@@ -710,12 +796,16 @@ impl SetAndNot<RunContainer> for BitsetContainer {
 
 impl SetXor<Self> for BitsetContainer {
     fn xor(&self, other: &Self) -> Container {
-        let mut result = BitsetContainer::new();
-        let cardinality = unsafe {
-            bitset_ops::symmetric_difference(&self.bitset, &other.bitset, &mut result.bitset)
-        };
+        unsafe {
+            let mut result = BitsetContainer::new();
+            bitset_ops::xor(
+                self.as_ptr(), 
+                other.as_ptr(), 
+                result.as_mut_ptr()
+            );
 
-        result.into_efficient_container()
+            result.into_efficient_container()
+        }
     }
 
     fn inplace_xor(self, other: &Self) -> Container {

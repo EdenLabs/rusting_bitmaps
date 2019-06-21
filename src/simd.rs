@@ -1,4 +1,5 @@
 #![allow(unused_variables)]
+#![allow(dead_code)]
 
 //! A collection of simd utilities abstracted over the register size.
 //! 
@@ -97,7 +98,7 @@ macro_rules! cfg_default {
 mod consts {
     pub type Register = __m256i;
     pub const SIZE: usize = 16;
-    pub const N: i32 = 15;
+    pub const N: i32 = 15; // TODO: move these into the module that uses them
     pub const NM1: i32 = 14;
 }
 
@@ -112,9 +113,9 @@ mod consts {
 #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx2")))]
 mod consts {
     pub type Register = ();
-    pub const SIZE: usize = 0;
-    pub const N: i32 = 0;
-    pub const NM1: i32 = 0;
+    pub const SIZE: usize = 8;
+    pub const N: i32 = 1;
+    pub const NM1: i32 = 1;
 }
 
 #[inline(always)]

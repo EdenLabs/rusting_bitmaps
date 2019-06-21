@@ -379,6 +379,7 @@ impl Container {
         }
     }
 
+    /// Find the element of a given rank starting at `start_rank`. Returns None if no element is present and updates `start_rank`
     pub fn select(&self, rank: u32, start_rank: &mut u32) -> Option<u16> {
         match self {
             Container::Array(c) => c.select(rank, start_rank),

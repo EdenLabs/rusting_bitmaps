@@ -1,11 +1,22 @@
 use std::mem;
 use std::ptr;
 
-use core::vec::InlineVec;
-
+use crate::{cfg_avx, cfg_sse, cfg_default};
 use crate::simd::*;
 
 use super::scalar;
+
+cfg_avx! {
+    type Buffer = [u16; 32];
+}
+
+cfg_sse! {
+    type Buffer = [u16; 16];
+}
+
+cfg_default! {
+    type Buffer = [u16; 16];
+}
 
 /// Compute the union between `a` and `b` and append the result into `out`
 /// 
@@ -25,12 +36,12 @@ pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     let mut i_a = 0;
     let mut i_b = 0;
 
-    let mut ptr_a = a.as_ptr();
-    let mut ptr_b = b.as_ptr();
+    let ptr_a = a.as_ptr();
+    let ptr_b = b.as_ptr();
     let mut count = 0;
     
-    let mut v_a = lddqu_si(*ptr_a as *const Register);
-    let mut v_b = lddqu_si(*ptr_b as *const Register);
+    let v_a = lddqu_si(*ptr_a as *const Register);
+    let v_b = lddqu_si(*ptr_b as *const Register);
 
     i_a += 1;
     i_b += 1;
@@ -47,8 +58,8 @@ pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         let mut v = setzero_si();
 
         while i_a < simd_len_a && i_b < simd_len_b {
-            let mut s_a = *ptr_a.add(i_a * SIZE);
-            let mut s_b = *ptr_b.add(i_b * SIZE);
+            let s_a = *ptr_a.add(i_a * SIZE);
+            let s_b = *ptr_b.add(i_b * SIZE);
 
             if s_a < s_b {
                 v = lddqu_si((ptr_a as *const Register).add(i_a));
@@ -72,8 +83,7 @@ pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         last_store = min;
     }
 
-    // TEMP: Temporary until const generics stops ICEing when evaluating expressions
-    let mut buffer = InlineVec::<u16, 32>::new();
+    let mut buffer: Buffer = Default::default();
     let buff_ptr = buffer.as_mut_ptr();
     let mut buffer_count = store_xor(last_store, max, buff_ptr);
     
@@ -89,22 +99,22 @@ pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         ptr::copy_nonoverlapping(ptr_a.add(i_a * SIZE), buff_ptr.add(buffer_count), rem);
         buffer_count += rem;
 
-        buffer.set_len(buffer_count);
-        buffer.sort();
-        buffer.dedup();
+        let elements = &mut buffer[..buffer_count];
+        elements.sort();
+        let (deduped, _dups) = elements.partition_dedup();
 
-        count += scalar::and(&buffer, &b[(simd_len_b * SIZE)..b.len()], out.add(count));
+        count += scalar::and(&deduped, &b[(simd_len_b * SIZE)..b.len()], out.add(count));
     }
     else {
         let rem = b.len() - (simd_len_b * SIZE);
         ptr::copy_nonoverlapping(ptr_b.add(i_b * SIZE), buff_ptr.add(buffer_count), rem);
         buffer_count += rem;
 
-        buffer.set_len(buffer_count);
-        buffer.sort();
-        buffer.dedup();
+        let elements = &mut buffer[..buffer_count];
+        elements.sort();
+        let (deduped, _dups) = elements.partition_dedup();
 
-        count += scalar::and(&buffer, &a[(simd_len_a * SIZE)..a.len()], out.add(count));
+        count += scalar::and(&deduped, &a[(simd_len_a * SIZE)..a.len()], out.add(count));
     }
 
     count
@@ -140,7 +150,8 @@ pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         _mm_extract_epi32,
         _mm_lddqu_si128,
         _mm_shuffle_epi8,
-        _mm_storeu_si128
+        _mm_storeu_si128,
+        _mm_setzero_si128
     };
 
     const SSESIZE: usize = 8;
@@ -167,8 +178,8 @@ pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 
     let mut count = 0;
 
-    let mut va;
-    let mut vb;
+    let mut va = _mm_setzero_si128();
+    let mut vb = _mm_setzero_si128();
 
     // Run a pass using cmpestrm while there's a zero in the block
     // Since we're repurposing a string instruction we need to handle zeros
@@ -287,7 +298,8 @@ pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
         _mm_cmpestrm,
         _mm_cmpistrm,
         _mm_extract_epi32,
-        _mm_lddqu_si128
+        _mm_lddqu_si128,
+        _mm_setzero_si128
     };
 
     const SSESIZE: usize = 8;
@@ -315,8 +327,8 @@ pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
 
         let mut count = 0;
 
-        let mut va;
-        let mut vb;
+        let mut va = _mm_setzero_si128();
+        let mut vb = _mm_setzero_si128();
 
         // Run a pass using cmpestrm while there's a zero in the block
         // Since we're repurposing a string instruction we need to handle zeros
@@ -600,12 +612,12 @@ pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     let mut i_a = 0;
     let mut i_b = 0;
 
-    let mut ptr_a = a.as_ptr();
-    let mut ptr_b = b.as_ptr();
+    let ptr_a = a.as_ptr();
+    let ptr_b = b.as_ptr();
     let mut count = 0;
     
-    let mut v_a = lddqu_si(*ptr_a as *const Register);
-    let mut v_b = lddqu_si(*ptr_b as *const Register);
+    let v_a = lddqu_si(*ptr_a as *const Register);
+    let v_b = lddqu_si(*ptr_b as *const Register);
     
     i_a += 1;
     i_b += 1;
@@ -623,8 +635,8 @@ pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         let mut v = setzero_si();
 
         while i_a < simd_len_a && i_b < simd_len_b {
-            let mut s_a = *ptr_a.add(i_a * SIZE);
-            let mut s_b = *ptr_b.add(i_b * SIZE);
+            let s_a = *ptr_a.add(i_a * SIZE);
+            let s_b = *ptr_b.add(i_b * SIZE);
 
             if s_a < s_b {
                 v = lddqu_si((ptr_a as *const Register).add(i_a));
@@ -646,7 +658,7 @@ pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         last_store = min;
     }
 
-    let mut buffer = InlineVec::<u16, 32>::new();
+    let mut buffer: Buffer = Default::default();
     let buff_ptr = buffer.as_mut_ptr();
     let mut buffer_count = store_xor(last_store, max, buff_ptr);
     
@@ -670,11 +682,11 @@ pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
             count += num;
         }
         else {
-            buffer.set_len(buffer_count);
-            buffer.sort();
-            buffer.dedup();
+            let elements = &mut buffer[..buffer_count];
+            elements.sort();
+            let (deduped, _dups) = elements.partition_dedup();
 
-            count += scalar::xor(&buffer, &b[(simd_len_b * SIZE)..b.len()], out.add(count));
+            count += scalar::xor(&deduped, &b[(simd_len_b * SIZE)..b.len()], out.add(count));
         }
     }
     else {
@@ -690,11 +702,11 @@ pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
             count += num;
         }
         else {
-            buffer.set_len(buffer_count);
-            buffer.sort();
-            buffer.dedup();
+            let elements = &mut buffer[..buffer_count];
+            elements.sort();
+            let (deduped, _dups) = elements.partition_dedup();
 
-            count += scalar::xor(&buffer, &a[(simd_len_a * SIZE)..a.len()], out.add(count));
+            count += scalar::xor(&deduped, &a[(simd_len_a * SIZE)..a.len()], out.add(count));
         }
     }
 

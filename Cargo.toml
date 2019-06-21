@@ -5,4 +5,3 @@ authors = ["Techgeek1 <austin.rife@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-core = { git = "https://github.com/techgeek1/core" }

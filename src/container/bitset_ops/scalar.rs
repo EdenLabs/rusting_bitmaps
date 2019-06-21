@@ -1,16 +1,10 @@
+use crate::container::bitset::BITSET_SIZE_IN_WORDS;
 
 macro_rules! bitset_op {
     ($name: ident, $($op:tt)*) => {
-        pub unsafe fn $name(a: &[u64], b: &[u64], out: *mut u64) {
-            debug_assert!(a.len() == b.len());
-            debug_assert!(!out.is_null());
-            
-            let ptr_a = a.as_ptr();
-            let ptr_b = b.as_ptr();
-            let len = a.len();
-
-            for i in 0..len {
-                *(out.add(i)) = *(ptr_a.add(i)) $($op)* *(ptr_b.add(i));
+        pub unsafe fn $name(a: *const u64, b: *const u64, out: *mut u64) {
+            for i in 0..BITSET_SIZE_IN_WORDS {
+                *(out.add(i)) = *(a.add(i)) $($op)* *(b.add(i));
             }
         }
     };

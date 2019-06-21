@@ -7,7 +7,7 @@ macro_rules! bitset_op {
         /// 
         /// # Safety
         ///  - Assumes that `a`, `b`, and out` are `BITSET_SIZE_WORDS` long
-        pub unsafe fn $name(a: &[u64], b: &[u64], out: *mut u64) {
+        pub unsafe fn $name(a: *const u64, b: *const u64, out: *mut u64) {
             #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))]
             { return vector::$name(a, b, out); }
 

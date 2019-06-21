@@ -772,8 +772,7 @@ impl SetOr<ArrayContainer> for RunContainer {
 
 impl SetOr<BitsetContainer> for RunContainer {
     fn or(&self, other: &BitsetContainer) -> Container {
-        let mut result = BitsetContainer::new();
-        result.copy_from(other);
+        let mut result = other.clone();
 
         for rle in self.iter_runs() {
             let min = rle.value as usize;
@@ -866,10 +865,7 @@ impl SetAnd<ArrayContainer> for RunContainer {
 impl SetAnd<BitsetContainer> for RunContainer {
     fn and(&self, other: &BitsetContainer) -> Container {
         if self.is_full() {
-            let mut bitset = BitsetContainer::new();
-            bitset.copy_from(other);
-
-            return Container::Bitset(bitset);
+            return Container::Bitset(other.clone());
         }
 
         let mut card = self.cardinality();
@@ -889,8 +885,7 @@ impl SetAnd<BitsetContainer> for RunContainer {
             return Container::Array(array);
         }
         else {
-            let mut bitset = BitsetContainer::new();
-            bitset.copy_from(other);
+            let mut bitset = other.clone();
 
             // Unset all bits in between the runs
             let mut start = 0;

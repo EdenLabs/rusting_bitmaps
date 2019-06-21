@@ -18,19 +18,20 @@ const SIMD_WORDS: usize = BITSET_SIZE_IN_WORDS / WORDS_IN_REGISTER;
 
 macro_rules! bitset_op {
     ($name: ident, $intrinsic: ident) => {
-        pub unsafe fn $name(a: &[u64], b: &[u64], out: *mut u64) {
-            debug_assert!(a.len() == BITSET_SIZE_IN_WORDS);
-            debug_assert!(b.len() == BITSET_SIZE_IN_WORDS);
-
-            let mut ptr_a = a.as_ptr() as *const Register;
-            let mut ptr_b = b.as_ptr() as *const Register;
-            let mut ptr_out = out as *mut Register;
+        /// Perform the operation and put the result into `out`
+        /// 
+        /// # Safety
+        /// Assumes that all pointers have enough space for `BITSET_SIZE_IN_WORDS`
+        pub unsafe fn $name(a: *const u64, b: *const u64, out: *mut u64) {
+            let ptr_a = a as *const Register;
+            let ptr_b = b as *const Register;
+            let ptr_out = out as *mut Register;
 
             let mut i = 0;
             while i < SIMD_WORDS {
-                let mut a1 = lddqu_si(ptr_a.add(i));
-                let mut a2 = lddqu_si(ptr_b.add(i));
-                let mut ao = $intrinsic(a2, a1);
+                let a1 = lddqu_si(ptr_a.add(i));
+                let a2 = lddqu_si(ptr_b.add(i));
+                let ao = $intrinsic(a2, a1);
                 storeu_si(ptr_out.add(i), ao);
                 
                 i += 1;

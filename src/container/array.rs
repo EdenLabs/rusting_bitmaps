@@ -82,7 +82,7 @@ impl ArrayContainer {
 
     /// Copy the elements from `other` into `self`
     pub fn copy_from(&mut self, other: &ArrayContainer) {
-        self.copy_from_slice(&other.array);
+        self.array.copy_from_slice(&other.array);
     }
 
     /// Push a value onto the end of the array
@@ -210,6 +210,7 @@ impl ArrayContainer {
         self.array.len() == DEFAULT_MAX_SIZE
     }
 
+    /// Find the element of a given rank starting at `start_rank`. Returns None if no element is present and updates `start_rank`
     pub fn select(&self, rank: u32, start_rank: &mut u32) -> Option<u16> {
         let cardinality = self.cardinality() as u32;
         if *start_rank + cardinality <= rank {
@@ -320,11 +321,13 @@ impl ArrayContainer {
     /// Serialize the array into `buf` according to the roaring format spec
     #[cfg(target_endian = "little")]
     pub fn serialize<W: Write>(&self, buf: &mut BufWriter<W>) -> io::Result<usize> {
-        let ptr = self.array.as_ptr() as *const u8;
-        let num_bytes = mem::size_of::<u16>() * self.len();
-        let byte_slice = slice::from_raw_parts(ptr, num_bytes);
+        unsafe {
+            let ptr = self.array.as_ptr() as *const u8;
+            let num_bytes = mem::size_of::<u16>() * self.len();
+            let byte_slice = slice::from_raw_parts(ptr, num_bytes);
 
-        buf.write(byte_slice)
+            buf.write(byte_slice)
+        }
     }
 
     #[cfg(target_endian = "big")]
@@ -343,14 +346,16 @@ impl ArrayContainer {
     /// Deserialize an array container according to the roaring format spec
     #[cfg(target_endian = "little")]
     pub fn deserialize<R: Read>(cardinality: usize, buf: &mut BufReader<R>) -> io::Result<Self> {
-        let mut result = ArrayContainer::with_capacity(cardinality);
-        let ptr = result.as_mut_ptr() as *mut u8;
-        let num_bytes = mem::size_of::<u16>() * cardinality;
-        let bytes_slice = slice::from_raw_parts_mut(ptr, num_bytes);
+        unsafe {
+            let mut result = ArrayContainer::with_capacity(cardinality);
+            let ptr = result.as_mut_ptr() as *mut u8;
+            let num_bytes = mem::size_of::<u16>() * cardinality;
+            let bytes_slice = slice::from_raw_parts_mut(ptr, num_bytes);
 
-        buf.read_exact(bytes_slice)?;
+            buf.read_exact(bytes_slice)?;
 
-        Ok(result)
+            Ok(result)
+        }
     }
 
     #[cfg(target_endian = "big")]
@@ -861,12 +866,10 @@ impl SetXor<Self> for ArrayContainer {
             if self.capacity() < slack {
                 self.reserve(slack - self.capacity());
 
-                unsafe {
-                    let src = self.as_mut_ptr();
-                    let dst = src.add(req);
+                let src = self.as_mut_ptr();
+                let dst = src.add(req);
 
-                    ptr::copy(src, dst, len);
-                }
+                ptr::copy(src, dst, len);
             }
             
             let ptr = self.as_ptr();
@@ -882,8 +885,7 @@ impl SetXor<Self> for ArrayContainer {
 
 impl SetXor<BitsetContainer> for ArrayContainer {
     fn xor(&self, other: &BitsetContainer) -> Container {
-        let mut result = BitsetContainer::new();
-        result.copy_from(other);
+        let mut result = other.clone();
         result.flip_list(&self.array);
 
         // Array is a better representation for this set, convert
@@ -975,33 +977,34 @@ impl Subset<RunContainer> for ArrayContainer {
             return false;
         }
         
-        let ptr_a = self.as_ptr();
-        let ptr_r = other.as_ptr();
-        
-        let mut i_a = 0;
-        let mut i_r = 0;
-        
-        
-        while i_a < self.len() && i_r < other.len() {
-            let (start, end) = (*(ptr_r.add(i_r))).range();
-            let value = *(ptr_a.add(i_a));
+        unsafe {
+            let ptr_a = self.as_ptr();
+            let ptr_r = other.as_ptr();
             
-            if value < start {
-                return false;
+            let mut i_a = 0;
+            let mut i_r = 0;
+            
+            while i_a < self.len() && i_r < other.len() {
+                let (start, end) = (*(ptr_r.add(i_r))).range();
+                let value = *(ptr_a.add(i_a));
+                
+                if value < start {
+                    return false;
+                }
+                else if value > end {
+                    i_r += 1;
+                }
+                else {
+                    i_a += 1;
+                }
             }
-            else if value > end {
-                i_r += 1;
+            
+            if i_a == self.len() {
+                true
             }
             else {
-                i_a += 1;
+                false
             }
-        }
-        
-        if i_a == self.len() {
-            true
-        }
-        else {
-            false
         }
     }
 }
