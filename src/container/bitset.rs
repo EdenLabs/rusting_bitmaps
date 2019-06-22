@@ -1,5 +1,3 @@
-use std::cell::Cell;
-use std::fmt;
 use std::io::{self, Read, Write};
 use std::iter::Iterator;
 use std::mem;
@@ -21,73 +19,6 @@ use super::bitset_ops;
 
 /// The size of the bitset in 64bit words
 pub const BITSET_SIZE_IN_WORDS: usize = 1024;
-
-/// A struct for managing a lazily evaluated cardinality
-#[derive(Clone)]
-struct LazyCardinality {
-    /// The managed cardinality, set to None if dirty
-    card: Cell<Option<usize>>
-}
-
-impl LazyCardinality {
-    /// Create a new `LazyCardinality` with a specified value
-    pub fn with_value(value: usize) -> Self {
-        Self {
-            card: Cell::new(Some(value))
-        }
-    }
-
-    /// Increment the cardinality by `value` if not dirty
-    pub fn increment(&self, value: usize) {
-        match self.card.get() {
-            Some(card) => self.card.set(Some(card + value)),
-            None => return
-        }
-    }
-
-    /// Decrement the cardinality by `value` if not dirty
-    pub fn decrement(&self, value: usize) {
-        match self.card.get() {
-            Some(card) => self.card.set(Some(card - value)),
-            None => return
-        }
-    }
-
-    /// Mark the cardinality as dirty
-    #[inline]
-    pub fn invalidate(&self) {
-        self.card.set(None)
-    }
-
-    /// Get the cardinality
-    pub fn get(&self, owner: &BitsetContainer) -> usize {
-        match self.card.get() {
-            Some(card) => card,
-            None => {
-                let card = unsafe { bitset_ops::cardinality(&owner) };
-
-                self.card.set(Some(card));
-                
-                card
-            }
-        }
-    }
-
-    /// Set the cardinality to a specified value
-    #[inline]
-    pub fn set(&self, value: usize) {
-        self.card.set(Some(value))
-    }
-}
-
-impl fmt::Debug for LazyCardinality {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.card.get() {
-            Some(card) => write!(f, "{}", card),
-            None => write!(f, "-")
-        }
-    }
-}
 
 /// A bitset container used in a roaring bitmap. 
 /// 
@@ -387,7 +318,7 @@ impl BitsetContainer {
     /// The cardinality of the bitset
     #[inline]
     pub fn cardinality(&self) -> usize {
-        self.cardinality.get(self)
+        self.cardinality.get(|| bitset_ops::cardinality(&self))
     }
 
     /// Get the cardinality of a range in the bitset
@@ -793,7 +724,14 @@ impl SetAnd<ArrayContainer> for BitsetContainer {
     }
 
     fn and_cardinality(&self, other: &ArrayContainer) -> usize {
-        unimplemented!()
+        let mut count = 0;
+        for value in other.iter() {
+            if self.contains(*value) {
+                count += 1;
+            }
+        }
+
+        count
     }
 
     fn inplace_and(self, other: &ArrayContainer) -> Container {
@@ -820,8 +758,23 @@ impl SetAnd<RunContainer> for BitsetContainer {
         }
     }
 
-    fn inplace_and(self, other: &RunContainer) -> Container {
-        unimplemented!()
+    fn inplace_and(mut self, other: &RunContainer) -> Container {
+        // Other is full therefore all elements in self are present in other
+        if other.is_full() {
+            return Container::Bitset(self);
+        }
+
+        let mut start = 0;
+        for rle in other.iter_runs() {
+            let end = rle.value as usize;
+            self.unset_range(start..end);
+
+            start = end + (rle.length as usize) + 1;
+        }
+
+        self.unset_range(start..(1 << 16));
+
+        self.into_efficient_container()
     }
 }
 
@@ -871,8 +824,12 @@ impl SetAndNot<RunContainer> for BitsetContainer {
         bitset.into_efficient_container()
     }
 
-    fn inplace_and_not(self, other: &RunContainer) -> Container {
-        unimplemented!()
+    fn inplace_and_not(mut self, other: &RunContainer) -> Container {
+        for rle in other.iter_runs() {
+            self.unset_range(rle.into_range());
+        }
+
+        self.into_efficient_container()
     }
 }
 
@@ -914,8 +871,8 @@ impl SetXor<RunContainer> for BitsetContainer {
         SetXor::xor(other, self)
     }
 
-    fn inplace_xor(mut self, other: &RunContainer) -> Container {
-        unimplemented!()
+    fn inplace_xor(self, other: &RunContainer) -> Container {
+        SetXor::xor(other, &self)
     }
 }
 
@@ -953,7 +910,17 @@ impl Subset<ArrayContainer> for BitsetContainer {
 
 impl Subset<RunContainer> for BitsetContainer {
     fn subset_of(&self, other: &RunContainer) -> bool {
-        unimplemented!()
+        if self.cardinality() != other.cardinality() {
+            return false;
+        }
+
+        for value in self.iter() {
+            if !other.contains(value) {
+                return false;
+            }
+        }
+
+        true
     }
 }
 

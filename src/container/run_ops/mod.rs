@@ -5,11 +5,17 @@ use crate::container::run::Rle16;
 /// # Safety
 /// Requires that there be at least one element in the slice
 pub unsafe fn is_full(runs: &[Rle16]) -> bool {
-    runs.len() == 1 && runs.get_unchecked(0).value == 0 && runs.get_unchecked(0).length == std::u16::MAX
+    let rle = *runs.as_ptr();
+    let len = runs.len();
+
+    len == 1 && rle.value == 0 && rle.length == std::u16::MAX
 }
 
-/// Calculate the union (`A ∪ B`) of two rle slices and append the result in `out`
-pub fn union(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
+/// Calculate the union of two rle slices and append the result to `out`
+/// 
+/// # Returns
+/// The number of runs appended to `out`
+pub fn or(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
     // Append if one of the slices has no elements
     if a.len() == 0 {
         out.extend_from_slice(b);
@@ -20,7 +26,7 @@ pub fn union(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
         out.extend_from_slice(a);
         return;
     }
-    
+
     unsafe {
         // Append directly if one of the slices is full
         if is_full(a) {
@@ -38,13 +44,15 @@ pub fn union(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
         if out.capacity() < max_capacity {
             out.reserve(max_capacity - out.capacity());
         }
-        
+    
+        let ptr_a = a.as_ptr();
+        let ptr_b = b.as_ptr();
         let mut i_a = 0;
         let mut i_b = 0;
         let mut prev;
 
-        let mut run_a = *a.get_unchecked(i_a);
-        let mut run_b = *b.get_unchecked(i_b);
+        let mut run_a = *(ptr_a.add(i_a));
+        let mut run_b = *(ptr_b.add(i_b));
         
         if run_a.value <= run_b.value {
             out.push(run_a);
@@ -60,8 +68,8 @@ pub fn union(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
         }
         
         while i_a < a.len() && i_b < b.len() {
-            run_a = *a.get_unchecked(i_a);
-            run_b = *b.get_unchecked(i_b);
+            run_a = *(ptr_a.add(i_a));
+            run_b = *(ptr_b.add(i_b));
 
             let new_run = {
                 if run_a.value <= run_b.value {
@@ -78,19 +86,19 @@ pub fn union(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
         }
 
         while i_a < a.len() {
-            append(out, a.get_unchecked(i_a), &mut prev);
+            append(out, &*(ptr_a.add(i_a)), &mut prev);
             i_a += 1;
         }
 
         while i_b < b.len() {
-            append(out, b.get_unchecked(i_b), &mut prev);
+            append(out, &*(ptr_b.add(i_b)), &mut prev);
             i_b += 1;
         }
     }
 }
 
 /// Calculate the intersection (`A ∩ B`) of two r;e slices and append the result in `out`
-pub fn intersect(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
+pub fn and(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
     // Append if one of the slices has no elements
     if a.len() == 0 {
         out.extend_from_slice(b);
@@ -189,7 +197,7 @@ pub fn intersect(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
 }
 
 /// Calculate the difference (`A \ B`) between two rle slices and append the result in `out`
-pub fn difference(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
+pub fn and_not(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
     if a.len() == 0 {
         return;
     }
@@ -262,7 +270,7 @@ pub fn difference(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
 }
 
 /// Calculate the symmetric difference (`(A \ B) ∪ (B \ A)`) between two rle slices and append the result in `out`
-pub fn symmetric_difference(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
+pub fn xor(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
     if a.len() == 0 {
         out.extend_from_slice(b);
         return;

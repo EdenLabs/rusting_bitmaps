@@ -81,21 +81,27 @@ enum SearchResult {
 /// Runs are stored as `Rle16` words
 #[derive(Clone, Debug)]
 pub struct RunContainer {
-    runs: Vec<Rle16>
+    /// The rle encoded runs of this run container
+    runs: Vec<Rle16>,
+
+    /// The cardinality of this container. Lazily computed on demand if dirty
+    cardinality: LazyCardinality
 }
 
 impl RunContainer {
     /// Create a new run container
     pub fn new() -> Self {
         Self {
-            runs: Vec::new()
+            runs: Vec::new(),
+            cardinality: LazyCardinality::with_value(0)
         }
     }
     
     /// Create a new run container with a specified capacity
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            runs: Vec::with_capacity(capacity)
+            runs: Vec::with_capacity(capacity),
+            cardinality: LazyCardinality::with_value(0)
         }
     }
     
@@ -380,7 +386,17 @@ impl RunContainer {
     
     /// The cardinality of the run container
     pub fn cardinality(&self) -> usize {
-        unimplemented!()
+        self.cardinality.get(|| self.compute_cardinality())
+    }
+
+    /// Compute the cardinality of this run container
+    fn compute_cardinality(&self) -> usize {
+        let mut card = 0;
+        for rle in self.iter_runs() {
+            card += rle.length as usize;
+        }
+
+        card
     }
 
     /// The number of runs in the run container
@@ -412,13 +428,6 @@ impl RunContainer {
     /// Clear all elements from the container
     pub fn clear(&mut self) {
         self.runs.clear()
-    }
-
-    // TODO: Delete this, redundant with `clone()`
-    /// Copy another container into this one replacing it's contents
-    pub fn copy_from(&mut self, other: &RunContainer) {
-        self.runs.clear();
-        self.runs.copy_from_slice(&other.runs);
     }
 
     /// Get the minimum value of this container
@@ -764,7 +773,7 @@ impl DerefMut for RunContainer {
 impl SetOr<Self> for RunContainer {
     fn or(&self, other: &Self) -> Container {
         let mut result = RunContainer::new();
-        run_ops::union(&self.runs, &other.runs, &mut result.runs);
+        run_ops::or(&self.runs, &other.runs, &mut result.runs);
 
         Container::Run(result)
     }
@@ -852,7 +861,7 @@ impl SetOr<BitsetContainer> for RunContainer {
 impl SetAnd<Self> for RunContainer {
     fn and(&self, other: &Self) -> Container {
         let mut result = RunContainer::new();
-        run_ops::intersect(&self.runs, &other.runs, &mut result.runs);
+        run_ops::and(&self.runs, &other.runs, &mut result.runs);
 
         Container::Run(result)
     }
@@ -878,35 +887,33 @@ impl SetAnd<ArrayContainer> for RunContainer {
 
         let mut result = ArrayContainer::with_capacity(other.cardinality());
 
-        unsafe {
-            let mut rle_index = 0;
-            let mut array_index = 0;
-            let mut rle = self.runs[rle_index];
+        let mut rle_index = 0;
+        let mut array_index = 0;
+        let mut rle = self.runs[rle_index];
 
-            while array_index < other.cardinality() {
-                let value = other[array_index];
-                
-                while rle.sum() < value {
-                    rle_index += 1;
+        while array_index < other.cardinality() {
+            let value = other[array_index];
+            
+            while rle.sum() < value {
+                rle_index += 1;
 
-                    if rle_index == self.runs.len() {
-                        break;
-                    }
-
-                    rle = self.runs[rle_index];
+                if rle_index == self.runs.len() {
+                    break;
                 }
 
-                if rle.value > value {
-                    array_index = array_ops::advance_until(
-                        &other,
-                        array_index,
-                        rle.value
-                    );
-                }
-                else {
-                    result.push(value);
-                    array_index += 1;
-                }
+                rle = self.runs[rle_index];
+            }
+
+            if rle.value > value {
+                array_index = array_ops::advance_until(
+                    &other,
+                    array_index,
+                    rle.value
+                );
+            }
+            else {
+                result.push(value);
+                array_index += 1;
             }
         }
 
@@ -979,7 +986,7 @@ impl SetAnd<BitsetContainer> for RunContainer {
 impl SetAndNot<Self> for RunContainer {
     fn and_not(&self, other: &Self) -> Container {
         let mut r = RunContainer::new();
-        run_ops::difference(&self.runs, &other.runs, &mut r.runs);
+        run_ops::and_not(&self.runs, &other.runs, &mut r.runs);
 
         r.into_efficient_container()
     }
@@ -1149,7 +1156,7 @@ impl SetAndNot<BitsetContainer> for RunContainer {
             let mut last_pos = 0;
             for rle in self.runs.iter() {
                 let start = rle.value;
-                let end = (rle.sum() + 1);
+                let end = rle.sum() + 1;
 
                 bitset.unset_range(last_pos..(start as usize));
                 bitset.flip_range(start..end);
@@ -1177,33 +1184,8 @@ impl SetAndNot<BitsetContainer> for RunContainer {
 
 impl SetXor<Self> for RunContainer {
     fn xor(&self, other: &Self) -> Container {
-        let mut result = RunContainer::with_capacity(self.num_runs() + other.num_runs());
-        let mut i_0 = 0;
-        let mut i_1 = 0;
-
-        unsafe {
-            while i_0 < self.num_runs() && i_1 < other.num_runs() {
-                let r0 = self.runs.get_unchecked(i_0);
-                let r1 = other.runs.get_unchecked(i_1);
-
-                if r0.value <= r1.value {
-                    run_ops::append_exclusive(&mut result.runs, r0.value, r0.length);
-                    i_0 += 1;
-                }
-                else {
-                    run_ops::append_exclusive(&mut result.runs, r1.value, r1.length);
-                    i_1 += 1;
-                }
-            }
-        }
-
-        for run in &self.runs[i_0..self.runs.len()] {
-            run_ops::append_exclusive(&mut result.runs, run.value, run.length);
-        }
-
-        for run in &self.runs[i_1..other.runs.len()] {
-            run_ops::append_exclusive(&mut result.runs, run.value, run.length);
-        }
+        let mut result = RunContainer::new();
+        run_ops::xor(&self, &other, &mut result.runs);
 
         Container::Run(result)
     }
