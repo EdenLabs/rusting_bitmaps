@@ -10,6 +10,15 @@ use crate::container::*;
 
 use super::bitset_ops;
 
+// Notes on inplace ops:
+//
+// We cheat a bit here to get the operations inplace
+// The routine is designed in a way that it reads in the word from each 
+// bitset then outputs the result into the out set.
+// 
+// By telling it to read and write from the same set we can operate
+// inplace and still maintain vectorization
+
 /// The size of the bitset in 64bit words
 pub const BITSET_SIZE_IN_WORDS: usize = 1024;
 
@@ -686,28 +695,20 @@ impl DerefMut for BitsetContainer {
 
 impl SetOr<Self> for BitsetContainer {
     fn or(&self, other: &Self) -> Container {
-        unsafe {
-            let mut result = BitsetContainer::new();
-            bitset_ops::or(
-                self.as_ptr(), 
-                other.as_ptr(), 
-                result.as_mut_ptr()
-            );
-            
-            result.cardinality.invalidate();
-            
-            Container::Bitset(result)
-        }
+        let mut result = BitsetContainer::new();
+        bitset_ops::or(&self, &other, &mut result);
+        
+        result.cardinality.invalidate();
+        
+        Container::Bitset(result)
     }
 
     fn inplace_or(mut self, other: &Self) -> Container {
+        // See the notes in inplace operations at the top of this module for details
         unsafe {
-            let out = self.as_mut_ptr();
-            bitset_ops::or(
-                self.as_ptr(), 
-                other.as_ptr(),
-                out
-            );
+            let ptr = self.as_mut_ptr();
+            let out_slice = slice::from_raw_parts_mut(ptr, BITSET_SIZE_IN_WORDS);
+            bitset_ops::or(&self, &other, out_slice);
             
             self.cardinality.invalidate();
             
@@ -762,31 +763,22 @@ impl SetOr<RunContainer> for BitsetContainer {
 
 impl SetAnd<Self> for BitsetContainer {
     fn and(&self, other: &Self) -> Container {
-        unsafe {
-            let mut result = BitsetContainer::new();
-            bitset_ops::and(
-                self.as_ptr(), 
-                other.as_ptr(),
-                result.as_mut_ptr()
-            );
+        let mut result = BitsetContainer::new();
+        bitset_ops::and(&self, &other, &mut result);
 
-            Container::Bitset(result)
-        }
+        Container::Bitset(result)
     }
 
     fn and_cardinality(&self, other: &Self) -> usize {
-        // We know both operations are bitsets of size `BITSET_SIZE_IN_WORDS` so this is safe
-        unsafe { bitset_ops::and_cardinality(&self, &other) }
+        bitset_ops::and_cardinality(&self, &other)
     }
 
     fn inplace_and(mut self, other: &Self) -> Container {
-        // This operation is safe since the and fn reads both values
-        // into their registers then writes the result to output and never
-        // reads again. All operations are guaranteed to only process `BITSET_SIZE_IN_WORDS` words
+         // See the notes in inplace operations at the top of this module for details
         unsafe {
-            let out = self.as_mut_ptr();
-            
-            bitset_ops::and(self.as_ptr(), other.as_ptr(), out);
+            let ptr = self.as_mut_ptr();
+            let out_slice = slice::from_raw_parts_mut(ptr, BITSET_SIZE_IN_WORDS);
+            bitset_ops::and(&self, &other, out_slice);
             
             self.cardinality.invalidate();
         }
@@ -835,19 +827,18 @@ impl SetAnd<RunContainer> for BitsetContainer {
 
 impl SetAndNot<Self> for BitsetContainer {
     fn and_not(&self, other: &Self) -> Container {
-        unsafe {
-            let mut result = BitsetContainer::new();
-            
-            bitset_ops::and_not(self.as_ptr(), other.as_ptr(), result.as_mut_ptr());
+        let mut result = BitsetContainer::new();
+        bitset_ops::and_not(&self, &other, &mut result);
 
-            result.into_efficient_container()
-        }
+        result.into_efficient_container()
     }
 
     fn inplace_and_not(mut self, other: &Self) -> Container {
+         // See the notes in inplace operations at the top of this module for details
         unsafe {
-            let out = self.as_mut_ptr();
-            bitset_ops::and_not(self.as_ptr(), other.as_ptr(), out);
+            let ptr = self.as_mut_ptr();
+            let out_slice = slice::from_raw_parts_mut(ptr, BITSET_SIZE_IN_WORDS);
+            bitset_ops::and_not(&self, &other, out_slice);
             
             self.cardinality.invalidate();
         }
@@ -887,29 +878,23 @@ impl SetAndNot<RunContainer> for BitsetContainer {
 
 impl SetXor<Self> for BitsetContainer {
     fn xor(&self, other: &Self) -> Container {
-        unsafe {
-            let mut result = BitsetContainer::new();
-            bitset_ops::xor(
-                self.as_ptr(), 
-                other.as_ptr(), 
-                result.as_mut_ptr()
-            );
+        let mut result = BitsetContainer::new();
+        bitset_ops::xor(&self, &other, &mut result);
 
-            result.into_efficient_container()
-        }
+        result.into_efficient_container()
     }
 
     fn inplace_xor(mut self, other: &Self) -> Container {
+         // See the notes in inplace operations at the top of this module for details
         unsafe {
-            let out = self.as_mut_ptr();
-            bitset_ops::xor(
-                self.as_ptr(),
-                other.as_ptr(),
-                out
-            );
-
-            self.into_efficient_container()
+            let ptr = self.as_mut_ptr();
+            let out_slice = slice::from_raw_parts_mut(ptr, BITSET_SIZE_IN_WORDS);
+            bitset_ops::xor(&self, &other, out_slice);
+            
+            self.cardinality.invalidate();
         }
+
+       self.into_efficient_container()
     }
 }
 

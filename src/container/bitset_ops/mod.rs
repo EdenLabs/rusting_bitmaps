@@ -1,47 +1,46 @@
-mod scalar;
-mod vector;
-
 macro_rules! bitset_op {
-    ($name:ident) => {
+    ($name: ident, $($op:tt)*) => {
         /// Perform the operation between `a` and `b` and write the result into `out`
-        /// 
-        /// # Safety
-        ///  - Assumes that `a`, `b`, and out` are `BITSET_SIZE_WORDS` long
-        pub unsafe fn $name(a: *const u64, b: *const u64, out: *mut u64) {
-            #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))]
-            { return vector::$name(a, b, out); }
+        pub fn $name(a: &[u64], b: &[u64], out: &mut [u64]) {
+            let pass = a.iter()
+                .zip(b.iter())
+                .enumerate()
+                .map(|(i, (wa, wb))| (i, wa, wb));
 
-            #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))]
-            { return scalar::$name(a, b, out); }
+            for (i, wa, wb) in pass {
+                out[i] = wa $($op)* wb;
+            }
         }
     };
 }
 
-bitset_op!(or);
-bitset_op!(and);
-bitset_op!(and_not);
-bitset_op!(xor);
+bitset_op!(or, |);
+
+bitset_op!(and, &);
+
+bitset_op!(and_not, &!);
+
+bitset_op!(xor, ^);
 
 /// Compute the cardinality of the bitset
-/// 
-/// # Safety
-/// Assumes that `bitset` is `BITSET_SIZE_IN_WORDS` in length
-pub unsafe fn cardinality(bitset: &[u64]) -> usize {
-    #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))]
-    { return vector::cardinality(bitset); }
+pub fn cardinality(bitset: &[u64]) -> usize {
+    let mut count = 0;
+    for word in bitset.iter() {
+        count += word.count_ones();
+    }
 
-    #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))]
-    { return scalar::cardinality(bitset); }
+    count as usize
 }
 
 /// Compute the cardinality of the intersection of two bitsets
-/// 
-/// # Safety
-/// Assumes that `bitset` is `BITSET_SIZE_IN_WORDS` in length
-pub unsafe fn and_cardinality(a: &[u64], b: &[u64]) -> usize {
-    #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))]
-    { unimplemented!(); }
+pub fn and_cardinality(a: &[u64], b: &[u64]) -> usize {
+    let mut count = 0;
+    let pass = a.iter()
+        .zip(b.iter());
 
-    #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))]
-    { return scalar::and_cardinality(a, b); }
+    for (a, b) in pass {
+        count += (a & b).count_ones();
+    }
+
+    count as usize
 }
