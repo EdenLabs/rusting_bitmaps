@@ -4,71 +4,28 @@
 
 # Rusting Bitmaps
 
-><span style="color:red">WARNING: This software is incomplete and unfit for production</span>
+><span style="color:red">WARNING: This software is incomplete and unfit for use</span>
 
-Rusting Bitmaps is a native Rust port of [Roaring Bitmaps](https://roaringbitmap.org/)
+Rusting Bitmaps is a native Rust port of [Roaring Bitmaps](https://roaringbitmap.org/) based on the CRoaring implementation
 
-# Supported Platforms
- - x86_64 with optional simd support for the following instruction sets
+# Differences
+Rusting Bitmaps is a loose port of CRoaring with a few differences
+
+ - An idiomatic and safe Rust API
+ - Additional optimizations (particularly around inplace operations)
+ - Custom allocator support
+ - Copy-on-Write is unsupported
+
+# Supported & Instruction Sets
+ - x86_64
+   - Scalar
    - SSE4.2
    - AVX2
 
-# Feature Implementation Tracking
- - [ ] Roaring Array
-    - [ ] TBD
- - [ ] Roaring Bitmap
-    - [ ] TBD
- - [x] Traits
- - [x] Array Container
-    - [x] Difference
-    - [x] Equals
-    - [x] Intersect
-    - [x] Negation
-    - [x] Subset
-    - [x] Union
-    - [x] Symmetric Difference
- - [ ] Bitset Container
-    - [x] Difference
-    - [x] Equals
-    - [x] Intersect
-    - [x] Negation
-    - [x] Subset
-    - [x] Union
-    - [x] Symmetric Difference
-    - [ ] Deferred Cardinality
- - [ ] Run Container
-    - [x] Difference
-    - [x] Equals
-    - [x] Intersect
-    - [ ] Negation
-    - [x] Subset
-    - [x] Union
-    - [x] Symmetric Difference
-    - [ ] Deferred Cardinality
- - [ ] Conversions
-    - [x] Array->Bitmap
-    - [x] Array->Run
-    - [ ] Bitmap->Array
-    - [ ] Bitmap->Run
-    - [x] Run->Array
-    - [x] Run->Bitmap
- - [ ] Mixed Ops
-    - [x] Difference
-    - [ ] Equals
-    - [x] Intersect
-    - [ ] Negation
-    - [ ] Subset
-    - [x] Union
-    - [ ] Symmetric Difference
-    - [ ] Cardinality variants? (Making cardinality lazy may be the better option)
- - [ ] Serialization (serde w/ feature flag)
- - [x] Portability
- - [ ] Inplace variants for all ops
-
-# Potential ideas
- - [ ] Verify conversions
- - [ ] Unify conversions
- - [ ] See about inverted array for dense sets
+# Future Plans
+ - [ ] See about implementing an inverted array for dense sets
  - [ ] Verify code stability
- - [ ] Fuzz the code
  - [ ] Implement tests
+ - [ ] Examine the merits of and potentially implement COW
+ - [ ] Examine and potentially move to aligned simd operations once `const_generics` no longer ICEs
+ 
