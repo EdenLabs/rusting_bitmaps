@@ -1,5 +1,6 @@
 #![allow(exceeding_bitshifts)]
 
+use std::io::{self, Read, Write};
 use std::ops::{Range};
 
 use crate::container::{self, *, array_ops};
@@ -1235,6 +1236,67 @@ impl RoaringBitmap {
             iter: iter,
             index: 0
         }
+    }
+}
+
+// Serialization
+impl RoaringBitmap {
+    /// Get the serialized size of the bitmap
+    pub fn serialized_size(&self) -> usize {
+        let mut count = self.header_size();
+        
+        for c in self.containers.iter() {
+            count += c.serialized_size();
+        }
+        
+        count + 1
+    }
+    
+    /// Calculate the size of the serialized header for the bitmap
+    fn header_size(&self) -> usize {
+        let contains_run = {
+            let mut contains_run = false;
+            
+            for c in self.containers.iter() {
+                if c.is_run() {
+                    contains_run = true;
+                    break;
+                }
+            }
+            
+            contains_run
+        };
+        
+        let len = self.containers.len();
+        if contains_run {
+            if len < NO_OFFSET_THRESHOLD {
+                return 4 + (len + 7) / 8 + 4 * len;
+            }
+            else {
+                return 4 + (len + 7) / 8 + 8 * len;
+            }
+        }
+        else {
+            return 16 * len;
+        }
+    }
+    
+    /// Serialize the bitmap to a stream. The serialized bitmap is little endian encoded.
+    ///
+    /// # Returns
+    /// The number of bytes written to the buffer
+    #[cfg(target_endian = "little")]
+    pub fn serialize<W: Write>(&self, buf: &mut W) -> Result<usize> {
+        unimplemented!()
+    }
+    
+    /// Deserialize a bitmap from a stream. The stream must be little endian encoded
+    ///
+    /// # Returns
+    /// The deserialized bitmap
+    #[cfg(target_endian = "little")]
+    pub fn deserialize<R: Read>(buf: &mut R) -> Result<Self> {
+        unimplemented!()
     }
 }
 

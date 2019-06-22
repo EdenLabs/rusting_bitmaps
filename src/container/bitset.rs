@@ -1,4 +1,4 @@
-use std::io::{self, BufReader, BufWriter, Read, Write};
+use std::io::{self, Read, Write};
 use std::cell::Cell;
 use std::ops::{Deref, DerefMut};
 use std::mem;
@@ -544,7 +544,7 @@ impl BitsetContainer {
 
     /// Serialize the array into `buf` according to the roaring format spec
     #[cfg(target_endian = "little")]
-    pub fn serialize<W: Write>(&self, buf: &mut BufWriter<W>) -> io::Result<usize> {
+    pub fn serialize<W: Write>(&self, buf: &mut W) -> io::Result<usize> {
         unsafe {
             let ptr = self.bitset.as_ptr() as *const u8;
             let num_bytes = mem::size_of::<u64>() * self.bitset.len();
@@ -556,7 +556,7 @@ impl BitsetContainer {
 
     /// Deserialize an array container according to the roaring format spec
     #[cfg(target_endian = "little")]
-    pub fn deserialize<R: Read>(cardinality: usize, buf: &mut BufReader<R>) -> io::Result<Self> {
+    pub fn deserialize<R: Read>(cardinality: usize, buf: &mut R) -> io::Result<Self> {
         unsafe {
             let mut result = BitsetContainer::new();
             let ptr = result.as_mut_ptr() as *mut u8;

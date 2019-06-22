@@ -165,10 +165,15 @@ impl Container {
 
     pub fn is_none(&self) -> bool {
         match self {
-            Container::Array(_c) => false,
-            Container::Bitset(_c) => false,
-            Container::Run(_c) => false,
-            Container::None => true
+            Container::None => true,
+            _ => false
+        }
+    }
+    
+    pub fn is_run(&self) -> bool {
+        match self {
+            Container::Run(_c) => true,
+            _ => false
         }
     }
 
