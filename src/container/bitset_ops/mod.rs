@@ -33,3 +33,15 @@ pub unsafe fn cardinality(bitset: &[u64]) -> usize {
     #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))]
     { return scalar::cardinality(bitset); }
 }
+
+/// Compute the cardinality of the intersection of two bitsets
+/// 
+/// # Safety
+/// Assumes that `bitset` is `BITSET_SIZE_IN_WORDS` in length
+pub unsafe fn and_cardinality(a: &[u64], b: &[u64]) -> usize {
+    #[cfg(any(target_feature = "avx2", target_feature = "sse4.2"))]
+    { unimplemented!(); }
+
+    #[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))]
+    { return scalar::and_cardinality(a, b); }
+}

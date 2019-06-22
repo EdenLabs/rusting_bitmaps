@@ -39,8 +39,21 @@ impl Rle16 {
         self.value + self.length
     }
     
+    /// Get the start and end value of the run
     pub fn range(&self) -> (u16, u16) {
         (self.value, self.value + self.length)
+    }
+}
+
+impl IntoRange<u16> for Rle16 {
+    fn into_range(self) -> Range<u16> {
+        self.value..(self.value + self.length)
+    }
+}
+
+impl IntoRange<usize> for Rle16 {
+    fn into_range(self) -> Range<usize> {
+        (self.value as usize)..((self.value + self.length) as usize)
     }
 }
 

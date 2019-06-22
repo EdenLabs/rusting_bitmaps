@@ -26,3 +26,15 @@ pub fn cardinality(bitset: &[u64]) -> usize {
 
     count as usize
 }
+
+pub fn and_cardinality(a: &[u64], b: &[u64]) -> usize {
+    let mut count = 0;
+    let pass = a.iter()
+        .zip(b.iter());
+
+    for (a, b) in pass {
+        count += (a & b).count_ones();
+    }
+
+    count as usize
+}

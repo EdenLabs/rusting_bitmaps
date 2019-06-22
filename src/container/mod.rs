@@ -25,6 +25,12 @@ use std::iter::Iterator;
 /// Default maximum size of an array container before it is converted to another type
 pub const DEFAULT_MAX_SIZE: usize = 4096;
 
+/// Convert a range into a range of a different type
+trait IntoRange<T> {
+    /// Convert self into a range
+    fn into_range(self) -> Range<T>;
+}
+
 /// The set union operation
 trait SetOr<T> {
     fn or(&self, other: &T) -> Container;
@@ -169,6 +175,7 @@ impl Container {
         }
     }
 
+    /// Check whether the container is a `Container::None`
     pub fn is_none(&self) -> bool {
         match self {
             Container::None => true,
@@ -176,6 +183,7 @@ impl Container {
         }
     }
     
+    /// Check whether the container is a `Container::Run`
     pub fn is_run(&self) -> bool {
         match self {
             Container::Run(_c) => true,
