@@ -254,8 +254,8 @@ impl BitsetContainer {
     pub fn flip_range(&mut self, range: Range<u16>) {
         let min = range.start as usize;
         let max = range.end as usize;
-        let first_word = (min / 64);
-        let last_word = (max / 64);
+        let first_word = min / 64;
+        let last_word = max / 64;
         
         self.bitset[first_word] ^= !(!0 << (min % 64));
         
@@ -556,14 +556,16 @@ impl BitsetContainer {
 
     /// Deserialize an array container according to the roaring format spec
     #[cfg(target_endian = "little")]
-    pub fn deserialize<R: Read>(cardinality: usize, buf: &mut R) -> io::Result<Self> {
+    pub fn deserialize<R: Read>(buf: &mut R) -> io::Result<Self> {
         unsafe {
             let mut result = BitsetContainer::new();
             let ptr = result.as_mut_ptr() as *mut u8;
-            let num_bytes = mem::size_of::<u64>() * cardinality;
+            let num_bytes = mem::size_of::<u64>() * BITSET_SIZE_IN_WORDS;
             let bytes_slice = slice::from_raw_parts_mut(ptr, num_bytes);
 
-            buf.read_exact(bytes_slice)?;
+            buf.read(bytes_slice)?;
+
+            result.invalidate_card();
 
             Ok(result)
         }

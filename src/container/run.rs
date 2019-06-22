@@ -1,6 +1,7 @@
 use std::ops::{Deref, DerefMut};
 use std::iter;
 use std::mem;
+use std::ptr;
 use std::fmt;
 use std::iter::Iterator;
 use std::slice;
@@ -11,6 +12,10 @@ use crate::container::array_ops;
 use crate::container::run_ops;
 
 /// A RLE word storing the value and the length of that run
+/// 
+/// # Remarks
+/// Type is marked `[repr(c)]` to match the roaring spec
+#[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Rle16 {
     /// The value of the run
@@ -609,6 +614,48 @@ impl RunContainer {
     /// Get the size in bytes of a container with `num_runs`
     pub fn serialized_size(num_runs: usize) -> usize {
         mem::size_of::<u16>() + mem::size_of::<Rle16>() * num_runs
+    }
+
+    /// Serialize the run container into the provided writer
+    #[cfg(target_endian = "little")]
+    pub fn serialize<W: Write>(&self, buf: &mut W) -> io::Result<usize> {
+        let mut num_written = 0;
+
+        let num_runs = self.num_runs();
+        let runs = (num_runs as u16).to_le_bytes();
+        num_written += buf.write(&runs)?;
+
+        unsafe {
+            let num_bytes = num_runs * mem::size_of::<Rle16>();
+            let ptr = self.as_ptr() as *const u8;
+            let slice = slice::from_raw_parts(ptr, num_bytes);
+            num_written += buf.write(slice)?;
+        }
+
+        Ok(num_written)
+    }
+
+    /// Deserialize a run container from the provided buffer
+    #[cfg(target_endian = "little")]
+    pub fn deserialize<R: Read>(buf: &mut R) -> io::Result<Self> {
+        let num_runs = unsafe {
+            let mut read_buf: [u8; 2] = [0; 2];
+            buf.read(&mut read_buf)?;
+
+            ptr::read(read_buf.as_ptr() as *const u16) as usize
+        };
+
+        let mut result = Self::with_capacity(num_runs);
+
+        unsafe {
+            let num_bytes = num_runs * mem::size_of::<Rle16>();
+            let ptr = result.as_mut_ptr() as *mut u8;
+            let slice = slice::from_raw_parts_mut(ptr, num_bytes);
+
+            buf.read(slice)?;
+        }
+
+        Ok(result)
     }
 }
 

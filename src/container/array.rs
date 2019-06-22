@@ -29,11 +29,6 @@ impl ArrayContainer {
         }
     }
 
-    /// Convert the array container into it's raw representation
-    pub fn into_raw(self) -> Vec<u16> {
-        self.array
-    }
-
     /// The cardinality of the array container
     #[inline]
     pub fn cardinality(&self) -> usize {
@@ -259,25 +254,6 @@ impl ArrayContainer {
         }
     }
 
-    /// Return the index of the first value equal to or smaller than x
-    pub fn equal_or_larger(&self, value: u16) -> Option<usize> {
-        if self.len() == 0 {
-            return None;
-        }
-
-        match self.array.binary_search(&value) {
-            Ok(index) => Some(index),
-            Err(index) => {
-                if index == 0 {
-                    Some(index)
-                }
-                else {
-                    Some(index - 1)
-                }
-            }
-        }
-    }
-
     /// Compute the number of runs in the array
     pub fn num_runs(&self) -> usize {
         let mut num_runs = 0;
@@ -339,7 +315,7 @@ impl ArrayContainer {
             let num_bytes = mem::size_of::<u16>() * cardinality;
             let bytes_slice = slice::from_raw_parts_mut(ptr, num_bytes);
 
-            buf.read_exact(bytes_slice)?;
+            buf.read(bytes_slice)?;
 
             Ok(result)
         }

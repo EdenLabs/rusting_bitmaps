@@ -1,7 +1,8 @@
 #![allow(exceeding_bitshifts)]
 
-use std::io::{self, Read, Write};
-use std::ops::{Range};
+use std::io::{self, Read, Write, Seek, SeekFrom};
+use std::ops::Range;
+use std::ptr;
 
 use crate::container::{self, *, array_ops};
 
@@ -1240,7 +1241,26 @@ impl RoaringBitmap {
 }
 
 // Serialization
+
+/// An error that occured while deserializing a bitmap
+pub enum DeserializeError {
+    /// An invalid cookie was detected. This is likely not a bitmap. Contains the found value
+    InvalidCookie(u32),
+
+    /// An invalid container count was detected. Contains the value found
+    InvalidContainerCount(u32),
+
+    /// An IO error occured during deserialization, Contains the underlying error
+    IoError(io::Error)
+}
+
 impl RoaringBitmap {
+    // Constants denoted by the roaring bitmap format spec.
+    // See https://github.com/RoaringBitmap/RoaringFormatSpec for details
+    const SERIAL_COOKIE_NO_RUNCONTAINER: u32 = 12346;
+    const SERIAL_COOKIE: u32 = 12347;
+    const NO_OFFSET_THRESHOLD: u32 = 4;
+
     /// Get the serialized size of the bitmap
     pub fn serialized_size(&self) -> usize {
         let mut count = self.header_size();
@@ -1252,24 +1272,213 @@ impl RoaringBitmap {
         count + 1
     }
     
-    /// Calculate the size of the serialized header for the bitmap
-    fn header_size(&self) -> usize {
-        let contains_run = {
-            let mut contains_run = false;
-            
-            for c in self.containers.iter() {
+    /// Serialize the bitmap to a stream. The serialized bitmap is little endian encoded.
+    ///
+    /// # Returns
+    /// The number of bytes written to the buffer
+    #[cfg(target_endian = "little")]
+    pub fn serialize<W: Write>(&self, buf: &mut W) -> io::Result<usize> {
+        let mut header_offset;
+        let mut bytes_written = 0;
+
+        // Write the header
+        let has_run = self.has_run();
+        if has_run {
+            let len = self.containers.len();
+            let cookie = (Self::SERIAL_COOKIE | (((len - 1) << 16) as u32)).to_le_bytes();
+            bytes_written += buf.write(&cookie)?;
+
+            let s = (len + 7) / 8;
+            let mut bitmap: Vec<u8> = vec![0; s];
+
+            for (i, c) in self.containers.iter().enumerate() {
                 if c.is_run() {
-                    contains_run = true;
-                    break;
+                    bitmap[i / 8] |= 1 << (i % 8);
                 }
             }
-            
-            contains_run
+
+            bytes_written += buf.write(&bitmap)?;
+
+            if (len as u32) < Self::NO_OFFSET_THRESHOLD {
+                header_offset = 8 * len + s;
+            }
+            else {
+                header_offset = 12 * len + s;
+            }
+        }
+        else {
+            let cookie = Self::SERIAL_COOKIE_NO_RUNCONTAINER.to_le_bytes();
+            bytes_written += buf.write(&cookie)?;
+
+            let len = (self.containers.len() as u32).to_le_bytes();
+            bytes_written += buf.write(&len)?;
+
+            let len = self.containers.len();
+            header_offset = 12 * len + 4 * len;
+        }
+
+        let pass = self.keys.iter()
+            .zip(self.containers.iter());
+
+        // Write the keys and cardinality
+        for (key, c) in pass {
+            let key_bytes = key.to_le_bytes();
+            bytes_written += buf.write(&key_bytes)?;
+
+            let card = (c.cardinality() as u16).to_le_bytes();
+            bytes_written += buf.write(&card)?;
+        }
+
+        // Write the container offsets if there's no run containers or we're above the no offset threshold
+        if !has_run || (self.containers.len() as u32) >= Self::NO_OFFSET_THRESHOLD {
+            for c in self.containers.iter() {
+                let offset = (header_offset as u32).to_le_bytes();
+                bytes_written += buf.write(&offset)?;
+
+                header_offset = header_offset + c.serialized_size();
+            }
+        }
+
+        for c in self.containers.iter() {
+            bytes_written += c.serialize(buf)?;
+        }
+
+        Ok(bytes_written)
+    }
+    
+    /// Deserialize a bitmap from a stream. The stream must be little endian encoded
+    ///
+    /// # Returns
+    /// The deserialized bitmap
+    #[cfg(target_endian = "little")]
+    pub fn deserialize<R: Read + Seek>(buf: &mut R) -> Result<Self, DeserializeError> {
+        // Create a buffer to read from the stream into. We use one the size of a bitset
+        // since it's likely to contain the largest slice of data we'll ever need to read
+        // and will help cut down on the allocations done during deserialization
+        let mut read_buf: [u8; 256] = [0; 256]; // Enough for 64 32bit integers
+        let read_ptr = read_buf.as_ptr();
+
+        // Read out the cookie and number of containers
+        let (cookie, size) = {
+            // Deserialize cookie
+            buf.read(&mut read_buf[0..2])
+                .map_err(|io_err| DeserializeError::IoError(io_err))?;
+        
+            let cookie = unsafe { ptr::read(read_ptr as *const u32) };
+
+            // Validate cookie
+            if (cookie & 0xFFFF) != Self::SERIAL_COOKIE && cookie != Self::SERIAL_COOKIE_NO_RUNCONTAINER {
+                return Err(DeserializeError::InvalidCookie(cookie));
+            }
+
+            // Deserialize the size
+            let size = {
+                if cookie & 0xFFFF == Self::SERIAL_COOKIE {
+                    (cookie >> 16) + 1
+                }
+                else {
+                    buf.read(&mut read_buf[0..2])
+                        .map_err(|io_err| DeserializeError::IoError(io_err))?;
+
+                    unsafe { ptr::read(read_ptr as *const u32) }
+                }
+            };
+
+            // Validate size
+            if size > (1 << 16) {
+                return Err(DeserializeError::InvalidContainerCount(size));
+            }
+
+            (cookie, size)
         };
+
+        // Read out the bitmap if present
+        let mut bitmap: Vec<u8> = Vec::new();
+        
+        let has_run = (cookie & 0xFFFF) == Self::SERIAL_COOKIE;
+        if has_run {
+            let s = ((size + 7) / 8) as usize;
+            bitmap.reserve_exact(s);
+
+            buf.read(&mut bitmap)
+                .map_err(|io_err| DeserializeError::IoError(io_err))?;
+        }
+
+        // Setup the resulting bitmap
+        let mut result = Self::with_capacity(size as usize);
+
+        // Read out the keys into the bitmap and save the cards for later
+        let mut cards = Vec::with_capacity(size as usize);
+        for _i in 0..size {
+            buf.read(&mut read_buf[0..4])
+                .map_err(|io_err| DeserializeError::IoError(io_err))?;
+
+            let (key, card) = unsafe {
+                let ptr = read_ptr as *const u16;
+
+                (ptr::read(ptr), ptr::read(ptr.add(1)) + 1)
+            };
+
+            result.keys.push(key);
+            cards.push(card);
+        }
+
+        // Bypass the offset header if necessary. 
+        // This implementation doesn't support container streaming
+        // so the offset header is ignored
+        if !has_run || size >= Self::NO_OFFSET_THRESHOLD {
+            let offset_header = (size * 4) as i64;
+
+            buf.seek(SeekFrom::Current(offset_header))
+                .map_err(|io_err| DeserializeError::IoError(io_err))?;
+        }
+
+        // Load in the containers
+        for i in 0..(size as usize) {
+            let card = cards[i] as usize;
+            let mut is_bitset = card > DEFAULT_MAX_SIZE;
+            let mut is_run = false;
+
+            if has_run {
+                if (bitmap[i / 8] & (1 << (i % 8))) != 0 {
+                    is_bitset = false;
+                    is_run = true;
+                }
+            }
+
+            // Container is a bitset
+            if is_bitset {
+                let bitset = BitsetContainer::deserialize(buf)
+                    .map_err(|io_err| DeserializeError::IoError(io_err))?;
+
+                result.containers.push(Container::Bitset(bitset));
+            }
+            // Container is a run container
+            else if is_run {
+                let run = RunContainer::deserialize(buf)
+                    .map_err(|io_err| DeserializeError::IoError(io_err))?;
+                
+                result.containers.push(Container::Run(run));
+            }
+            // Container is an array
+            else {
+                let array = ArrayContainer::deserialize(card, buf)
+                    .map_err(|io_err| DeserializeError::IoError(io_err))?;
+
+                result.containers.push(Container::Array(array));
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Calculate the size of the serialized header for the bitmap
+    fn header_size(&self) -> usize {
+        let contains_run = self.has_run();
         
         let len = self.containers.len();
         if contains_run {
-            if len < NO_OFFSET_THRESHOLD {
+            if len < (Self::NO_OFFSET_THRESHOLD as usize) {
                 return 4 + (len + 7) / 8 + 4 * len;
             }
             else {
@@ -1280,23 +1489,16 @@ impl RoaringBitmap {
             return 16 * len;
         }
     }
-    
-    /// Serialize the bitmap to a stream. The serialized bitmap is little endian encoded.
-    ///
-    /// # Returns
-    /// The number of bytes written to the buffer
-    #[cfg(target_endian = "little")]
-    pub fn serialize<W: Write>(&self, buf: &mut W) -> Result<usize> {
-        unimplemented!()
-    }
-    
-    /// Deserialize a bitmap from a stream. The stream must be little endian encoded
-    ///
-    /// # Returns
-    /// The deserialized bitmap
-    #[cfg(target_endian = "little")]
-    pub fn deserialize<R: Read>(buf: &mut R) -> Result<Self> {
-        unimplemented!()
+
+    /// Check if the bitmap contains any run containers
+    fn has_run(&self) -> bool {
+        for c in self.containers.iter() {
+            if c.is_run() {
+                return true;
+            }
+        }
+        
+        false
     }
 }
 

@@ -9,6 +9,12 @@ pub use self::array::ArrayContainer;
 pub use self::bitset::BitsetContainer;
 pub use self::run::RunContainer;
 
+pub mod consts {
+    pub use super::DEFAULT_MAX_SIZE;
+    pub use super::bitset::BITSET_SIZE_IN_WORDS;
+}
+
+use std::io::{self, Read, Write};
 use std::mem;
 use std::ops::Range;
 use std::slice;
@@ -447,6 +453,31 @@ impl Container {
             iter: iter
         }
     }
+}
+
+impl Container {
+    /// Get the serialized size of a container
+    pub fn serialized_size(&self) -> usize {
+        match self {
+            Container::Array(c) => ArrayContainer::serialized_size(c.cardinality()),
+            Container::Bitset(_c) => BitsetContainer::serialized_size(),
+            Container::Run(c) => RunContainer::serialized_size(c.num_runs()),
+            _ => unreachable!()
+        }
+    }
+
+    /// Serialize the container into the provided writer
+    #[cfg(target_endian = "little")]
+    pub fn serialize<W: Write>(&self, buf: &mut W) -> io::Result<usize> {
+        match self {
+            Container::Array(c) => c.serialize(buf),
+            Container::Bitset(c) => c.serialize(buf),
+            Container::Run(c) => c.serialize(buf),
+            _ => unreachable!()
+        }
+    }
+
+    // NOTE: Deserialize not implemented on container as information is not easily available here
 }
 
 /// An enum containing the iterators for various containers
