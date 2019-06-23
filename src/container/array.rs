@@ -508,7 +508,7 @@ impl SetOr<RunContainer> for ArrayContainer {
     }
     
     fn inplace_or(self, other: &RunContainer) -> Container {
-        SetOr::or(other, &self)
+        unimplemented!()
     }
 }
 

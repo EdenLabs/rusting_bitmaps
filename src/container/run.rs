@@ -404,11 +404,6 @@ impl RunContainer {
         self.runs.len()
     }
 
-    /// The capacity of the container in runs
-    pub fn capacity(&self) -> usize {
-        self.runs.capacity()
-    }
-    
     /// Check whether the container is empty
     pub fn is_empty(&self) -> bool {
         self.runs.len() == 0
@@ -514,7 +509,11 @@ impl RunContainer {
     
     /// Iterate over the values of the run container
     pub fn iter(&self) -> Iter {
-        unimplemented!()
+        Iter {
+            runs: &self.runs,
+            rle_index: 0,
+            value_index: 0
+        }
     }
     
     /// Iterate over the runs of the run container
@@ -746,7 +745,36 @@ impl<'a> From<&'a mut BitsetContainer> for RunContainer {
 
 impl<'a> From<&'a BitsetContainer> for RunContainer {
     fn from(container: &'a BitsetContainer) -> Self {
-        unimplemented!()
+        let num_runs = container.num_runs();
+        let mut run_container = RunContainer::with_capacity(num_runs);
+
+        let mut prev: isize = -2;
+        let mut run_start: isize = -1;
+        let cardinality = container.cardinality();
+
+        if cardinality == 0 {
+            return run_container;
+        }
+        
+        for value in container.iter() {
+            if value != (prev + 1) as u16 {
+                if run_start != -1 {
+                    run_container.runs.push(
+                        Rle16::new(run_start as u16, prev as u16)
+                    );
+                }
+
+                run_start = value as isize;
+            }
+
+            prev = value as isize;
+        }
+
+        run_container.runs.push(
+            Rle16::new(run_start as u16, prev as u16)
+        );
+
+        run_container
     }
 }
 
@@ -778,8 +806,99 @@ impl SetOr<Self> for RunContainer {
         Container::Run(result)
     }
     
-    fn inplace_or(self, other: &Self) -> Container {
-        unimplemented!()
+    fn inplace_or(mut self, other: &Self) -> Container {
+        let is_full_self = self.is_full();
+        let is_full_other = other.is_full();
+
+        if is_full_self || is_full_other {
+            if is_full_other {
+                return Container::Run(self);
+            }
+            else {
+                if self.runs.capacity() < other.runs.len() {
+                    self.runs.reserve(other.runs.len() - self.runs.capacity());
+                }
+
+                self.runs.clear();
+                self.runs.extend_from_slice(&other.runs);
+
+                return Container::Run(self);
+            }
+        }
+
+        // Check for and reserve enough space to hold the contents
+        let max_runs = self.num_runs() + other.num_runs();
+        let req_cap = max_runs + self.num_runs();
+        if self.runs.capacity() < req_cap {
+            self.runs.reserve(req_cap - self.runs.capacity());
+        }
+
+
+        unsafe {
+            let len = self.len();
+    
+            // Move the current contents to the end of the array
+            self.runs.set_len(0);
+            
+            let src = self.runs.as_ptr();
+            let dst = src.add(max_runs) as *mut _;
+
+            ptr::copy_nonoverlapping(src, dst, len);
+
+            // At this point all the contents from 0..max_runs is random memory
+            // and the current values are at max_runs..len
+            // We set the len to 0 to make sure the vector treats it's contents like normal
+            // and to ensure than the contents at the later buffer is left alone
+            
+            let ptr_old = src.add(max_runs);
+            let mut pos_0 = 0;
+            let mut pos_1 = 0;
+
+            let mut prev_rle;
+            let rle = *(ptr_old.add(pos_0));
+            if rle.value <= other.runs[pos_1].value { 
+                self.runs[pos_0] = rle;
+                prev_rle = rle;
+
+                pos_0 += 1;
+            }
+            else {
+                self.runs[pos_0] = other.runs[pos_1];
+                prev_rle = other.runs[pos_1];
+
+                pos_1 += 1;
+            }
+
+            while pos_1 < other.num_runs() && pos_0 < len {
+                let rle = *(ptr_old.add(pos_0));
+                let new_rle;
+                if rle.value <= other.runs[pos_1].value {
+                    new_rle = rle;
+                    pos_0 += 1;
+                }
+                else {
+                    new_rle = other.runs[pos_1];
+                    pos_1 += 1;
+                }
+
+                run_ops::append(&mut self.runs, new_rle, &mut prev_rle);
+            }
+
+            while pos_1 < other.num_runs() {
+                run_ops::append(&mut self.runs, other.runs[pos_1], &mut prev_rle);
+                pos_1 += 1;
+            }
+
+            while pos_0 < len {
+                run_ops::append(&mut self.runs, *(ptr_old.add(pos_0)), &mut prev_rle);
+                pos_0 += 1;
+            }
+
+            // After this point we don't care what happens with the values.
+            // There's also no need to drop them since they're `Copy` and don't implement `Drop`
+        }
+
+        Container::Run(self)
     }
 }
 
@@ -809,7 +928,7 @@ impl SetOr<ArrayContainer> for RunContainer {
 
         while rle_index < self.runs.len() && array_index < other.cardinality() {
             if self.runs[rle_index].value < other[array_index] {
-                unsafe { run_ops::append(&mut result.runs, &self.runs[rle_index], &mut prev_rle) };// TODO: Refactor this
+                run_ops::append(&mut result.runs, self.runs[rle_index], &mut prev_rle);
                 rle_index += 1;
             }
             else {
@@ -826,7 +945,7 @@ impl SetOr<ArrayContainer> for RunContainer {
         }
         else {
             while rle_index < self.runs.len() {
-                unsafe { run_ops::append(&mut result.runs, &self.runs[rle_index], &mut prev_rle) };
+                run_ops::append(&mut result.runs, self.runs[rle_index], &mut prev_rle);
                 rle_index += 1;
             }
         }
@@ -854,16 +973,22 @@ impl SetOr<BitsetContainer> for RunContainer {
     }
 
     fn inplace_or(self, other: &BitsetContainer) -> Container {
-        unimplemented!()
+        if self.is_full() {
+            return Container::Run(self)
+        }
+
+        let mut result = other.clone();
+        for run in self.iter_runs() {
+            result.set_range(run.into_range());
+        }
+
+        Container::Bitset(result)
     }
 }
 
 impl SetAnd<Self> for RunContainer {
     fn and(&self, other: &Self) -> Container {
-        let mut result = RunContainer::new();
-        run_ops::and(&self.runs, &other.runs, &mut result.runs);
-
-        Container::Run(result)
+        unimplemented!()
     }
 
     fn and_cardinality(&self, other: &Self) -> usize {
@@ -871,7 +996,7 @@ impl SetAnd<Self> for RunContainer {
     }
 
     fn inplace_and(self, other: &Self) -> Container {
-        unimplemented!()
+        SetAnd::and(&self, other)
     }
 }
 
@@ -925,7 +1050,7 @@ impl SetAnd<ArrayContainer> for RunContainer {
     }
 
     fn inplace_and(self, other: &ArrayContainer) -> Container {
-        unimplemented!()
+        SetAnd::and(&self, other)
     }
 }
 
@@ -979,7 +1104,7 @@ impl SetAnd<BitsetContainer> for RunContainer {
     }
     
     fn inplace_and(self, other: &BitsetContainer) -> Container {
-        unimplemented!()
+        SetAnd::and(&self, other)
     }
 }
 
@@ -992,7 +1117,7 @@ impl SetAndNot<Self> for RunContainer {
     }
 
     fn inplace_and_not(self, other: &Self) -> Container {
-        unimplemented!()
+        SetAndNot::and_not(&self, other)
     }
 }
 
@@ -1128,7 +1253,7 @@ impl SetAndNot<ArrayContainer> for RunContainer {
     }
 
     fn inplace_and_not(self, other: &ArrayContainer) -> Container {
-        unimplemented!()
+        SetAndNot::and_not(&self, other)
     }
 }
 
@@ -1178,7 +1303,7 @@ impl SetAndNot<BitsetContainer> for RunContainer {
     }
 
     fn inplace_and_not(self, other: &BitsetContainer) -> Container {
-        unimplemented!()
+        SetAndNot::and_not(&self, other)
     }
 }
 
@@ -1191,17 +1316,17 @@ impl SetXor<Self> for RunContainer {
     }
 
     fn inplace_xor(self, other: &Self) -> Container {
-        unimplemented!()
+        SetXor::xor(&self, other)
     }
 }
 
 impl SetXor<ArrayContainer> for RunContainer {
     fn xor(&self, other: &ArrayContainer) -> Container {
-        SetXor::xor(other, self)
+        unimplemented!()
     }
 
     fn inplace_xor(self, other: &ArrayContainer) -> Container {
-        unimplemented!()
+        SetXor::xor(&self, other)
     }
 }
 
@@ -1222,12 +1347,16 @@ impl SetXor<BitsetContainer> for RunContainer {
     }
 
     fn inplace_xor(self, other: &BitsetContainer) -> Container {
-        unimplemented!()
+        SetXor::xor(&self, other)
     }
 }
 
 impl Subset<Self> for RunContainer {
     fn subset_of(&self, other: &Self) -> bool {
+        if self.cardinality() > other.cardinality() {
+            return false;
+        }
+
         unsafe {
             let mut i_0 = 0;
             let mut i_1 = 0;
@@ -1267,23 +1396,130 @@ impl Subset<Self> for RunContainer {
 
 impl Subset<ArrayContainer> for RunContainer {
     fn subset_of(&self, other: &ArrayContainer) -> bool {
-        unimplemented!()
+        if self.cardinality() > other.cardinality() {
+            return false;
+        }
+
+        let mut start_pos;
+        let mut stop_pos = 0;
+        for rle in self.iter_runs() {
+            let start = rle.value;
+            let stop = rle.sum();
+
+            start_pos = array_ops::advance_until(&other, stop_pos, start);
+            stop_pos = array_ops::advance_until(&other, stop_pos, stop);
+
+            if start_pos == other.cardinality() {
+                return false;
+            }
+            else {
+                let not_same = || stop_pos - start_pos != (stop - start) as usize;
+                let not_start = || other[start_pos] != start;
+                let not_stop = || other[stop_pos] != stop;
+                
+                if not_same() || not_start() || not_stop() {
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 }
 
 impl Subset<BitsetContainer> for RunContainer {
     fn subset_of(&self, other: &BitsetContainer) -> bool {
-        unimplemented!()
+        if self.cardinality() > other.cardinality() {
+            return false;
+        }
+
+        for rle in self.iter_runs() {
+            if !other.contains_range(rle.into_range()) {
+                return false;
+            }
+        }
+
+        true
     }
 }
 
 impl SetNot for RunContainer {
     fn not(&self, range: Range<u16>) -> Container {
-        unimplemented!()
+        let mut result = self.clone();
+
+        let mut k = 0;
+        while k < self.num_runs() && self.runs[k].value < range.start {
+            result.runs[k] = self.runs[k];
+
+            k += 1;
+        }
+
+        run_ops::append_exclusive(&mut result.runs, range.start, range.end - range.start - 1);
+
+        while k < self.num_runs() {
+            let rle = self.runs[k];
+
+            run_ops::append_exclusive(&mut result.runs, rle.value, rle.length);
+
+            k += 1;
+        }
+
+        result.into_efficient_container()
     }
 
-    fn inplace_not(self, range: Range<u16>) -> Container {
-        unimplemented!()
+    fn inplace_not(mut self, range: Range<u16>) -> Container {
+        // Check to see if the result will fit in the currently allocated container
+        // if not fallback to the allocating version
+        if self.runs.capacity() == self.runs.len() {
+            let last_before_range = {
+                if range.start > 0 { 
+                    self.contains(range.start - 1) 
+                }
+                else { 
+                    false
+                }
+            };
+
+            let first_in_range = self.contains(range.start);
+
+            if last_before_range == first_in_range {
+                let last_in_range = self.contains(range.end - 1);
+                let first_after_range = self.contains(range.end);
+
+                // Contents won't fit in the current allocation
+                if last_in_range == first_after_range {
+                    return SetNot::not(&self, range);
+                }
+            }
+        }
+
+        // Perform the not in place with the current allocation
+        let mut k = 0;
+        while k < self.num_runs() && self.runs[k].value < range.start {
+            k += 1;
+        }
+
+        let mut buffered = Rle16::new(0, 0);
+        let mut next = buffered;
+        if k < self.num_runs() {
+            buffered = self.runs[k];
+        }
+
+        run_ops::append_exclusive(&mut self.runs, range.start, range.end - range.start - 1);
+
+        while k < self.num_runs() {
+            if k + 1 < self.num_runs() {
+                next = self.runs[k + 1];
+            }
+
+            run_ops::append_exclusive(&mut self.runs, buffered.value, buffered.length);
+
+            buffered = next;
+            k += 1;
+        }
+
+        self.runs.truncate(k);
+        self.into_efficient_container()
     }
 }
 
@@ -1307,15 +1543,15 @@ impl<'a> Iterator for Iter<'a> {
             if self.rle_index < self.runs.len() {
                 let rle = self.runs.get_unchecked(self.rle_index);
                 
-                if self.value_index < *rle.length {
+                if self.value_index < rle.length {
                     // Extract value
-                    let value = *rle.start + self.value_index; // TODO: Double check that this isn't an off by one error
+                    let value = rle.value + self.value_index; // TODO: Double check that this isn't an off by one error
 
                     // Bump index
                     self.value_index += 1;
 
                     // Increment run if necessary
-                    if self.value_index >= *rle.length {
+                    if self.value_index >= rle.length {
                         self.rle_index += 1;
                     }
 

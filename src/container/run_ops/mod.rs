@@ -82,16 +82,16 @@ pub fn or(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
                 }
             };
 
-            append(out, &new_run, &mut prev);
+            append(out, new_run, &mut prev);
         }
 
         while i_a < a.len() {
-            append(out, &*(ptr_a.add(i_a)), &mut prev);
+            append(out, *(ptr_a.add(i_a)), &mut prev);
             i_a += 1;
         }
 
         while i_b < b.len() {
-            append(out, &*(ptr_b.add(i_b)), &mut prev);
+            append(out, *(ptr_b.add(i_b)), &mut prev);
             i_b += 1;
         }
     }
@@ -326,14 +326,14 @@ pub fn xor(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
 /// 
 /// # Notes
 /// Expects `runs` to have at least 1 element and `previous_run` to point to that last element. 
-pub unsafe fn append(runs: &mut Vec<Rle16>, run: &Rle16, previous_run: &mut Rle16) {
+pub fn append(runs: &mut Vec<Rle16>, run: Rle16, previous_run: &mut Rle16) {
     let prev_end = previous_run.value + previous_run.length;
 
     // Add a new run
     if run.value > prev_end + 1 {
-        runs.push(*run);
+        runs.push(run);
 
-        *previous_run = *run;
+        *previous_run = run;
     }
     // Merge runs
     else {
@@ -342,7 +342,7 @@ pub unsafe fn append(runs: &mut Vec<Rle16>, run: &Rle16, previous_run: &mut Rle1
             previous_run.length = new_end - 1 - previous_run.value;
 
             let len = runs.len();
-            *runs.get_unchecked_mut(len - 1) = *previous_run;
+            runs[len - 1] = *previous_run;
         }
     }
 }
