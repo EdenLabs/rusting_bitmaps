@@ -16,7 +16,7 @@
 //! - Copy-on-Write is unsupported
 
 // TODO: Inline trivial fns
-// TODO: Eliminate all bounds checks in critical paths
+// TODO: Reduce unsafe code usage without impacting performance much
 
 mod container;
 mod roaring;

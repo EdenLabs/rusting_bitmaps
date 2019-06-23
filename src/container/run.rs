@@ -629,6 +629,14 @@ impl RunContainer {
 
         return self.runs.len() - low;
     }
+
+    /// Ensure that there is enough room for at least `capacity` elements
+    #[inline]
+    fn ensure_fit(&mut self, capacity: usize) {
+        if self.runs.capacity() > capacity {
+            self.runs.reserve(capacity - self.runs.capacity());
+        }
+    }
 }
 
 impl RunContainer {
@@ -815,9 +823,7 @@ impl SetOr<Self> for RunContainer {
                 return Container::Run(self);
             }
             else {
-                if self.runs.capacity() < other.runs.len() {
-                    self.runs.reserve(other.runs.len() - self.runs.capacity());
-                }
+                self.ensure_fit(other.runs.len());
 
                 self.runs.clear();
                 self.runs.extend_from_slice(&other.runs);
@@ -953,8 +959,77 @@ impl SetOr<ArrayContainer> for RunContainer {
         Container::Run(result)
     }
 
-    fn inplace_or(self, other: &ArrayContainer) -> Container {
-        unimplemented!()
+    fn inplace_or(mut self, other: &ArrayContainer) -> Container {
+        if self.is_full() {
+            return Container::Run(self);
+        }
+
+        // Make sure there's enough room to fit the new runs
+        let max_runs = other.cardinality() + self.num_runs();
+        let req_cap = max_runs + self.num_runs();
+        self.ensure_fit(req_cap);
+
+        unsafe {
+            // Move the original contents of the run to the end of the buffer
+            let len = self.runs.len();
+            let src = self.as_ptr();
+            let dst = (src as *mut Rle16).add(max_runs);
+
+            ptr::copy_nonoverlapping(src, dst, len);
+
+            self.runs.truncate(0);
+
+            let ptr_old = dst as *const Rle16;
+            
+            let mut pos_run = 0;
+            let mut pos_arr = 0;
+            let mut prev_rle;
+
+            let rle = *(ptr_old.add(pos_run));
+            let val = other[pos_arr];
+            if rle.value < val {
+                self.runs.push(rle);
+                
+                prev_rle = rle;
+                pos_run += 1;
+            }
+            else {
+                let new_rle = Rle16::new(val, 0);
+                self.runs.push(new_rle);
+
+                prev_rle = new_rle;
+                pos_arr += 1;
+            }
+
+            while pos_run < len && pos_arr < other.len() {
+                let rle = *(ptr_old.add(pos_run));
+                let val = other[pos_arr];
+
+                if rle.value < val {
+                    run_ops::append(&mut self.runs, rle, &mut prev_rle);
+                    pos_run += 1;
+                }
+                else {
+                    run_ops::append_value(&mut self.runs, val, &mut prev_rle);
+                    pos_arr += 1;
+                }
+            }
+
+            if pos_arr < other.len() {
+                while pos_arr < other.len() {
+                    run_ops::append_value(&mut self.runs, other[pos_arr], &mut prev_rle);
+                    pos_arr += 1;
+                }
+            }
+            else {
+                while pos_run < len {
+                    run_ops::append(&mut self.runs, *(ptr_old.add(pos_run)), &prev_rle);
+                    pos_run += 1;
+                }
+            }
+        }
+
+        Container::Run(self)
     }
 }
 
@@ -988,6 +1063,18 @@ impl SetOr<BitsetContainer> for RunContainer {
 
 impl SetAnd<Self> for RunContainer {
     fn and(&self, other: &Self) -> Container {
+        let if0 = self.is_full();
+        let if1 = other.is_full();
+        if if0 || if1 {
+            if if0 {
+                return Container::Run(other.clone());
+            }
+            
+            if if1 {
+                return Container::Run(self.clone());
+            }
+        }
+
         unimplemented!()
     }
 
