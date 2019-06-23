@@ -508,7 +508,7 @@ impl SetOr<RunContainer> for ArrayContainer {
     }
     
     fn inplace_or(self, other: &RunContainer) -> Container {
-        unimplemented!()
+        SetOr::or(&self, other)
     }
 }
 
@@ -752,7 +752,7 @@ impl SetAndNot<RunContainer> for ArrayContainer {
 
                         let rle = runs.get_unchecked(which_run);
                         run_start = rle.value as usize;
-                        run_end = rle.sum() as usize;
+                        run_end = rle.end() as usize;
                     }
                     else {
                         run_start = (1 << 16) + 1;

@@ -1,5 +1,7 @@
 use crate::container::run::Rle16;
 
+// TODO: Move these into the trait impls, there's no point in keeping them here
+
 /// Check if the container is full
 /// 
 /// # Safety
@@ -93,105 +95,6 @@ pub fn or(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
         while i_b < b.len() {
             append(out, *(ptr_b.add(i_b)), &mut prev);
             i_b += 1;
-        }
-    }
-}
-
-/// Calculate the intersection (`A ∩ B`) of two r;e slices and append the result in `out`
-pub fn and(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
-    // Append if one of the slices has no elements
-    if a.len() == 0 {
-        out.extend_from_slice(b);
-        return;
-    }
-    
-    if b.len() == 0 {
-        out.extend_from_slice(a);
-        return;
-    }
-
-    unsafe {
-        // Append directly if one of the slices is full
-        if is_full(a) {
-            out.extend_from_slice(a);
-            return;
-        }
-        
-        if is_full(b) {
-            out.extend_from_slice(b);
-            return;
-        }
-
-        let max_capacity = a.len() + b.len();
-        if out.capacity() < max_capacity {
-            out.reserve(max_capacity - out.capacity());
-        }
-
-        let mut i_a = 0;
-        let mut i_b = 0;
-        let mut start_a = a.get_unchecked(i_a).value;
-        let mut start_b = b.get_unchecked(i_b).value;
-        let mut end_a = start_a + a.get_unchecked(i_a).length + 1;
-        let mut end_b = start_b + b.get_unchecked(i_b).length + 1;
-
-        while i_a < a.len() && i_b < b.len() {
-            if end_a <= start_b {
-                i_a += 1;
-
-                if i_a < a.len() {
-                    start_a = a.get_unchecked(i_a).value;
-                    end_a = start_a + a.get_unchecked(i_a).length + 1;
-                }
-            }
-            else if end_b < start_a {
-                i_b += 1;
-                
-                if i_b < b.len() {
-                    start_b = b.get_unchecked(i_b).value;
-                    end_b = start_b + b.get_unchecked(i_b).length + 1;
-                }
-            }
-            else {
-                let latest_start = start_a.max(start_b);
-                
-                let earliest_end;
-                if end_a == end_b {
-                    earliest_end = end_a;
-                    i_a += 1;
-                    i_b += 1;
-
-                    if i_a < a.len() {
-                        start_a = a.get_unchecked(i_a).value;
-                        end_a = start_a + a.get_unchecked(i_a).length + 1;
-                    }
-
-                    if i_b < b.len() {
-                        start_b = b.get_unchecked(i_b).value;
-                        end_b = start_b + b.get_unchecked(i_b).length + 1;
-                    }
-                }
-                else if end_a < end_b {
-                    earliest_end = end_a;
-                    i_a += 1;
-
-                    if i_a < a.len() {
-                        start_a = a.get_unchecked(i_a).value;
-                        end_a = start_a + a.get_unchecked(i_a).length + 1;
-                    }
-                }
-                else {
-                    earliest_end = end_b;
-                    i_b += 1;
-
-                    if i_b < b.len() {
-                        start_b = b.get_unchecked(i_b).value;
-                        end_b = start_b + b.get_unchecked(i_b).length + 1;
-                    }
-                }
-
-                let run = Rle16::new(latest_start, earliest_end - latest_start - 1);
-                out.push(run);
-            }
         }
     }
 }
@@ -397,8 +300,8 @@ pub fn append_exclusive(runs: &mut Vec<Rle16>, start: u16, length: u16) {
 }
 
 pub fn append_value(runs: &mut Vec<Rle16>, value: u16, prev_rle: &mut Rle16) {
-    let prev_end = prev_rle.sum();
-    if value > prev_end + 1 {
+    let prev_end = prev_rle.end();
+    if value > prev_end  {
         let rle = Rle16::new(value, 0);
         runs.push(rle);
 
@@ -406,7 +309,7 @@ pub fn append_value(runs: &mut Vec<Rle16>, value: u16, prev_rle: &mut Rle16) {
         return;
     }
     
-    if value == prev_end * 1 {
+    if value == prev_end {
         prev_rle.length += 1;
 
         let len = runs.len();

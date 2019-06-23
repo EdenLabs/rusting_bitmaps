@@ -44,6 +44,8 @@ impl BitsetContainer {
         }
     }
 
+    // TODO: See if this is still necessary
+
     /// Set the bit at `index`
     pub fn set(&mut self, index: usize) {
         debug_assert!(index < BITSET_SIZE_IN_WORDS * 64);
@@ -146,15 +148,6 @@ impl BitsetContainer {
         self.bitset[last_word] ^= !0 >> ((!range.end + 1) % 64);
         
         self.cardinality.invalidate();
-    }
-
-    /// Clear all bits in the bitset
-    pub fn clear(&mut self) {
-        for word in &mut *self.bitset {
-            *word = 0;
-        }
-        
-        self.cardinality.set(0);
     }
 
     /// Clear the elements specified in the list from the bitset
@@ -818,7 +811,7 @@ impl SetAndNot<RunContainer> for BitsetContainer {
         let mut bitset = self.clone();
 
         for run in other.iter_runs() {
-            bitset.unset_range((run.value as usize)..((run.sum() + 1) as usize));
+            bitset.unset_range((run.value as usize)..((run.end()) as usize));
         }
 
         bitset.into_efficient_container()
