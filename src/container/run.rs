@@ -1289,13 +1289,45 @@ impl SetNot for RunContainer {
 
 /// An iterator over the values of a run structure
 pub struct Iter<'a> {
-    run: &'a RunContainer
+    /// The rle encoded words we're reading from
+    runs: &'a [Rle16],
+
+    /// The index of the rle word we're reading
+    rle_index: usize,
+
+    /// The index of the last read value in the rle
+    value_index: u16
 }
 
 impl<'a> Iterator for Iter<'a> {
     type Item = u16;
     
     fn next(&mut self) -> Option<Self::Item> {
-        unimplemented!()
+        unsafe {
+            if self.rle_index < self.runs.len() {
+                let rle = self.runs.get_unchecked(self.rle_index);
+                
+                if self.value_index < *rle.length {
+                    // Extract value
+                    let value = *rle.start + self.value_index; // TODO: Double check that this isn't an off by one error
+
+                    // Bump index
+                    self.value_index += 1;
+
+                    // Increment run if necessary
+                    if self.value_index >= *rle.length {
+                        self.rle_index += 1;
+                    }
+
+                    Some(value)
+                }
+                else {
+                    None
+                }
+            }
+            else {
+                None
+            }
+        }
     }
 }
