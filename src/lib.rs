@@ -34,9 +34,8 @@ macro_rules! unlikely {
 mod container;
 mod roaring;
 mod simd;
-mod utils;
 
-//#[cfg(test)]
-//mod test;
+#[cfg(test)]
+mod test;
 
 pub use roaring::RoaringBitmap;

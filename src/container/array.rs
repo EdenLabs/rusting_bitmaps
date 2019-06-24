@@ -4,7 +4,6 @@ use std::ptr;
 use std::ops::{Deref, DerefMut, Range};
 use std::slice::{self, Iter};
 
-use crate::utils::mem_equals;
 use crate::container::*;
 use crate::container::array_ops;
 
@@ -338,11 +337,11 @@ impl DerefMut for ArrayContainer {
 
 impl PartialEq for ArrayContainer {
     fn eq(&self, other: &Self) -> bool {
-        mem_equals(self, other)
+        self == other
     }
 
     fn ne(&self, other: &Self) -> bool {
-        !mem_equals(self, other)
+        self != other
     }
 }
 

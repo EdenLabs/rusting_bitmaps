@@ -83,6 +83,13 @@ struct LazyCardinality {
 }
 
 impl LazyCardinality {
+    /// Create a new `LazyCardinality` with no value
+    pub fn none() -> Self {
+        Self {
+            card: Cell::new(None)
+        }
+    }
+
     /// Create a new `LazyCardinality` with a specified value
     pub fn with_value(value: usize) -> Self {
         Self {

@@ -159,3 +159,106 @@ pub fn exponential_search<T>(slice: &[T], size: usize, key: T) -> Result<usize, 
 
     return slice[(bound / 2)..((bound + 1).min(size))].binary_search(&key);
 }
+
+#[cfg(test)]
+mod test {
+    use crate::test::*;
+    use super::scalar;
+    use super::vector;
+
+    /// Create an array container from the given data set
+    fn make_container(data: &[u16]) -> Vec<u16> {
+        let mut container = Vec::with_capacity(data.len());
+        container.extend_from_slice(data);
+
+        container
+    }
+
+    fn run_test<F>(data: &[u16], f: F) 
+        where F: Fn(&[u16], &[u16], *mut u16) -> usize 
+    {
+        let a = make_container(&DATA_A);
+        let b = make_container(&DATA_B);
+        let mut result = Vec::new();
+
+        unsafe {
+            result.reserve(a.len() + b.len());
+            let card = (f)(&a, &b, result.as_mut_ptr());
+            result.set_len(card);
+        }
+
+        let len0 = result.len();
+        let len1 = data.len();
+        assert_eq!(
+            len0, 
+            len1, 
+            "\n\nUnequal cardinality. found {}, expected {}\nResult: {:#?}\nExpected: {:#?}\n\n", 
+            len0, 
+            len1,
+            &result,
+            data
+        );
+
+        let pass = result.iter()
+            .zip(data.iter());
+        
+        let (failed, found, expected) = {
+            let mut out_found = 0;
+            let mut out_expected = 0;
+
+            let mut failed = false;
+            for (found, expected) in pass {
+                if found != expected {
+                    failed = true;
+                    out_found = *found;
+                    out_expected = *expected;
+                    break;
+                }
+            }
+
+            (failed, out_found, out_expected)
+        };
+
+        assert!(!failed, "Sets are not equivalent. Found {}, expected {}", found, expected);
+    }
+
+    #[test]
+    fn or_scalar() {
+        run_test(&DATA_OR, |a, b, out| unsafe { scalar::or(a, b, out) } );
+    }
+
+    #[test]
+    fn and_scalar() {
+        run_test(&DATA_AND, |a, b, out| unsafe { scalar::and(a, b, out) } );
+    }
+
+    #[test]
+    fn and_not_scalar() {
+        run_test(&DATA_AND_NOT, |a, b, out| unsafe { scalar::and_not(a, b, out) } );
+    }
+
+    #[test]
+    fn xor_scalar() {
+        run_test(&DATA_XOR, |a, b, out| unsafe { scalar::xor(a, b, out) } );
+    }
+
+    #[test]
+    fn or_vector() {
+        run_test(&DATA_OR, |a, b, out| unsafe { vector::or(a, b, out) } );
+    }
+
+    #[test]
+    fn and_vector() {
+        run_test(&DATA_AND, |a, b, out| unsafe { vector::and(a, b, out) } );
+    }
+
+    #[test]
+    fn and_not_vector() {
+        run_test(&DATA_AND_NOT, |a, b, out| unsafe { vector::and_not(a, b, out) } );
+    }
+
+    #[test]
+    fn xor_vector() {
+        run_test(&DATA_XOR, |a, b, out| unsafe { vector::xor(a, b, out) } );
+    }
+}

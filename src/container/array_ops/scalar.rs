@@ -221,23 +221,17 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     let mut count = 0;
 
     while ptr_a < ptr_a_end && ptr_b < ptr_b_end {
+        //println!("a: {:?}, b: {:?}", *ptr_a, *ptr_b);
+
         if *ptr_a < *ptr_b {
             *(out.add(count)) = *ptr_a;
             count += 1;
 
             ptr_a = ptr_a.add(1);
-
-            if ptr_a >= ptr_a_end {
-                break;
-            }
         }
         else if *ptr_a == *ptr_b {
             ptr_a = ptr_a.add(1);
             ptr_b = ptr_b.add(1);
-            
-            if ptr_a >= ptr_a_end {
-                break;
-            }
         }
         else {
             ptr_b = ptr_b.add(1);   

@@ -1,4 +1,4 @@
 paths = ["../eden-engine/core/"]
 
 [build]
-rustflags = ["target-feature=+avx2+avx+sse4.2+sse4.1+sse3+sse2+sse"]
+rustflags = ["-C target-cpu=native"]

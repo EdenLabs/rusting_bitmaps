@@ -3,7 +3,6 @@ use std::iter::Iterator;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 
-use crate::utils;
 use crate::container::*;
 
 use super::bitset_ops;
@@ -33,14 +32,9 @@ pub struct BitsetContainer {
 impl BitsetContainer {
     // Create a new bitset
     pub fn new() -> Self {
-        let mut bitset = Vec::with_capacity(BITSET_SIZE_IN_WORDS);
-        for _i in 0..BITSET_SIZE_IN_WORDS {
-            bitset.push(std::u64::MAX);
-        }
-
         Self {
-            bitset: bitset,
-            cardinality: LazyCardinality::with_value(0)
+            bitset: vec![0; BITSET_SIZE_IN_WORDS],
+            cardinality: LazyCardinality::none()
         }
     }
 
@@ -94,16 +88,15 @@ impl BitsetContainer {
 
     /// Set bits for the elements in `list`
     pub fn set_list(&mut self, list: &[u16]) {
-        for value in list {
+        for value in list.iter() {
             let offset = (*value >> 6) as usize;
             let index = *value % 64;
             let load = self.bitset[offset];
-            let new_load = load | (1 << index);
-            
-            self.cardinality.increment(((load ^ new_load) >> index) as usize);
-
+            let new_load = load | (1_u64 << index);
             self.bitset[offset] = new_load;
         }
+
+        self.cardinality.invalidate();
     }
 
     /// Set all the bits in the bitset
@@ -484,11 +477,25 @@ impl BitsetContainer {
 
     /// Get an iterator over the words of the bitset
     pub fn iter(&self) -> Iter {
+        let (index, first_word) = {
+            let mut index = 0;
+            let mut word = self.bitset[0];
+            for (i, w) in self.bitset.iter().enumerate() {
+                if *w != 0 {
+                    word = *w;
+                    index = i;
+                    break;
+                }
+            }
+
+            (index, word)
+        };
+
         Iter {
             words: &self.bitset,
-            word_index: 0,
-            word: self.bitset[0],
-            base: 0
+            word_index: index,
+            word: first_word,
+            base: (index * 64) as u32// TODO: Fixme
         }
     }
     
@@ -599,7 +606,7 @@ impl<'a> From<&'a RunContainer> for BitsetContainer {
 
 impl PartialEq for BitsetContainer {
     fn eq(&self, other: &BitsetContainer) -> bool {
-        utils::mem_equals(&self.bitset, &other.bitset)
+        self.bitset == other.bitset
     }
 }
 
@@ -949,10 +956,13 @@ impl<'a> Iterator for Iter<'a> {
     type Item = u16;
     
     fn next(&mut self) -> Option<Self::Item> {
-        if self.word_index < self.words.len() {
+        if self.word == 0 {
+            None
+        }
+        else {
             let w = self.word;
-            let t = self.word & (!self.word + 1);
-            let r = 64 - (w.leading_zeros() + 1);
+            let t = self.word & (!self.word).wrapping_add(1);
+            let r = w.trailing_zeros();
 
             self.word = w ^ t;
 
@@ -961,16 +971,17 @@ impl<'a> Iterator for Iter<'a> {
                 self.word_index += 1;
 
                 if self.word_index < self.words.len() {
-                    self.word = unsafe { *self.words.get_unchecked(self.word_index) };
-                    self.base += 64;
+                    unsafe {
+                        while self.word != 0 && self.word_index < self.words.len() {
+                            self.word = *self.words.get_unchecked(self.word_index);
+                            self.base += 64;
+                        }
+                    }
                 }
             }
 
             // Guaranteed to not truncate due to how containers work
             Some((r + self.base) as u16)
-        }
-        else {
-            None
         }
     }
 }

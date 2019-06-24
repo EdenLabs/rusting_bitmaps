@@ -6,7 +6,6 @@ use std::fmt;
 use std::iter::Iterator;
 use std::slice;
 
-use crate::utils;
 use crate::container::*;
 use crate::container::array_ops;
 use crate::container::run_ops;
@@ -787,7 +786,7 @@ impl<'a> From<&'a BitsetContainer> for RunContainer {
 
 impl PartialEq for RunContainer {
     fn eq(&self, other: &RunContainer) -> bool {
-        utils::mem_equals(&self.runs, &other.runs)
+        self.runs == other.runs
     }
 }
 
