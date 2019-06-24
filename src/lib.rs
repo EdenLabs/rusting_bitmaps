@@ -1,5 +1,4 @@
 #![feature(const_fn)]
-#![feature(copy_within)]
 #![feature(ptr_offset_from)]
 #![feature(slice_partition_dedup)]
 #![feature(seek_convenience)]

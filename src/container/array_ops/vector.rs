@@ -1,7 +1,6 @@
 // Required since code is conditionally compiled out in this module
 #![allow(dead_code)]
 
-use std::mem;
 use std::ptr;
 
 use crate::{cfg_avx, cfg_sse, cfg_default};
@@ -716,62 +715,201 @@ pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     count
 }
 
+#[cfg(target_feature = "avx2")]
 unsafe fn store_xor(old: Register, new: Register, output: *mut u16) -> usize {
-    let temp_0 = alignr_epi8(new, old, ((SIZE * mem::size_of::<u16>()) as i32) - 4);
-    let temp_1 = alignr_epi8(new, old, ((SIZE * mem::size_of::<u16>()) as i32) - 2);
+    use std::arch::x86_64::{
+        _popcount32,
+        _mm256_alignr_epi8,
+        _mm256_cmpeq_epi16,
+        _mm256_movemask_epi8,
+        _mm256_packs_epi16,
+        _mm256_setzero_si256,
+        _mm256_lddqu_si256,
+        _mm256_shuffle_epi8,
+        _mm256_storeu_si256
+    };
     
-    let eq_left = cmpeq_epi16(temp_0, temp_1);
-    let eq_right = cmpeq_epi16(temp_0, new);
-    let eq_lr = cmpeq_epi16(eq_left, eq_right);
+    let temp_0 = _mm256_alignr_epi8(new, old, 32 - 4);
+    let temp_1 = _mm256_alignr_epi8(new, old, 32 - 2);
     
-    let move_mask = movemask_epi8(
-        packs_epi16(eq_lr, setzero_si())
+    let eq_left = _mm256_cmpeq_epi16(temp_0, temp_1);
+    let eq_right = _mm256_cmpeq_epi16(temp_0, new);
+    let eq_lr = _mm256_cmpeq_epi16(eq_left, eq_right);
+    
+    let move_mask = _mm256_movemask_epi8(
+        _mm256_packs_epi16(eq_lr, _mm256_setzero_si256())
     );
     
-    let num_new = (SIZE as i32) - popcnt32(move_mask);
+    let num_new = 16 - _popcnt32(move_mask);
     
-    let key = lddqu_si(UNIQUE_SHUFFLE.as_ptr().add(move_mask as usize) as *const Register);
-    let val = shuffle_epi8(temp_1, key);
+    let key = _mm256_lddqu_si(UNIQUE_SHUFFLE.as_ptr().add(move_mask as usize) as *const Register);
+    let val = _mm256_shuffle_epi8(temp_1, key);
     
-    storeu_si(output as *mut Register, val);
+    _mm256_storeu_si256(output as *mut Register, val);
     
     return num_new as usize;
 }
 
-unsafe fn merge(a: Register, b: Register, min: &mut Register, max: &mut Register) {
-    let mut temp = min_epu16(a, b);
-    *max = max_epu16(a, b);
-    temp = alignr_epi8(temp, temp, 2);
-
-    for _i in 0..(SIZE - 2) {
-        *min = min_epu16(temp, *max);
-        *max = max_epu16(temp, *max);
-        temp = alignr_epi8(*min, *min, 2);
-    }
-
-    *min = min_epu16(temp, *max);
-    *max = max_epu16(temp, *max);
-    *min = alignr_epi8(*min, *min, 2);
+#[cfg(all(target_feature = "sse4.2", not(target_feature = "avx2")))]
+unsafe fn store_xor(old: Register, new: Register, output: *mut u16) -> usize {
+    use std::arch::x86_64::{
+        _popcount32,
+        _mm_alignr_epi8,
+        _mm_cmpeq_epi16,
+        _mm_movemask_epi8,
+        _mm_packs_epi16,
+        _mm_setzero_si128,
+        _mm_lddqu_si128,
+        _mm_shuffle_epi8,
+        _mm_storeu_si128
+    };
+    
+    let temp_0 = _mm_alignr_epi8(new, old, 16 - 4);
+    let temp_1 = _mm_alignr_epi8(new, old, 16 - 2);
+    
+    let eq_left = _mm_cmpeq_epi16(temp_0, temp_1);
+    let eq_right = _mm_cmpeq_epi16(temp_0, new);
+    let eq_lr = _mm_cmpeq_epi16(eq_left, eq_right);
+    
+    let move_mask = _mm_movemask_epi8(
+        _mm_packs_epi16(eq_lr, _mm_setzero_si128())
+    );
+    
+    let num_new = 8 - _popcnt32(move_mask);
+    
+    let key = _mm_lddqu_si128(UNIQUE_SHUFFLE.as_ptr().add(move_mask as usize) as *const Register);
+    let val = _mm_shuffle_epi8(temp_1, key);
+    
+    _mm_storeu_si128(output as *mut Register, val);
+    
+    return num_new as usize;
 }
 
+#[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))]
+unsafe fn store_xor(_old: Register, _new: Register, _output: *mut u16) -> usize {
+    panic!("Not supported, did you forget to compile with simd extensions?")
+}
+
+#[cfg(target_feature = "avx2")]
+unsafe fn merge(a: Register, b: Register, min: &mut Register, max: &mut Register) {
+    use std::arch::x86_64::{
+        _mm256_min_epu16,
+        _mm256_max_epu16,
+        _mm256_alignr_epi8
+    };
+    
+    let mut temp = _mm256_min_epu16(a, b);
+    *max = _mm256_max_epu16(a, b);
+    temp = _mm256_alignr_epi8(temp, temp, 2);
+
+    for _i in 0..(16 - 2) {
+        *min = _mm256_min_epu16(temp, *max);
+        *max = _mm256_max_epu16(temp, *max);
+        temp = _mm256_alignr_epi8(*min, *min, 2);
+    }
+
+    *min = _mm256_min_epu16(temp, *max);
+    *max = _mm256_max_epu16(temp, *max);
+    *min = _mm256_alignr_epi8(*min, *min, 2);
+}
+
+#[cfg(all(target_feature = "sse4.2", not(target_feature = "avx2")))]
+unsafe fn merge(a: Register, b: Register, min: &mut Register, max: &mut Register) {
+    use std::arch::x86_64::{
+        _mm_min_epu16,
+        _mm_max_epu16,
+        _mm_alignr_epi8
+    };
+    
+    let mut temp = _mm_min_epu16(a, b);
+    *max = _mm_max_epu16(a, b);
+    temp = _mm_alignr_epi8(temp, temp, 2);
+
+    for _i in 0..(8 - 2) {
+        *min = _mm_min_epu16(temp, *max);
+        *max = _mm_max_epu16(temp, *max);
+        temp = _mm_alignr_epi8(*min, *min, 2);
+    }
+
+    *min = _mm_min_epu16(temp, *max);
+    *max = _mm_max_epu16(temp, *max);
+    *min = _mm_alignr_epi8(*min, *min, 2);
+}
+
+#[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))]
+unsafe fn merge(_a: Register, _b: Register, _min: &mut Register, _max: &mut Register) {
+    panic!("Not supported, did you forget to compile with simd extensions?")
+}
+
+#[cfg(target_feature = "avx2")]
 unsafe fn store_union(old: Register, new: Register, output: *mut u16) -> usize {
-    let temp = alignr_epi8(new, old, ((SIZE * mem::size_of::<u16>()) as i32) - 2);
-    let mask = movemask_epi8(
-        packs_epi16(
-            cmpeq_epi16(temp, new),
-            setzero_si()
+    use std::arch::x86_64::{
+        _popcnt32,
+        _mm256_alignr_epi8,
+        _mm256_movemask_epi8,
+        _mm256_packs_epi16,
+        _mm256_cmpeq_epi16,
+        _mm256_setzero_si256,
+        _mm256_lddqu_si256,
+        _mm256_shuffle_epi8,
+        _mm256_storeu_si256
+    };
+    
+    let temp = _mm256_alignr_epi8(new, old, 32 - 2);
+    let mask = _mm256_movemask_epi8(
+        _mm256_packs_epi16(
+            _mm256_cmpeq_epi16(temp, new),
+            _mm256_setzero_si256()
         )
     );
 
-    let num_values = (SIZE as i32) - popcnt32(mask);
+    let num_values = (SIZE as i32) - _popcnt32(mask);
     let shuffle = UNIQUE_SHUFFLE.as_ptr().add(mask as usize) as *mut Register;
 
-    let key = lddqu_si(shuffle);
-    let val = shuffle_epi8(new, key);
+    let key = _mm256_lddqu_si(shuffle);
+    let val = _mm256_shuffle_epi8(new, key);
     
-    storeu_si(output as *mut Register, val);
+    _mm256_storeu_si256(output as *mut Register, val);
 
     num_values as usize
+}
+
+#[cfg(all(target_feature = "sse4.2", not(target_feature = "avx2")))]
+unsafe fn store_union(old: Register, new: Register, output: *mut u16) -> usize {
+    use std::arch::x86_64::{
+        _popcnt32,
+        _mm_alignr_epi8,
+        _mm_movemask_epi8,
+        _mm_packs_epi16,
+        _mm_cmpeq_epi16,
+        _mm_setzero_si128,
+        _mm_lddqu_si128,
+        _mm_shuffle_epi8,
+        _mm_storeu_si128
+    };
+    
+    let temp = _mm_alignr_epi8(new, old, 16 - 2);
+    let mask = _mm_movemask_epi8(
+        _mm_packs_epi16(
+            _mm_cmpeq_epi16(temp, new),
+            _mm_setzero_si128()
+        )
+    );
+
+    let num_values = (SIZE as i32) - _popcnt32(mask);
+    let shuffle = UNIQUE_SHUFFLE.as_ptr().add(mask as usize) as *mut Register;
+
+    let key = _mm_lddqu_si128(shuffle);
+    let val = _mm_shuffle_epi8(new, key);
+    
+    _mm_storeu_si128(output as *mut Register, val);
+
+    num_values as usize
+}
+
+#[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))]
+unsafe fn store_union(_old: Register, _new: Register, _output: *mut u16) -> usize {
+    panic!("Not supported, did you forget to compile with simd extensions?")
 }
 
 const UNIQUE_SHUFFLE: [u8; 4096] = [

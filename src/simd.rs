@@ -1,5 +1,5 @@
 #![allow(unused_variables)]
-#![allow(unreachable_code)]
+#![allow(dead_code)]
 
 //! A collection of simd utilities abstracted over the register size.
 //! 
@@ -10,40 +10,25 @@
 //! Running a build without vector instructions will panic
 
 #[allow(unused_imports)]
-
-#[cfg(target_feature = "avx2")]
-use std::arch::x86_64::{    
+use std::arch::x86_64::{
+    _popcnt32,
+    
     __m256i,
-    _mm256_alignr_epi8,
-    _mm256_cmpeq_epi16,
+    __m128i,
+
     _mm256_extract_epi16,
     _mm256_lddqu_si256,
-    _mm256_max_epu16,
-    _mm256_min_epu16,
-    _mm256_movemask_epi8,
-    _mm256_packs_epi16,
     _mm256_set1_epi16,
     _mm256_setzero_si256,
     _mm256_shuffle_epi8,
     _mm256_storeu_si256,
-};
 
-#[cfg(all(target_feature = "sse4.2", not(target_feature = "avx2")))]
-use std::arch::x86_64::{
-    __m128i,
-    _mm_alignr_epi8,
-    _mm_cmpeq_epi16,
     _mm_extract_epi16,
     _mm_lddqu_si128,
-    _mm_max_epu16,
-    _mm_min_epu16,
-    _mm_movemask_epi8,
-    _mm_packs_epi16,
-    _mm_sad_epu8,
     _mm_set1_epi16,
     _mm_setzero_si128,
     _mm_shuffle_epi8,
-    _mm_storeu_si128
+    _mm_storeu_si128,
 };
 
 pub use consts::*;
@@ -77,7 +62,7 @@ macro_rules! cfg_default {
 
 #[cfg(target_feature = "avx2")]
 mod consts {
-    pub type Register = std::arch::x86_64::__m256i;
+    pub type Register = __m256i;
     pub const SIZE: usize = 16;
     pub const N: i32 = 15; // TODO: move these into the module that uses them
     pub const NM1: i32 = 14;
@@ -85,7 +70,7 @@ mod consts {
 
 #[cfg(all(target_feature = "sse4.2", not(target_feature = "avx2")))]
 mod consts {
-    pub type Register = std::arch::x86_64::__m128i;
+    pub type Register = __m128i;
     pub const SIZE: usize = 8;
     pub const N: i32 = 7;
     pub const NM1: i32 = 6;
@@ -99,35 +84,17 @@ mod consts {
     pub const NM1: i32 = 1;
 }
 
-const MISSING_MSG: &'static str = "Failed to find an intrinsic. Did you compile with `+avx2` or `+sse4.2`?";
-
 #[inline(always)]
 pub unsafe fn popcnt32(x: i32) -> i32 {
-    std::arch::x86_64::_popcnt32(x)
+    _popcnt32(x)
 }
 
 #[inline(always)]
-pub unsafe fn alignr_epi8(a: Register, b: Register, n: i32) -> Register {
-    cfg_avx! { return _mm256_alignr_epi8(a, b, n); }
-    cfg_sse! { return _mm_alignr_epi8(a, b, n); }
-
-    panic!(MISSING_MSG);
-}
-
-#[inline(always)]
-pub unsafe fn cmpeq_epi16(a: Register, b: Register) -> Register {
-    cfg_avx! { return _mm256_cmpeq_epi16(a, b); }
-    cfg_sse! { return _mm_cmpeq_epi16(a, b); }
-
-    panic!(MISSING_MSG);
-}
-
-#[inline(always)]
-pub unsafe fn extract_epi16(a: Register, b: i32) -> i16 {
+pub unsafe fn extract_epi16(a: Register, b: i32) -> i32 {
     cfg_avx! { return _mm256_extract_epi16(a, b); }
     cfg_sse! { return _mm_extract_epi16(a, b); }
 
-    panic!(MISSING_MSG);
+    unimplemented!();
 }
 
 #[inline(always)]
@@ -135,39 +102,7 @@ pub unsafe fn lddqu_si(mem_addr: *const Register) -> Register {
     cfg_avx! { return _mm256_lddqu_si256(mem_addr); }
     cfg_sse! { return _mm_lddqu_si128(mem_addr); }
 
-    panic!(MISSING_MSG);
-}
-
-#[inline(always)]
-pub unsafe fn max_epu16(a: Register, b: Register) -> Register {
-    cfg_avx! { return _mm256_max_epu16(a, b); }
-    cfg_sse! { return _mm_max_epu16(a, b); }
-
-    panic!(MISSING_MSG);
-}
-
-#[inline(always)]
-pub unsafe fn min_epu16(a: Register, b: Register) -> Register {
-    cfg_avx! { return _mm256_min_epu16(a, b); }
-    cfg_sse! { return _mm_min_epu16(a, b); }
-
-    panic!(MISSING_MSG);
-}
-
-#[inline(always)]
-pub unsafe fn movemask_epi8(a: Register) -> i32 {
-    cfg_avx! { return _mm256_movemask_epi8(a); }
-    cfg_sse! { return _mm_movemask_epi8(a); }
-
-    panic!(MISSING_MSG);
-}
-
-#[inline(always)]
-pub unsafe fn packs_epi16(a: Register, b: Register) -> Register {
-    cfg_avx! { return _mm256_packs_epi16(a, b); }
-    cfg_sse! { return _mm_packs_epi16(a, b); }
-
-    panic!(MISSING_MSG);
+    unimplemented!();
 }
 
 #[inline(always)]
@@ -175,7 +110,7 @@ pub unsafe fn set1_epi16(a: i16) -> Register {
     cfg_avx! { return _mm256_set1_epi16(a); }
     cfg_sse! { return _mm_set1_epi16(a); }
 
-    panic!(MISSING_MSG);
+    unimplemented!();
 }
 
 #[inline(always)]
@@ -183,7 +118,7 @@ pub unsafe fn setzero_si() -> Register {
     cfg_avx! { return _mm256_setzero_si256(); }
     cfg_sse! { return _mm_setzero_si128(); }
 
-    panic!(MISSING_MSG);
+    unimplemented!();
 }
 
 #[inline(always)]
@@ -191,7 +126,7 @@ pub unsafe fn shuffle_epi8(a: Register, b: Register) -> Register {
     cfg_avx! { return _mm256_shuffle_epi8(a, b); }
     cfg_sse! { return _mm_shuffle_epi8(a, b); }
 
-    panic!(MISSING_MSG);
+    unimplemented!();
 }
 
 #[inline(always)]
@@ -199,5 +134,13 @@ pub unsafe fn storeu_si(mem_addr: *mut Register, a: Register) {
     cfg_avx! { return _mm256_storeu_si256(mem_addr, a); }
     cfg_sse! { return _mm_storeu_si128(mem_addr, a); }
 
-    panic!(MISSING_MSG);
+    unimplemented!();
+}
+
+#[inline(always)]
+pub unsafe fn or_si(a: Register, b: Register) -> Register {
+    cfg_avx! { return _mm256_or_si256(a, b); }
+    cfg_sse! { return _mm_or_si128(a, b); }
+
+    unimplemented!();
 }
