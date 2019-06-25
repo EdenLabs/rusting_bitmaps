@@ -3,22 +3,7 @@
 
 use std::ptr;
 
-use crate::{cfg_avx, cfg_sse, cfg_default};
-use crate::simd::*;
-
 use super::scalar;
-
-cfg_avx! {
-    type Buffer = [u16; 32];
-}
-
-cfg_sse! {
-    type Buffer = [u16; 16];
-}
-
-cfg_default! {
-    type Buffer = [u16; 16];
-}
 
 /// Compute the union between `a` and `b` and append the result into `out`
 /// 
@@ -28,6 +13,62 @@ cfg_default! {
 /// # Safety
 /// - Assumes `out` contains enough space to hold the output
 pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
+    use std::arch::x86_64::{
+        __m256i,
+        _popcnt32,
+        _mm256_lddqu_si256,
+        _mm256_setzero_si256,
+        _mm256_set1_epi16,
+        _mm256_extract_epi16,
+        _mm256_alignr_epi8,
+        _mm256_movemask_epi8,
+        _mm256_packs_epi16,
+        _mm256_cmpeq_epi16,
+        _mm256_shuffle_epi8,
+        _mm256_storeu_si256,
+        _mm256_min_epu16,
+        _mm256_max_epu16
+    };
+
+    unsafe fn store(old: Register, new: Register, output: *mut u16) -> usize {
+        let temp = _mm256_alignr_epi8(new, old, 32 - 2);
+        let mask = _mm256_movemask_epi8(
+            _mm256_packs_epi16(
+                _mm256_cmpeq_epi16(temp, new),
+                _mm256_setzero_si256()
+            )
+        );
+
+        let num_values = (SIZE as i32) - _popcnt32(mask);
+        let shuffle = UNIQUE_SHUFFLE.as_ptr().add(mask as usize) as *mut Register;
+
+        let key = _mm256_lddqu_si256(shuffle);
+        let val = _mm256_shuffle_epi8(new, key);
+        
+        _mm256_storeu_si256(output as *mut Register, val);
+
+        num_values as usize
+    }
+
+    unsafe fn merge(a: Register, b: Register, min: &mut Register, max: &mut Register) {
+        let mut temp = _mm256_min_epu16(a, b);
+        *max = _mm256_max_epu16(a, b);
+        temp = _mm256_alignr_epi8(temp, temp, 2);
+
+        for _i in 0..(8 - 2) {
+            *min = _mm256_min_epu16(temp, *max);
+            *max = _mm256_max_epu16(temp, *max);
+            temp = _mm256_alignr_epi8(*min, *min, 2);
+        }
+
+        *min = _mm256_min_epu16(temp, *max);
+        *max = _mm256_max_epu16(temp, *max);
+        *min = _mm256_alignr_epi8(*min, *min, 2);
+    }
+
+    const SIZE: usize = 32;
+    type Register = __m256i;
+
     if a.len() < SIZE || b.len() < SIZE {
         return scalar::and(a, b, out);
     }
@@ -42,55 +83,55 @@ pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     let ptr_b = b.as_ptr();
     let mut count = 0;
     
-    let v_a = lddqu_si(*ptr_a as *const Register);
-    let v_b = lddqu_si(*ptr_b as *const Register);
+    let v_a = _mm256_lddqu_si256(*ptr_a as *const Register);
+    let v_b = _mm256_lddqu_si256(*ptr_b as *const Register);
 
     i_a += 1;
     i_b += 1;
     
-    let mut min = setzero_si();
-    let mut max = setzero_si();
+    let mut min = _mm256_setzero_si256();
+    let mut max = _mm256_setzero_si256();
     merge(v_a, v_b, &mut min, &mut max);
     
-    let mut last_store = set1_epi16(-1);
-    count += store_union(last_store, min, out.add(count));
+    let mut last_store = _mm256_set1_epi16(-1);
+    count += store(last_store, min, out.add(count));
     last_store = min;
 
     if i_a < simd_len_a && i_b < simd_len_b {
-        let mut v = setzero_si();
+        let mut v = _mm256_setzero_si256();
 
         while i_a < simd_len_a && i_b < simd_len_b {
             let s_a = *ptr_a.add(i_a * SIZE);
             let s_b = *ptr_b.add(i_b * SIZE);
 
             if s_a < s_b {
-                v = lddqu_si((ptr_a as *const Register).add(i_a));
+                v = _mm256_lddqu_si256((ptr_a as *const Register).add(i_a));
 
                 i_a += 1;
             }
             else {
-                v = lddqu_si((ptr_b as *const Register).add(i_b));
+                v = _mm256_lddqu_si256((ptr_b as *const Register).add(i_b));
 
                 i_b += 1;
             }
 
             merge(v, max, &mut min, &mut max);
             
-            count += store_union(last_store, min, out.add(count));
+            count += store(last_store, min, out.add(count));
             last_store = min;
         }
 
         merge(v, max, &mut min, &mut max);
-        count += store_union(last_store, min, out.add(count));
+        count += store(last_store, min, out.add(count));
         last_store = min;
     }
 
-    let mut buffer: Buffer = Default::default();
+    let mut buffer: [u16; 32] = Default::default();
     let buff_ptr = buffer.as_mut_ptr();
-    let mut buffer_count = store_xor(last_store, max, buff_ptr);
+    let mut buffer_count = store(last_store, max, buff_ptr);
     
-    let vn = extract_epi16(max, N) as u16;
-    let vnm1 = extract_epi16(max, NM1) as u16;
+    let vn = _mm256_extract_epi16(max, 15) as u16;
+    let vnm1 = _mm256_extract_epi16(max, 14) as u16;
     if vnm1 == vn {
         buffer_count += 1;
         buffer[buffer_count] = vn;
@@ -603,6 +644,15 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 /// # Safety
 /// - Assumes `out` contains enough space to hold the output
 pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
+    const SIZE: usize = 32;
+
+    use std::arch::x86_64::{
+        _mm256_lddqu_si256,
+        _mm256_setzero_si256,
+        _mm256_set1_epi16,
+        _mm256_extract_epi16
+    };
+
     // Use a scalar algorithm if the length of the two vectors is too short to use simd
     if a.len() < SIZE || b.len() < SIZE {
         return scalar::xor(a, b, out);
@@ -618,34 +668,34 @@ pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     let ptr_b = b.as_ptr();
     let mut count = 0;
     
-    let v_a = lddqu_si(*ptr_a as *const Register);
-    let v_b = lddqu_si(*ptr_b as *const Register);
+    let v_a = _mm256_lddqu_si256(*ptr_a as *const Register);
+    let v_b = _mm256_lddqu_si256(*ptr_b as *const Register);
     
     i_a += 1;
     i_b += 1;
     
-    let mut min = setzero_si();
-    let mut max = setzero_si();
+    let mut min = _mm256_setzero_si256();
+    let mut max = _mm256_setzero_si256();
     merge(v_a, v_b, &mut min, &mut max);
     
-    let mut last_store = set1_epi16(-1);
+    let mut last_store = _mm256_set1_epi16(-1);
     count += store_xor(last_store, min, out.add(count));
 
     last_store = min;
 
     if i_a < simd_len_a && i_b < simd_len_b {
-        let mut v = setzero_si();
+        let mut v = _mm256_setzero_si256();
 
         while i_a < simd_len_a && i_b < simd_len_b {
             let s_a = *ptr_a.add(i_a * SIZE);
             let s_b = *ptr_b.add(i_b * SIZE);
 
             if s_a < s_b {
-                v = lddqu_si((ptr_a as *const Register).add(i_a));
+                v = _mm256_lddqu_si256((ptr_a as *const Register).add(i_a));
                 i_a += 1;
             }
             else {
-                v = lddqu_si((ptr_b as *const Register).add(i_b));
+                v = _mm256_lddqu_si256((ptr_b as *const Register).add(i_b));
                 i_b += 1;
             }
 
@@ -660,12 +710,12 @@ pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         last_store = min;
     }
 
-    let mut buffer: Buffer = Default::default();
+    let mut buffer: [u16; 32] = Default::default();
     let buff_ptr = buffer.as_mut_ptr();
     let mut buffer_count = store_xor(last_store, max, buff_ptr);
     
-    let vn = extract_epi16(max, N) as u16;
-    let vnm1 = extract_epi16(max, NM1) as u16;
+    let vn = _mm256_extract_epi16(max, N) as u16;
+    let vnm1 = _mm256_extract_epi16(max, NM1) as u16;
     if vnm1 == vn {
         buffer_count += 1;
         buffer[buffer_count] = vn;

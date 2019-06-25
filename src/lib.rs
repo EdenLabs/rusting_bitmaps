@@ -32,7 +32,6 @@ macro_rules! unlikely {
 
 mod container;
 mod roaring;
-mod simd;
 
 #[cfg(test)]
 mod test;
