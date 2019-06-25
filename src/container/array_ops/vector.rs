@@ -718,7 +718,7 @@ pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 #[cfg(target_feature = "avx2")]
 unsafe fn store_xor(old: Register, new: Register, output: *mut u16) -> usize {
     use std::arch::x86_64::{
-        _popcount32,
+        _popcnt32,
         _mm256_alignr_epi8,
         _mm256_cmpeq_epi16,
         _mm256_movemask_epi8,
@@ -742,7 +742,7 @@ unsafe fn store_xor(old: Register, new: Register, output: *mut u16) -> usize {
     
     let num_new = 16 - _popcnt32(move_mask);
     
-    let key = _mm256_lddqu_si(UNIQUE_SHUFFLE.as_ptr().add(move_mask as usize) as *const Register);
+    let key = _mm256_lddqu_si256(UNIQUE_SHUFFLE.as_ptr().add(move_mask as usize) as *const Register);
     let val = _mm256_shuffle_epi8(temp_1, key);
     
     _mm256_storeu_si256(output as *mut Register, val);
@@ -866,7 +866,7 @@ unsafe fn store_union(old: Register, new: Register, output: *mut u16) -> usize {
     let num_values = (SIZE as i32) - _popcnt32(mask);
     let shuffle = UNIQUE_SHUFFLE.as_ptr().add(mask as usize) as *mut Register;
 
-    let key = _mm256_lddqu_si(shuffle);
+    let key = _mm256_lddqu_si256(shuffle);
     let val = _mm256_shuffle_epi8(new, key);
     
     _mm256_storeu_si256(output as *mut Register, val);
