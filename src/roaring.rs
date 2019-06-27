@@ -20,11 +20,9 @@ use crate::container::{self, *, array_ops};
 /// contained within the bitmap.
 /// 
 /// Generallly the representation selected is as follows
-/// ```
-/// Less than 4096 elements       : Array
-/// Less than `u16::MAX` elements : Bitset
-/// More than `u16::MAX` elements : RLE encoded
-/// ```
+///  - Less than 4096 elements       : Array
+///  - Less than `u16::MAX` elements : Bitset
+///  - More than `u16::MAX` elements : RLE encoded
 /// 
 /// # Performance Remarks
 /// Frequent modification of a bitmap may result in high memory churn due to transitions between

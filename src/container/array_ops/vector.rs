@@ -1,9 +1,37 @@
 // Required since code is conditionally compiled out in this module
 #![allow(dead_code)]
 
+use std::arch::x86_64::{
+    _SIDD_BIT_MASK,
+    _SIDD_CMP_EQUAL_ANY,
+    _SIDD_UWORD_OPS,
+
+    __m128i,
+    
+    _popcnt32,
+    
+    _mm_alignr_epi8,
+    _mm_storeu_si128,
+    _mm_min_epu16,
+    _mm_max_epu16,
+    _mm_movemask_epi8,
+    _mm_packs_epi16,
+    _mm_cmpeq_epi16,
+    _mm_shuffle_epi8,
+    _mm_lddqu_si128,
+    _mm_setzero_si128,
+    _mm_set1_epi16,
+    _mm_extract_epi16,
+    _mm_cmpistrm,
+    _mm_cmpestrm,
+    _mm_extract_epi32,
+    _mm_or_si128,
+};
 use std::ptr;
 
 use super::scalar;
+
+const CMPISTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
 
 /// Compute the union between `a` and `b` and append the result into `out`
 /// 
@@ -13,151 +41,101 @@ use super::scalar;
 /// # Safety
 /// - Assumes `out` contains enough space to hold the output
 pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
-    use std::arch::x86_64::{
-        __m256i,
-        _popcnt32,
-        _mm256_lddqu_si256,
-        _mm256_setzero_si256,
-        _mm256_set1_epi16,
-        _mm256_extract_epi16,
-        _mm256_alignr_epi8,
-        _mm256_movemask_epi8,
-        _mm256_packs_epi16,
-        _mm256_cmpeq_epi16,
-        _mm256_shuffle_epi8,
-        _mm256_storeu_si256,
-        _mm256_min_epu16,
-        _mm256_max_epu16
-    };
-
-    unsafe fn store(old: Register, new: Register, output: *mut u16) -> usize {
-        let temp = _mm256_alignr_epi8(new, old, 32 - 2);
-        let mask = _mm256_movemask_epi8(
-            _mm256_packs_epi16(
-                _mm256_cmpeq_epi16(temp, new),
-                _mm256_setzero_si256()
-            )
-        );
-
-        let num_values = (SIZE as i32) - _popcnt32(mask);
-        let shuffle = UNIQUE_SHUFFLE.as_ptr().add(mask as usize) as *mut Register;
-
-        let key = _mm256_lddqu_si256(shuffle);
-        let val = _mm256_shuffle_epi8(new, key);
-        
-        _mm256_storeu_si256(output as *mut Register, val);
-
-        num_values as usize
+    if a.len() < 8 || b.len() < 8 {
+        return scalar::or(a, b, out);
     }
-
-    unsafe fn merge(a: Register, b: Register, min: &mut Register, max: &mut Register) {
-        let mut temp = _mm256_min_epu16(a, b);
-        *max = _mm256_max_epu16(a, b);
-        temp = _mm256_alignr_epi8(temp, temp, 2);
-
-        for _i in 0..(8 - 2) {
-            *min = _mm256_min_epu16(temp, *max);
-            *max = _mm256_max_epu16(temp, *max);
-            temp = _mm256_alignr_epi8(*min, *min, 2);
-        }
-
-        *min = _mm256_min_epu16(temp, *max);
-        *max = _mm256_max_epu16(temp, *max);
-        *min = _mm256_alignr_epi8(*min, *min, 2);
-    }
-
-    const SIZE: usize = 32;
-    type Register = __m256i;
-
-    if a.len() < SIZE || b.len() < SIZE {
-        return scalar::and(a, b, out);
-    }
-
-    let simd_len_a = a.len() / SIZE;
-    let simd_len_b = b.len() / SIZE;
-
-    let mut i_a = 0;
-    let mut i_b = 0;
 
     let ptr_a = a.as_ptr();
     let ptr_b = b.as_ptr();
+
+    let simd_len_a = a.len() / 8;
+    let simd_len_b = b.len() / 8;
+    
+    let mut i_a = 1;
+    let mut i_b = 1;
     let mut count = 0;
     
-    let v_a = _mm256_lddqu_si256(*ptr_a as *const Register);
-    let v_b = _mm256_lddqu_si256(*ptr_b as *const Register);
-
-    i_a += 1;
-    i_b += 1;
+    let v_a = _mm_lddqu_si128(ptr_a as *const __m128i);
+    let v_b = _mm_lddqu_si128(ptr_b as *const __m128i);
     
-    let mut min = _mm256_setzero_si256();
-    let mut max = _mm256_setzero_si256();
+    let mut min = _mm_setzero_si128();
+    let mut max = _mm_setzero_si128();
+    let mut last_store = _mm_set1_epi16(-1);
+    
     merge(v_a, v_b, &mut min, &mut max);
-    
-    let mut last_store = _mm256_set1_epi16(-1);
-    count += store(last_store, min, out.add(count));
+
+    count += store_or(last_store, min, out.add(count));
     last_store = min;
 
     if i_a < simd_len_a && i_b < simd_len_b {
-        let mut v = _mm256_setzero_si256();
-
-        while i_a < simd_len_a && i_b < simd_len_b {
-            let s_a = *ptr_a.add(i_a * SIZE);
-            let s_b = *ptr_b.add(i_b * SIZE);
-
-            if s_a < s_b {
-                v = _mm256_lddqu_si256((ptr_a as *const Register).add(i_a));
-
+        let mut v;
+        let mut s_a = *(ptr_a.add(i_a * 8));
+        let mut s_b = *(ptr_b.add(i_b * 8));
+        
+        loop {
+            if s_a <= s_b {
+                v = _mm_lddqu_si128((ptr_a as *const __m128i).add(i_a));
+                
                 i_a += 1;
+                if i_a < simd_len_a {
+                    s_a = *(ptr_a.add(i_a * 8));
+                }
+                else {
+                    break;
+                }
             }
             else {
-                v = _mm256_lddqu_si256((ptr_b as *const Register).add(i_b));
-
+                v = _mm_lddqu_si128((ptr_b as *const __m128i).add(i_b));
+                
                 i_b += 1;
+                if i_b < simd_len_b {
+                    s_b = *(ptr_b.add(i_b * 8));
+                }
+                else {
+                    break;
+                }
             }
 
             merge(v, max, &mut min, &mut max);
-            
-            count += store(last_store, min, out.add(count));
+            count += store_or(last_store, min, out.add(count));
             last_store = min;
         }
 
         merge(v, max, &mut min, &mut max);
-        count += store(last_store, min, out.add(count));
+        count += store_or(last_store, min, out.add(count));
         last_store = min;
     }
 
-    let mut buffer: [u16; 32] = Default::default();
-    let buff_ptr = buffer.as_mut_ptr();
-    let mut buffer_count = store(last_store, max, buff_ptr);
+    let mut buffer: [u16; 16] = Default::default();
+    let mut buf_len = store_or(last_store, max, buffer.as_mut_ptr());
     
-    let vn = _mm256_extract_epi16(max, 15) as u16;
-    let vnm1 = _mm256_extract_epi16(max, 14) as u16;
-    if vnm1 == vn {
-        buffer_count += 1;
-        buffer[buffer_count] = vn;
-    }
+    let mut finish = |s0: &[u16], pos_0: usize, s1: &[u16], pos_1: usize| {
+        let last_end = pos_0 * 8;
+        let rem = s0.len() - last_end;
+        
+        let ptr_buf = buffer.as_mut_ptr();
+        let ptr_src = s0.as_ptr().add(last_end);
+        let ptr_dst = ptr_buf.add(buf_len);
+        
+        ptr::copy_nonoverlapping(ptr_src, ptr_dst, rem);
+        
+        buf_len += rem;
+        &buffer[..buf_len].sort();
+        
+        buf_len = unique_or(ptr_buf, buf_len);
 
+        count += scalar::or(
+            &buffer[..buf_len], 
+            &s1[(pos_1 * 8)..],
+            out.add(count)
+        );
+    };
+    
     if i_a == simd_len_a {
-        let rem = a.len() - (simd_len_a * SIZE);
-        ptr::copy_nonoverlapping(ptr_a.add(i_a * SIZE), buff_ptr.add(buffer_count), rem);
-        buffer_count += rem;
-
-        let elements = &mut buffer[..buffer_count];
-        elements.sort();
-        let (deduped, _dups) = elements.partition_dedup();
-
-        count += scalar::and(&deduped, &b[(simd_len_b * SIZE)..b.len()], out.add(count));
+        finish(a, i_a, b, i_b);
     }
     else {
-        let rem = b.len() - (simd_len_b * SIZE);
-        ptr::copy_nonoverlapping(ptr_b.add(i_b * SIZE), buff_ptr.add(buffer_count), rem);
-        buffer_count += rem;
-
-        let elements = &mut buffer[..buffer_count];
-        elements.sort();
-        let (deduped, _dups) = elements.partition_dedup();
-
-        count += scalar::and(&deduped, &a[(simd_len_a * SIZE)..a.len()], out.add(count));
+        finish(b, i_b, a, i_a);
     }
 
     count
@@ -171,82 +149,49 @@ pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 /// # Safety
 /// - Assumes `out` contains enough space to hold the output
 pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
-    // Note on the implementation:
-    // This algorithm uses a SSE version as there is no functional equivalent to the `_mm_cmpistrm`
-    // intrinsic in AVX and replicating it in software is more expensive than falling back to a SSE version
-    // (crude estiamtes are around 50 cycles vs 18 for the SSE code)
-    //
-    // AVX-SSE transition penalties can be avoided by using the VEX encoded versions of the SSE instructions
-    // so as not to impact any AVX code in builds that use it. It's highly recommended to pass `-C target-feature=+avx`
-    // to the compiler to ensure that it generates `vpcmpistrm` instead of `pcmpistrm`.
-
-    use std::arch::x86_64::{
-        __m128i,
-
-        _SIDD_BIT_MASK,
-        _SIDD_CMP_EQUAL_ANY,
-        _SIDD_UWORD_OPS,
-
-        _popcnt32,
-        _mm_cmpestrm,
-        _mm_cmpistrm,
-        _mm_extract_epi32,
-        _mm_lddqu_si128,
-        _mm_shuffle_epi8,
-        _mm_storeu_si128,
-        _mm_setzero_si128
-    };
-
-    const SSESIZE: usize = 8;
-    const CMPISTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
-
     // Both sets are empty, there's no possible intersection
     if a.len() == 0 || b.len() == 0 {
         return 0;
     }
 
     // The length of one list is shorter than the vector size, fallback to a scalar algorithm
-    if a.len() < SSESIZE || b.len() < SSESIZE {
+    if a.len() < 8 || b.len() < 8 {
         return scalar::and(a, b, out);
     }
 
-    let simd_end_a = a.len() / SSESIZE;
-    let simd_end_b = b.len() / SSESIZE;
-
     let ptr_a = a.as_ptr();
     let ptr_b = b.as_ptr();
+    let stop_a = (a.len() / 8) * 8;
+    let stop_b = (b.len() / 8) * 8;
 
     let mut i_a = 0;
     let mut i_b = 0;
-
     let mut count = 0;
 
-    let mut va = _mm_setzero_si128();
-    let mut vb = _mm_setzero_si128();
-
-    // Run a pass using cmpestrm while there's a zero in the block
-    // Since we're repurposing a string instruction we need to handle zeros
-    // which would otherwise be interpreted as an end-of-string and ruin the output 
-    if i_a < simd_end_a && i_b < simd_end_b  {
-        va = _mm_lddqu_si128(ptr_a.add(i_a) as *const __m128i);
-        vb = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
+    if i_a < stop_a && i_b < stop_b {
+        let mut va = _mm_lddqu_si128(ptr_a.add(i_a) as *const __m128i);
+        let mut vb = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
     
+        // Run a pass using cmpestrm while there's a zero in the block
+        // Since we're repurposing a string instruction we need to handle zeros
+        // which would otherwise be interpreted as an end-of-string and ruin the output 
         while *ptr_a == 0 || *ptr_b == 0 {
-            let res = _mm_cmpestrm(vb, SSESIZE as i32, va, SSESIZE as i32, CMPISTRM_ARGS);
+            let res = _mm_cmpestrm(vb, 8, va, 8, CMPISTRM_ARGS);
             let r = _mm_extract_epi32(res, 0);
-            let sm16 = _mm_lddqu_si128(SHUFFLE_MASK16.as_ptr().add(r as usize) as *const __m128i);
+            let sm16 = _mm_lddqu_si128((SHUFFLE_MASK16.as_ptr() as *const __m128i).add(r as usize));
             let p = _mm_shuffle_epi8(va, sm16);
 
             _mm_storeu_si128(out.add(count) as *mut __m128i, p);
 
             count += _popcnt32(r) as usize;
 
-            let max_a = ptr_a.add(i_a + SSESIZE - 1);
-            let max_b = ptr_b.add(i_b + SSESIZE - 1);
+            let max_a = ptr_a.add(i_a + 8 - 1);
+            let max_b = ptr_b.add(i_b + 8 - 1);
 
             if *max_a <= *max_b {
-                i_a += SSESIZE;
-                if i_a < simd_end_a {
+                i_a += 8;
+
+                if i_a == stop_a {
                     break;
                 }
 
@@ -254,46 +199,49 @@ pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
             }
 
             if *max_b <= *max_a {
-                i_b += SSESIZE;
-                if i_b < simd_end_b {
+                i_b += 8;
+
+                if i_b == stop_b {
                     break;
                 }
 
                 vb = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
             }
         }
-    }
 
-    if i_a < simd_end_a && i_b < simd_end_b  {
-        loop {
-            let res = _mm_cmpistrm(vb, va, CMPISTRM_ARGS);
-            let r = _mm_extract_epi32(res, 0);
-            let sm16 = _mm_lddqu_si128(SHUFFLE_MASK16.as_ptr().add(r as usize) as *const __m128i);
-            let p = _mm_shuffle_epi8(va, sm16);
+        if i_a < stop_a && i_b < stop_b {
+            loop {
+                let res = _mm_cmpistrm(vb, va, CMPISTRM_ARGS);
+                let r = _mm_extract_epi32(res, 0);
+                let sm16 = _mm_lddqu_si128((SHUFFLE_MASK16.as_ptr() as *const __m128i).add(r as usize));
+                let p = _mm_shuffle_epi8(va, sm16);
 
-            _mm_storeu_si128(out.add(count) as *mut __m128i, p);
+                _mm_storeu_si128(out.add(count) as *mut __m128i, p);
 
-            count += _popcnt32(r) as usize;
+                count += _popcnt32(r) as usize;
 
-            let max_a = ptr_a.add(i_a + SSESIZE - 1);
-            let max_b = ptr_b.add(i_a + SSESIZE - 1);
+                let max_a = ptr_a.add(i_a + 8 - 1);
+                let max_b = ptr_b.add(i_b + 8 - 1);
 
-            if *max_a <= *max_b {
-                i_a += SSESIZE;
-                if i_a == simd_end_a {
-                    break;
+                if *max_a <= *max_b {
+                    i_a += 8;
+
+                    if i_a == stop_a {
+                        break;
+                    }
+
+                    va = _mm_lddqu_si128(ptr_a.add(i_a) as *const __m128i);
                 }
 
-                va = _mm_lddqu_si128(ptr_a.add(i_a) as *const u16 as *const __m128i);
-            }
+                if *max_b <= *max_a {
+                    i_b += 8;
 
-            if *max_b <= *max_a {
-                i_b += SSESIZE;
-                if i_b == simd_end_b {
-                    break;
+                    if i_b == stop_b {
+                        break;
+                    }
+
+                    vb = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
                 }
-
-                vb = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
             }
         }
     }
@@ -321,77 +269,47 @@ pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 
 /// Find the cardinality of the intersection between `a` and `b`
 pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
-    // Note on the implementation:
-    // This algorithm uses a SSE version as there is no functional equivalent to the `_mm_cmpistrm`
-    // intrinsic in AVX and replicating it in software is more expensive than falling back to a SSE version
-    // (crude estiamtes are around 50 cycles vs 18 for the SSE code)
-    //
-    // AVX-SSE transition penalties can be avoided by using the VEX encoded versions of the SSE instructions
-    // so as not to impact any AVX code in builds that use it. It's highly recommended to pass `-C target-feature=+avx`
-    // to the compiler to ensure that it generates `vpcmpistrm` instead of `pcmpistrm`.
-
-    use std::arch::x86_64::{
-        __m128i,
-
-        _SIDD_BIT_MASK,
-        _SIDD_CMP_EQUAL_ANY,
-        _SIDD_UWORD_OPS,
-
-        _popcnt32,
-        _mm_cmpestrm,
-        _mm_cmpistrm,
-        _mm_extract_epi32,
-        _mm_lddqu_si128,
-        _mm_setzero_si128
-    };
-
-    const SSESIZE: usize = 8;
-    const CMPISTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
-
     // Both sets are empty, there's no possible intersection
     if a.len() == 0 || b.len() == 0 {
         return 0;
     }
 
     // The length of one list is shorter than the vector size, fallback to a scalar algorithm
-    if a.len() < SSESIZE || b.len() < SSESIZE {
-        return scalar::and_cardinality(a, b);
+    if a.len() < 8 || b.len() < 8 {
+        return scalar::and_cardinality(a, b,);
     }
 
-    unsafe {
-        let simd_end_a = a.len() / SSESIZE;
-        let simd_end_b = b.len() / SSESIZE;
+    let mut count = 0;
 
+    unsafe {
         let ptr_a = a.as_ptr();
         let ptr_b = b.as_ptr();
+        let stop_a = (a.len() / 8) * 8;
+        let stop_b = (b.len() / 8) * 8;
 
         let mut i_a = 0;
         let mut i_b = 0;
 
-        let mut count = 0;
-
-        let mut va = _mm_setzero_si128();
-        let mut vb = _mm_setzero_si128();
-
-        // Run a pass using cmpestrm while there's a zero in the block
-        // Since we're repurposing a string instruction we need to handle zeros
-        // which would otherwise be interpreted as an end-of-string and ruin the output 
-        if i_a < simd_end_a && i_b < simd_end_b  {
-            va = _mm_lddqu_si128(ptr_a.add(i_a) as *const __m128i);
-            vb = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
-
+        if i_a < stop_a && i_b < stop_b {
+            let mut va = _mm_lddqu_si128(ptr_a.add(i_a) as *const __m128i);
+            let mut vb = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
+        
+            // Run a pass using cmpestrm while there's a zero in the block
+            // Since we're repurposing a string instruction we need to handle zeros
+            // which would otherwise be interpreted as an end-of-string and ruin the output 
             while *ptr_a == 0 || *ptr_b == 0 {
-                let res = _mm_cmpestrm(vb, SSESIZE as i32, va, SSESIZE as i32, CMPISTRM_ARGS);
+                let res = _mm_cmpestrm(vb, 8, va, 8, CMPISTRM_ARGS);
                 let r = _mm_extract_epi32(res, 0);
 
                 count += _popcnt32(r) as usize;
 
-                let max_a = ptr_a.add(i_a + SSESIZE - 1);
-                let max_b = ptr_b.add(i_b + SSESIZE - 1);
+                let max_a = ptr_a.add(i_a + 8 - 1);
+                let max_b = ptr_b.add(i_b + 8 - 1);
 
                 if *max_a <= *max_b {
-                    i_a += SSESIZE;
-                    if i_a < simd_end_a {
+                    i_a += 8;
+
+                    if i_a == stop_a {
                         break;
                     }
 
@@ -399,46 +317,51 @@ pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
                 }
 
                 if *max_b <= *max_a {
-                    i_b += SSESIZE;
-                    if i_b < simd_end_b {
+                    i_b += 8;
+
+                    if i_b == stop_b {
                         break;
                     }
 
                     vb = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
                 }
             }
-        }
 
-        if i_a < simd_end_a && i_b < simd_end_b  {
-            loop {
-                let res = _mm_cmpistrm(vb, va, CMPISTRM_ARGS);
-                let r = _mm_extract_epi32(res, 0);
+            if i_a < stop_a && i_b < stop_b {
+                loop {
+                    let res = _mm_cmpistrm(vb, va, CMPISTRM_ARGS);
+                    let r = _mm_extract_epi32(res, 0);
+                    let sm16 = _mm_lddqu_si128((SHUFFLE_MASK16.as_ptr() as *const __m128i).add(r as usize));
+                    let p = _mm_shuffle_epi8(va, sm16);
 
-                count += _popcnt32(r) as usize;
+                    count += _popcnt32(r) as usize;
 
-                let max_a = ptr_a.add(i_a + SSESIZE - 1);
-                let max_b = ptr_b.add(i_a + SSESIZE - 1);
+                    let max_a = ptr_a.add(i_a + 8 - 1);
+                    let max_b = ptr_b.add(i_b + 8 - 1);
 
-                if *max_a <= *max_b {
-                    i_a += SSESIZE;
-                    if i_a == simd_end_a {
-                        break;
+                    if *max_a <= *max_b {
+                        i_a += 8;
+
+                        if i_a == stop_a {
+                            break;
+                        }
+
+                        va = _mm_lddqu_si128(ptr_a.add(i_a) as *const __m128i);
                     }
 
-                    va = _mm_lddqu_si128(ptr_a.add(i_a) as *const u16 as *const __m128i);
-                }
+                    if *max_b <= *max_a {
+                        i_b += 8;
 
-                if *max_b <= *max_a {
-                    i_b += SSESIZE;
-                    if i_b == simd_end_b {
-                        break;
+                        if i_b == stop_b {
+                            break;
+                        }
+
+                        vb = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
                     }
-
-                    vb = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
                 }
             }
         }
-
+        
         while i_a < a.len() && i_b < b.len() {
             let sa = ptr_a.add(i_a);
             let sb = ptr_b.add(i_b);
@@ -455,9 +378,9 @@ pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
                 i_b += 1;
             }
         }
-
-        count
     }
+
+    count
 }
 
 /// Compute the difference between `a` and `b` and append the result into `out`
@@ -468,34 +391,6 @@ pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
 /// # Safety
 /// - Assumes `out` contains enough space to hold the output
 pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
-    // Note on the implementation:
-    // This algorithm uses a SSE version as there is no functional equivalent to the `_mm_cmpistrm`
-    // intrinsic in AVX and replicating it in software is more expensive than falling back to a SSE version
-    // (crude estiamtes are around 50 cycles vs 18 for the SSE code)
-    //
-    // AVX-SSE transition penalties can be avoided by using the VEX encoded versions of the SSE instructions
-    // so as not to impact any AVX code in builds that use it. It's highly recommended to pass `-C target-feature=+avx`
-    // to the compiler to ensure that it generates `vpcmpistrm` instead of `pcmpistrm`.
-    use std::arch::x86_64::{
-        __m128i,
-
-        _SIDD_BIT_MASK,
-        _SIDD_CMP_EQUAL_ANY,
-        _SIDD_UWORD_OPS,
-
-        _popcnt32,
-        _mm_cmpistrm,
-        _mm_extract_epi32,
-        _mm_lddqu_si128,
-        _mm_or_si128,
-        _mm_setzero_si128,
-        _mm_shuffle_epi8,
-        _mm_storeu_si128
-    };
-
-    const SSESIZE: usize = 8;
-    const CMPISTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
-
     // A is the empty set therefore there are no elements in A not in B
     if a.len() == 0 {
         return 0;
@@ -516,9 +411,8 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         return scalar::and_not(a, b, out);
     }
     
-    let simd_len_a = a.len() / SSESIZE;
-    let simd_len_b = b.len() / SSESIZE;
-
+    let stop_a = (a.len() / 8) * 8;
+    let stop_b = (b.len() / 8) * 8;
     let ptr_a = a.as_ptr();
     let ptr_b = b.as_ptr();
     
@@ -543,7 +437,7 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         }
     }
 
-    if i_a < simd_len_a && i_b < simd_len_b {
+    if i_a < stop_a && i_b < stop_b {
         let mut v_a = _mm_lddqu_si128(ptr_a.add(i_a) as *const __m128i);
         let mut v_b = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
         
@@ -552,22 +446,22 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         loop {
             let a_in_b = _mm_cmpistrm(v_b, v_a, CMPISTRM_ARGS);
             a_in_b_mask = _mm_or_si128(a_in_b_mask, a_in_b);
-        
+
             let a_max = ptr_a.add(i_a + 7);
             let b_max = ptr_b.add(i_b + 7);
-            
+
             if *a_max <= *b_max {
                 let mask_difference = _mm_extract_epi32(a_in_b_mask, 0) ^ 0xFF;
-                let shuffle_mask = _mm_lddqu_si128(SHUFFLE_MASK16.as_ptr().add(mask_difference as usize) as *const __m128i);
+                let shuffle_mask = _mm_lddqu_si128((SHUFFLE_MASK16.as_ptr() as *const __m128i).offset(mask_difference as isize));
                 let p = _mm_shuffle_epi8(v_a, shuffle_mask);
                 
                 _mm_storeu_si128(out.add(count) as *mut __m128i, p);
                 
                 count += _popcnt32(mask_difference) as usize;
                 
-                i_a += SSESIZE;
+                i_a += 8;
                 
-                if i_a == simd_len_a {
+                if i_a == stop_a {
                     break;
                 }
                 
@@ -575,19 +469,20 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
                 v_a = _mm_lddqu_si128(ptr_a.add(i_a) as *const __m128i);
             }
             
-            if b_max <= a_max {
-                i_b += SSESIZE;
-                if i_b == simd_len_b {
+            if *b_max <= *a_max {
+                i_b += 8;
+                
+                if i_b == stop_b {
                     break;
                 }
                 
-                v_b = _mm_lddqu_si128(ptr_b.add(i_a) as *const __m128i);
+                v_b = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
             }
         }
         
         // Either A or B is at their end, If b is the finished one then finish processing A
-        if i_a < simd_len_a {
-            let mut buffer = [0; 8];
+        if i_a < stop_a {
+            let mut buffer: [u16; 8] = Default::default();
             let buf_ptr = buffer.as_mut_ptr();
 
             ptr::copy_nonoverlapping(ptr_b.add(i_b), buf_ptr, b.len() - i_b);
@@ -597,12 +492,12 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
             a_in_b_mask = _mm_or_si128(a_in_b_mask, a_in_b);
            
             let in_difference = _mm_extract_epi32(a_in_b_mask, 0) ^ 0xFF;
-            let sm16 = _mm_lddqu_si128(SHUFFLE_MASK16.as_ptr().add(in_difference as usize) as *const __m128i);
+            let sm16 = _mm_lddqu_si128((SHUFFLE_MASK16.as_ptr() as *const __m128i).add(in_difference as usize));
             let p = _mm_shuffle_epi8(v_a, sm16);
             _mm_storeu_si128(out.add(count) as *mut __m128i, p);
 
             count += _popcnt32(in_difference) as usize;
-            i_a += SSESIZE;
+            i_a += 8;
         }
     }
     
@@ -644,64 +539,63 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 /// # Safety
 /// - Assumes `out` contains enough space to hold the output
 pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
-    const SIZE: usize = 32;
-
-    use std::arch::x86_64::{
-        _mm256_lddqu_si256,
-        _mm256_setzero_si256,
-        _mm256_set1_epi16,
-        _mm256_extract_epi16
-    };
-
     // Use a scalar algorithm if the length of the two vectors is too short to use simd
-    if a.len() < SIZE || b.len() < SIZE {
+    if a.len() < 8 || b.len() < 8 {
         return scalar::xor(a, b, out);
     }
 
-    let simd_len_a = a.len() / SIZE;
-    let simd_len_b = b.len() / SIZE;
-
-    let mut i_a = 0;
-    let mut i_b = 0;
-
     let ptr_a = a.as_ptr();
     let ptr_b = b.as_ptr();
+    let simd_len_a = a.len() / 8;
+    let simd_len_b = b.len() / 8;
+
+    let mut i_a = 1;
+    let mut i_b = 1;
     let mut count = 0;
     
-    let v_a = _mm256_lddqu_si256(*ptr_a as *const Register);
-    let v_b = _mm256_lddqu_si256(*ptr_b as *const Register);
+    let v_a = _mm_lddqu_si128(ptr_a as *const __m128i);
+    let v_b = _mm_lddqu_si128(ptr_b as *const __m128i);
     
-    i_a += 1;
-    i_b += 1;
+    let mut min = _mm_setzero_si128();
+    let mut max = _mm_setzero_si128();
+    let mut last_store = _mm_set1_epi16(-1);
     
-    let mut min = _mm256_setzero_si256();
-    let mut max = _mm256_setzero_si256();
     merge(v_a, v_b, &mut min, &mut max);
-    
-    let mut last_store = _mm256_set1_epi16(-1);
-    count += store_xor(last_store, min, out.add(count));
 
+    count += store_xor(last_store, min, out.add(count));
     last_store = min;
 
     if i_a < simd_len_a && i_b < simd_len_b {
-        let mut v = _mm256_setzero_si256();
+        let mut v;
+        let mut s_a = *ptr_a.add(i_a * 8);
+        let mut s_b = *ptr_b.add(i_b * 8);
 
-        while i_a < simd_len_a && i_b < simd_len_b {
-            let s_a = *ptr_a.add(i_a * SIZE);
-            let s_b = *ptr_b.add(i_b * SIZE);
-
-            if s_a < s_b {
-                v = _mm256_lddqu_si256((ptr_a as *const Register).add(i_a));
+        loop {
+            if s_a <= s_b {
+                v = _mm_lddqu_si128((ptr_a as *const __m128i).add(i_a));
+                
                 i_a += 1;
+                if i_a < simd_len_a {
+                    s_a = *ptr_a.add(i_a * 8)
+                }
+                else {
+                    break;
+                }
             }
             else {
-                v = _mm256_lddqu_si256((ptr_b as *const Register).add(i_b));
+                v = _mm_lddqu_si128((ptr_b as *const __m128i).add(i_b));
+
                 i_b += 1;
+                if i_b < simd_len_b {
+                    s_b = *ptr_b.add(i_b * 8);
+                }
+                else {
+                    break;
+                }
             }
 
             merge(v, max, &mut min, &mut max);
             count += store_xor(last_store, min, out.add(count));
-
             last_store = min;
         }
 
@@ -710,256 +604,146 @@ pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         last_store = min;
     }
 
-    let mut buffer: [u16; 32] = Default::default();
-    let buff_ptr = buffer.as_mut_ptr();
-    let mut buffer_count = store_xor(last_store, max, buff_ptr);
-    
-    let vn = _mm256_extract_epi16(max, N) as u16;
-    let vnm1 = _mm256_extract_epi16(max, NM1) as u16;
-    if vnm1 == vn {
-        buffer_count += 1;
-        buffer[buffer_count] = vn;
+    let mut buffer: [u16; 16] = Default::default();
+    let mut buf_len = store_xor(last_store, max, buffer.as_mut_ptr());
+
+    let v0 = _mm_extract_epi16(max, 7) as u16;
+    let v1 = _mm_extract_epi16(max, 6) as u16;
+    if v0 != v1 {
+        buffer[buf_len] = v0;
+        buf_len += 1;
     }
+
+    let mut finish = |s0: &[u16], pos_0: usize, s1: &[u16], pos_1: usize| {
+        let last_end = pos_0 * 8;
+        let rem = s0.len() - last_end;
+        
+        let ptr_buf = buffer.as_mut_ptr();
+        let ptr_src = s0.as_ptr().add(last_end);
+        let ptr_dst = ptr_buf.add(buf_len);
+        
+        ptr::copy_nonoverlapping(ptr_src, ptr_dst, rem);
+        
+        buf_len += rem;
+        if buf_len == 0 {
+            let num = s1.len() - pos_1 * 8;
+
+            let src = s1.as_ptr().add(pos_1 * 8);
+            let dst = out.add(count);
+
+            ptr::copy_nonoverlapping(src, dst, num);
+
+            count += num;
+        }
+        else {
+            &buffer[..buf_len].sort();
+            buf_len = unique_xor(ptr_buf, buf_len);
+            count += scalar::xor(
+                &buffer[..buf_len],
+                &s1[(pos_1 * 8)..],
+                out.add(count)
+            );
+        }
+    };
 
     if i_a == simd_len_a {
-        let rem = a.len() - (simd_len_a * SIZE);
-        ptr::copy_nonoverlapping(ptr_a.add(i_a * SIZE), buff_ptr.add(buffer_count), rem);
-        buffer_count += rem;
-
-        // No elements left, 
-        if buffer_count == 0 {
-            let num = b.len() - simd_len_b * SIZE;
-            ptr::copy_nonoverlapping(ptr_b.add(i_b * SIZE), out.add(count), num);
-
-            count += num;
-        }
-        else {
-            let elements = &mut buffer[..buffer_count];
-            elements.sort();
-            let (deduped, _dups) = elements.partition_dedup();
-
-            count += scalar::xor(&deduped, &b[(simd_len_b * SIZE)..b.len()], out.add(count));
-        }
+        finish(a, i_a, b, i_b);
     }
     else {
-        let rem = b.len() - (simd_len_b * SIZE);
-        ptr::copy_nonoverlapping(ptr_b.add(i_b * SIZE), buff_ptr.add(buffer_count), rem);
-        buffer_count += rem;
-
-        // No elements left, 
-        if buffer_count == 0 {
-            let num = a.len() - simd_len_a * SIZE;
-            ptr::copy_nonoverlapping(ptr_a.add(i_a * SIZE), out.add(count), num);
-
-            count += num;
-        }
-        else {
-            let elements = &mut buffer[..buffer_count];
-            elements.sort();
-            let (deduped, _dups) = elements.partition_dedup();
-
-            count += scalar::xor(&deduped, &a[(simd_len_a * SIZE)..a.len()], out.add(count));
-        }
+        finish(b, i_b, a, i_a);
     }
 
     count
 }
 
-#[cfg(target_feature = "avx2")]
-unsafe fn store_xor(old: Register, new: Register, output: *mut u16) -> usize {
-    use std::arch::x86_64::{
-        _popcnt32,
-        _mm256_alignr_epi8,
-        _mm256_cmpeq_epi16,
-        _mm256_movemask_epi8,
-        _mm256_packs_epi16,
-        _mm256_setzero_si256,
-        _mm256_lddqu_si256,
-        _mm256_shuffle_epi8,
-        _mm256_storeu_si256
-    };
+/// Move the contents of an array to ensure that all unique elements occupy
+/// are first in the array
+/// 
+/// # Safety
+/// Requires that `out` be a valid address and that it is valid for `out * len` elements
+unsafe fn unique_or(out: *mut u16, len: usize) -> usize {
+    let mut count = 1;
+    for i in 1..len {
+        if *(out.add(i)) != *(out.add(i - 1)) {
+            *(out.add(count)) = *(out.add(i));
+            count += 1;
+        }
+    }
     
-    let temp_0 = _mm256_alignr_epi8(new, old, 32 - 4);
-    let temp_1 = _mm256_alignr_epi8(new, old, 32 - 2);
-    
-    let eq_left = _mm256_cmpeq_epi16(temp_0, temp_1);
-    let eq_right = _mm256_cmpeq_epi16(temp_0, new);
-    let eq_lr = _mm256_cmpeq_epi16(eq_left, eq_right);
-    
-    let move_mask = _mm256_movemask_epi8(
-        _mm256_packs_epi16(eq_lr, _mm256_setzero_si256())
-    );
-    
-    let num_new = 16 - _popcnt32(move_mask);
-    
-    let key = _mm256_lddqu_si256(UNIQUE_SHUFFLE.as_ptr().add(move_mask as usize) as *const Register);
-    let val = _mm256_shuffle_epi8(temp_1, key);
-    
-    _mm256_storeu_si256(output as *mut Register, val);
-    
-    return num_new as usize;
+    count
 }
 
-#[cfg(all(target_feature = "sse4.2", not(target_feature = "avx2")))]
-unsafe fn store_xor(old: Register, new: Register, output: *mut u16) -> usize {
-    use std::arch::x86_64::{
-        _popcount32,
-        _mm_alignr_epi8,
-        _mm_cmpeq_epi16,
-        _mm_movemask_epi8,
-        _mm_packs_epi16,
-        _mm_setzero_si128,
-        _mm_lddqu_si128,
-        _mm_shuffle_epi8,
-        _mm_storeu_si128
-    };
+unsafe fn unique_xor(out: *mut u16, len: usize) -> usize {
+    let mut count = 1;
+    for i in 1..len {
+        if *(out.add(i)) != *(out.add(i - 1)) {
+            *(out.add(count)) = *(out.add(i));
+            count += 1;
+        }
+        else {
+            count -= 1;
+        }
+    }
     
+    count
+}
+
+unsafe fn store_or(old: __m128i, new: __m128i, output: *mut u16) -> usize {
+    let temp = _mm_alignr_epi8(new, old, 16 - 2);
+    let packed = _mm_packs_epi16(_mm_cmpeq_epi16(temp, new), _mm_setzero_si128());
+    let mask = _mm_movemask_epi8(packed);
+    let key = _mm_lddqu_si128((UNIQUE_SHUFFLE.as_ptr() as *const __m128i).offset(mask as isize));
+    let val = _mm_shuffle_epi8(new, key);
+    
+    _mm_storeu_si128(output as *mut __m128i, val);
+    
+    (8 - _popcnt32(mask)) as usize
+}
+
+unsafe fn store_xor(old: __m128i, new: __m128i, output: *mut u16) -> usize {
     let temp_0 = _mm_alignr_epi8(new, old, 16 - 4);
     let temp_1 = _mm_alignr_epi8(new, old, 16 - 2);
     
-    let eq_left = _mm_cmpeq_epi16(temp_0, temp_1);
-    let eq_right = _mm_cmpeq_epi16(temp_0, new);
-    let eq_lr = _mm_cmpeq_epi16(eq_left, eq_right);
-    
-    let move_mask = _mm_movemask_epi8(
+    let eq_l = _mm_cmpeq_epi16(temp_1, temp_0);
+    let eq_r = _mm_cmpeq_epi16(temp_1, new);
+    let eq_lr = _mm_or_si128(eq_l, eq_r);
+    let mask = _mm_movemask_epi8(
         _mm_packs_epi16(eq_lr, _mm_setzero_si128())
     );
     
-    let num_new = 8 - _popcnt32(move_mask);
-    
-    let key = _mm_lddqu_si128(UNIQUE_SHUFFLE.as_ptr().add(move_mask as usize) as *const Register);
+    let key = _mm_lddqu_si128((UNIQUE_SHUFFLE.as_ptr() as *const __m128i).add(mask as usize));
     let val = _mm_shuffle_epi8(temp_1, key);
     
-    _mm_storeu_si128(output as *mut Register, val);
+    _mm_storeu_si128(output as *mut __m128i, val);
     
-    return num_new as usize;
+    (8 - _popcnt32(mask)) as usize
 }
 
-#[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))]
-unsafe fn store_xor(_old: Register, _new: Register, _output: *mut u16) -> usize {
-    panic!("Not supported, did you forget to compile with simd extensions?")
-}
-
-#[cfg(target_feature = "avx2")]
-unsafe fn merge(a: Register, b: Register, min: &mut Register, max: &mut Register) {
-    use std::arch::x86_64::{
-        _mm256_min_epu16,
-        _mm256_max_epu16,
-        _mm256_alignr_epi8
-    };
-    
-    let mut temp = _mm256_min_epu16(a, b);
-    *max = _mm256_max_epu16(a, b);
-    temp = _mm256_alignr_epi8(temp, temp, 2);
-
-    for _i in 0..(16 - 2) {
-        *min = _mm256_min_epu16(temp, *max);
-        *max = _mm256_max_epu16(temp, *max);
-        temp = _mm256_alignr_epi8(*min, *min, 2);
-    }
-
-    *min = _mm256_min_epu16(temp, *max);
-    *max = _mm256_max_epu16(temp, *max);
-    *min = _mm256_alignr_epi8(*min, *min, 2);
-}
-
-#[cfg(all(target_feature = "sse4.2", not(target_feature = "avx2")))]
-unsafe fn merge(a: Register, b: Register, min: &mut Register, max: &mut Register) {
-    use std::arch::x86_64::{
-        _mm_min_epu16,
-        _mm_max_epu16,
-        _mm_alignr_epi8
-    };
-    
+unsafe fn merge(a: __m128i, b: __m128i, min: &mut __m128i, max: &mut __m128i) {
     let mut temp = _mm_min_epu16(a, b);
     *max = _mm_max_epu16(a, b);
     temp = _mm_alignr_epi8(temp, temp, 2);
-
-    for _i in 0..(8 - 2) {
-        *min = _mm_min_epu16(temp, *max);
-        *max = _mm_max_epu16(temp, *max);
-        temp = _mm_alignr_epi8(*min, *min, 2);
-    }
-
+    *min = _mm_min_epu16(temp, *max);
+    *max = _mm_max_epu16(temp, *max);
+    temp = _mm_alignr_epi8(*min, *min, 2);
+    *min = _mm_min_epu16(temp, *max);
+    *max = _mm_max_epu16(temp, *max);
+    temp = _mm_alignr_epi8(*min, *min, 2);
+    *min = _mm_min_epu16(temp, *max);
+    *max = _mm_max_epu16(temp, *max);
+    temp = _mm_alignr_epi8(*min, *min, 2);
+    *min = _mm_min_epu16(temp, *max);
+    *max = _mm_max_epu16(temp, *max);
+    temp = _mm_alignr_epi8(*min, *min, 2);
+    *min = _mm_min_epu16(temp, *max);
+    *max = _mm_max_epu16(temp, *max);
+    temp = _mm_alignr_epi8(*min, *min, 2);
+    *min = _mm_min_epu16(temp, *max);
+    *max = _mm_max_epu16(temp, *max);
+    temp = _mm_alignr_epi8(*min, *min, 2);
     *min = _mm_min_epu16(temp, *max);
     *max = _mm_max_epu16(temp, *max);
     *min = _mm_alignr_epi8(*min, *min, 2);
-}
-
-#[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))]
-unsafe fn merge(_a: Register, _b: Register, _min: &mut Register, _max: &mut Register) {
-    panic!("Not supported, did you forget to compile with simd extensions?")
-}
-
-#[cfg(target_feature = "avx2")]
-unsafe fn store_union(old: Register, new: Register, output: *mut u16) -> usize {
-    use std::arch::x86_64::{
-        _popcnt32,
-        _mm256_alignr_epi8,
-        _mm256_movemask_epi8,
-        _mm256_packs_epi16,
-        _mm256_cmpeq_epi16,
-        _mm256_setzero_si256,
-        _mm256_lddqu_si256,
-        _mm256_shuffle_epi8,
-        _mm256_storeu_si256
-    };
-    
-    let temp = _mm256_alignr_epi8(new, old, 32 - 2);
-    let mask = _mm256_movemask_epi8(
-        _mm256_packs_epi16(
-            _mm256_cmpeq_epi16(temp, new),
-            _mm256_setzero_si256()
-        )
-    );
-
-    let num_values = (SIZE as i32) - _popcnt32(mask);
-    let shuffle = UNIQUE_SHUFFLE.as_ptr().add(mask as usize) as *mut Register;
-
-    let key = _mm256_lddqu_si256(shuffle);
-    let val = _mm256_shuffle_epi8(new, key);
-    
-    _mm256_storeu_si256(output as *mut Register, val);
-
-    num_values as usize
-}
-
-#[cfg(all(target_feature = "sse4.2", not(target_feature = "avx2")))]
-unsafe fn store_union(old: Register, new: Register, output: *mut u16) -> usize {
-    use std::arch::x86_64::{
-        _popcnt32,
-        _mm_alignr_epi8,
-        _mm_movemask_epi8,
-        _mm_packs_epi16,
-        _mm_cmpeq_epi16,
-        _mm_setzero_si128,
-        _mm_lddqu_si128,
-        _mm_shuffle_epi8,
-        _mm_storeu_si128
-    };
-    
-    let temp = _mm_alignr_epi8(new, old, 16 - 2);
-    let mask = _mm_movemask_epi8(
-        _mm_packs_epi16(
-            _mm_cmpeq_epi16(temp, new),
-            _mm_setzero_si128()
-        )
-    );
-
-    let num_values = (SIZE as i32) - _popcnt32(mask);
-    let shuffle = UNIQUE_SHUFFLE.as_ptr().add(mask as usize) as *mut Register;
-
-    let key = _mm_lddqu_si128(shuffle);
-    let val = _mm_shuffle_epi8(new, key);
-    
-    _mm_storeu_si128(output as *mut Register, val);
-
-    num_values as usize
-}
-
-#[cfg(not(any(target_feature = "avx2", target_feature = "sse4.2")))]
-unsafe fn store_union(_old: Register, _new: Register, _output: *mut u16) -> usize {
-    panic!("Not supported, did you forget to compile with simd extensions?")
 }
 
 const UNIQUE_SHUFFLE: [u8; 4096] = [
