@@ -44,7 +44,7 @@ use crate::container::{self, *, array_ops};
 /// Queries using the normal ops will create a new bitmap for every operation.
 /// 
 /// `cardinality()` (`len()`) queries may lazily evaluate the cardinality of some containers if they are determined to be out of date
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct RoaringBitmap {
     /// List of containers in this roaring bitmap
     containers: Vec<Container>,
@@ -91,7 +91,7 @@ impl RoaringBitmap {
                 bitmap.keys.push(key as u16);
             }
 
-            value += (container_max - container_min) as u32;
+            value += u32::from(container_max - container_min);
         }
 
         bitmap
@@ -141,7 +141,7 @@ impl RoaringBitmap {
     fn add_fetch_container(&mut self, value: u32) -> usize {
         let x_high = (value >> 16) as u16;
 
-        if let Some(i) = self.get_index(&x_high) {
+        if let Some(i) = self.get_index(x_high) {
             self.containers[i].add(value as u16);
 
             i
@@ -205,7 +205,7 @@ impl RoaringBitmap {
     /// Add a list of values to the bitmap
     pub fn add_slice(&mut self, slice: &[u32]) {
         // Add the first value so we can nab the container index
-        if slice.len() == 0 {
+        if slice.is_empty() {
             return;
         }
 
@@ -237,7 +237,7 @@ impl RoaringBitmap {
     pub fn remove(&mut self, value: u32) {
         let x_high = (value >> 16) as u16;
         
-        if let Some(i) = self.get_index(&x_high) {
+        if let Some(i) = self.get_index(x_high) {
             self.containers[i].remove(value as u16);
             
             if self.containers[i].cardinality() == 0 {
@@ -287,7 +287,7 @@ impl RoaringBitmap {
     
     /// Remove a list of values from the bitmap
     pub fn remove_slice(&mut self, slice: &[u32]) {
-        if slice.len() == 0 {
+        if slice.is_empty() {
             return;
         }
 
@@ -297,7 +297,7 @@ impl RoaringBitmap {
                 let key = (*value >> 16) as u16;
 
                 if c_index.is_none() || key != self.keys[c_index.unwrap()] {
-                    c_index = self.get_index(&key);
+                    c_index = self.get_index(key);
                 }
                 
                 if let Some(index) = c_index {
@@ -318,7 +318,7 @@ impl RoaringBitmap {
     pub fn contains(&self, value: u32) -> bool {
         let high = (value >> 16) as u16;
 
-        if let Some(i) = self.get_index(&high) {
+        if let Some(i) = self.get_index(high) {
             return self.containers[i].contains(value as u16);
         }
 
@@ -347,8 +347,8 @@ impl RoaringBitmap {
             return false;
         }
 
-        let ci_min = self.get_index(&key_min);
-        let ci_max = self.get_index(&key_max);
+        let ci_min = self.get_index(key_min);
+        let ci_max = self.get_index(key_max);
 
         // One or both containers don't exist in this bitmap
         if ci_min.is_none() || ci_max.is_none() {
@@ -415,7 +415,7 @@ impl RoaringBitmap {
     /// Check if the bitmap is empty
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.containers.len() == 0
+        self.containers.is_empty()
     }
     
     /// Clear the contents of this bitmap
@@ -443,7 +443,7 @@ impl RoaringBitmap {
         let mut start_rank = 0;
         for (key, container) in iter {
             if let Some(element) = container.select(rank, &mut start_rank) {
-                return Some((element as u32) | ((*key as u32) << 16));
+                return Some(u32::from(element) | (u32::from(*key) << 16));
             }
         }
 
@@ -478,22 +478,22 @@ impl RoaringBitmap {
     
     /// Find the smallest value in the bitmap. Returns None if empty
     pub fn min(&self) -> Option<u32> {
-        if self.containers.len() == 0 {
+        if self.containers.is_empty() {
             return None;
         }
 
         unsafe {
             let key = self.keys.get_unchecked(0);
             let container = self.containers.get_unchecked(0);
-            let low = container.min()? as u32;
+            let low = u32::from(container.min()?);
 
-            Some(low | ((*key as u32) << 16))
+            Some(low | (u32::from(*key) << 16))
         }
     }
     
     /// Find the largest value in the bitmap. Returns None if empty
     pub fn max(&self) -> Option<u32> {
-        if self.containers.len() == 0 {
+        if self.containers.is_empty() {
             return None;
         }
 
@@ -501,9 +501,9 @@ impl RoaringBitmap {
             let last = self.keys.len() - 1;
             let key = self.keys.get_unchecked(last);
             let container = self.containers.get_unchecked(last);
-            let low = container.max()? as u32;
+            let low = u32::from(container.max()?);
 
-            Some(low | ((*key as u32) << 16))
+            Some(low | (u32::from(*key) << 16))
         }
     }
 
@@ -833,7 +833,7 @@ impl RoaringBitmap {
         }
 
         // Append any remaining containers
-        if let Some(mut i_last) = self.get_index(&end_high) {
+        if let Some(mut i_last) = self.get_index(end_high) {
             i_last += 1; // Increment to get the next container after the last flipped one
 
             if i_last < self.containers.len() {
@@ -848,7 +848,7 @@ impl RoaringBitmap {
     /// Insert the negation of the container within `range` with the given key.
     /// Creates a new full container if no container is found
     fn append_flipped(&mut self, other: &Self, key: u16, range: Range<u16>) {
-        if let Some(i) = other.get_index(&key) {
+        if let Some(i) = other.get_index(key) {
             let unflipped = &other.containers[i];
             let flipped = unflipped.not(range);
 
@@ -1107,14 +1107,14 @@ impl RoaringBitmap {
 
         // Keys are the same, just do it in place
         if high_start == high_end {
-            if let Some(i) = self.get_index(&high_start) {
+            if let Some(i) = self.get_index(high_start) {
                 self.containers[i].not(low_start..low_end);
             }
         }
         else {
             // First container is a partial one, flip in place
             if low_start > 0 {
-                if let Some(i) = self.get_index(&high_start) {
+                if let Some(i) = self.get_index(high_start) {
                     self.containers[i].not(low_start..std::u16::MAX);
                 }
             }
@@ -1124,7 +1124,7 @@ impl RoaringBitmap {
             }
 
             for bound in high_start..high_end {
-                if let Some(i) = self.get_index(&bound) {
+                if let Some(i) = self.get_index(bound) {
                     self.containers[i].not(0..std::u16::MAX);
                 }
             }
@@ -1133,7 +1133,7 @@ impl RoaringBitmap {
             if low_end != std::u16::MAX {
                 high_end += 1;
 
-                if let Some(i) = self.get_index(&high_end) {
+                if let Some(i) = self.get_index(high_end) {
                     self.containers[i].not(0..low_end);
                 }
             }
@@ -1213,15 +1213,15 @@ impl RoaringBitmap {
 
     /// Find the index for a given key
     #[inline]
-    fn get_index(&self, x: &u16) -> Option<usize> {
-        self.keys.binary_search(x)
+    fn get_index(&self, x: u16) -> Option<usize> {
+        self.keys.binary_search(&x)
             .ok()
     }
     
     /// Get an iterator over the values of the bitmap
     pub fn iter(&self) -> Iter {
         let iter = {
-            if self.containers.len() > 0 {
+            if !self.containers.is_empty() {
                 self.containers[0].iter()
             }
             else {
@@ -1333,7 +1333,7 @@ impl RoaringBitmap {
                 let offset = (header_offset as u32).to_le_bytes();
                 bytes_written += buf.write(&offset)?;
 
-                header_offset = header_offset + c.serialized_size();
+                header_offset += c.serialized_size();
             }
         }
 
@@ -1354,13 +1354,13 @@ impl RoaringBitmap {
         // since it's likely to contain the largest slice of data we'll ever need to read
         // and will help cut down on the allocations done during deserialization
         let mut read_buf: [u8; 256] = [0; 256]; // Enough for 64 32bit integers
-        let read_ptr = read_buf.as_ptr();
+        let read_ptr = read_buf.as_ptr(); // TODO: Fix this code
 
         // Read out the cookie and number of containers
         let (cookie, size) = {
             // Deserialize cookie
             buf.read(&mut read_buf[0..2])
-                .map_err(|io_err| DeserializeError::IoError(io_err))?;
+                .map_err(DeserializeError::IoError)?;
         
             let cookie = unsafe { ptr::read(read_ptr as *const u32) };
 
@@ -1376,7 +1376,7 @@ impl RoaringBitmap {
                 }
                 else {
                     buf.read(&mut read_buf[0..2])
-                        .map_err(|io_err| DeserializeError::IoError(io_err))?;
+                        .map_err(DeserializeError::IoError)?;
 
                     unsafe { ptr::read(read_ptr as *const u32) }
                 }
@@ -1399,7 +1399,7 @@ impl RoaringBitmap {
             bitmap.reserve_exact(s);
 
             buf.read(&mut bitmap)
-                .map_err(|io_err| DeserializeError::IoError(io_err))?;
+                .map_err(DeserializeError::IoError)?;
         }
 
         // Setup the resulting bitmap
@@ -1409,7 +1409,7 @@ impl RoaringBitmap {
         let mut cards = Vec::with_capacity(size as usize);
         for _i in 0..size {
             buf.read(&mut read_buf[0..4])
-                .map_err(|io_err| DeserializeError::IoError(io_err))?;
+                .map_err(DeserializeError::IoError)?;
 
             let (key, card) = unsafe {
                 let ptr = read_ptr as *const u16;
@@ -1425,43 +1425,45 @@ impl RoaringBitmap {
         // This implementation doesn't support container streaming
         // so the offset header is ignored
         if !has_run || size >= Self::NO_OFFSET_THRESHOLD {
-            let offset_header = (size * 4) as i64;
+            let offset_header = i64::from(size * 4);
 
             buf.seek(SeekFrom::Current(offset_header))
-                .map_err(|io_err| DeserializeError::IoError(io_err))?;
+                .map_err(DeserializeError::IoError)?;
         }
 
         // Load in the containers
         for i in 0..(size as usize) {
             let card = cards[i] as usize;
-            let mut is_bitset = card > DEFAULT_MAX_SIZE;
-            let mut is_run = false;
+            let is_bitset;
+            let is_run;
 
-            if has_run {
-                if (bitmap[i / 8] & (1 << (i % 8))) != 0 {
-                    is_bitset = false;
-                    is_run = true;
-                }
+            if has_run && bitmap[i / 8] & (1 << (i % 8)) != 0 {
+                is_bitset = false;
+                is_run = true;
+            }
+            else {
+                is_bitset = card > DEFAULT_MAX_SIZE;
+                is_run = false;
             }
 
             // Container is a bitset
             if is_bitset {
                 let bitset = BitsetContainer::deserialize(buf)
-                    .map_err(|io_err| DeserializeError::IoError(io_err))?;
+                    .map_err(DeserializeError::IoError)?;
 
                 result.containers.push(Container::Bitset(bitset));
             }
             // Container is a run container
             else if is_run {
                 let run = RunContainer::deserialize(buf)
-                    .map_err(|io_err| DeserializeError::IoError(io_err))?;
+                    .map_err(DeserializeError::IoError)?;
                 
                 result.containers.push(Container::Run(run));
             }
             // Container is an array
             else {
                 let array = ArrayContainer::deserialize(card, buf)
-                    .map_err(|io_err| DeserializeError::IoError(io_err))?;
+                    .map_err(DeserializeError::IoError)?;
 
                 result.containers.push(Container::Array(array));
             }
@@ -1477,14 +1479,14 @@ impl RoaringBitmap {
         let len = self.containers.len();
         if contains_run {
             if len < (Self::NO_OFFSET_THRESHOLD as usize) {
-                return 4 + (len + 7) / 8 + 4 * len;
+                4 + (len + 7) / 8 + 4 * len
             }
             else {
-                return 4 + (len + 7) / 8 + 8 * len;
+                4 + (len + 7) / 8 + 8 * len
             }
         }
         else {
-            return 16 * len;
+            16 * len
         }
     }
 
@@ -1540,7 +1542,7 @@ impl<'a> Iterator for Iter<'a> {
                 *self.keys.get_unchecked(self.index) 
             };
 
-            ((key as u32) << 16) | (low as u32)
+            (u32::from(key) << 16) | u32::from(low)
         })
     }
 }
