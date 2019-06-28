@@ -469,8 +469,8 @@ impl RunContainer {
     /// Select the element with `rank` starting the search from `start_rank`
     pub fn select(&self, rank: u32, start_rank: &mut u32) -> Option<u16> {
         for run in self.runs.iter() {
-            let length = run.length as u32;
-            let value = run.value as u32;
+            let length = u32::from(run.length);
+            let value = u32::from(run.value);
 
             if rank <= *start_rank + length {
                 return Some((value + rank - *start_rank) as u16);
@@ -1107,7 +1107,7 @@ impl SetAnd<Self> for RunContainer {
                 let last_start = start0.max(start1);
                 let first_end;
 
-                if unlikely!(end0 == end1) {
+                if end0 == end1 {
                     first_end = end0;
                     i0 += 1;
                     i1 += 1;
@@ -1195,7 +1195,7 @@ impl SetAnd<Self> for RunContainer {
                 let last_start = start0.max(start1);
                 let first_end;
 
-                if unlikely!(end0 == end1) {
+                if end0 == end1 {
                     first_end = end0;
                     i0 += 1;
                     i1 += 1;
@@ -1895,6 +1895,22 @@ impl<'a> Iterator for Iter<'a> {
 
 #[cfg(test)]
 mod test {
+    use crate::container::*;
+    use crate::test::*;
+
+    impl TestUtils for RunContainer {
+        fn create() -> Self {
+            Self::new()
+        }
+
+        fn fill(&mut self, data: &[u16]) {
+            for value in data.iter() {
+                self.add(*value);
+            }
+        }
+    }
+
+    /*
     #[test]
     fn or() {
         
@@ -1912,4 +1928,5 @@ mod test {
     fn xor() {
 
     }
+    */
 }

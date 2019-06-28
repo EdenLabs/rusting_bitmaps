@@ -985,3 +985,19 @@ impl<'a> Iterator for Iter<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::container::*;
+    use crate::test::*;
+
+    impl TestUtils for BitsetContainer {
+        fn create() -> Self {
+            Self::new()
+        }
+
+        fn fill(&mut self, data: &[u16]) {
+            self.set_list(data);
+        }
+    }
+}

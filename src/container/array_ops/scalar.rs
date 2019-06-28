@@ -257,6 +257,8 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 /// # Remarks
 /// - Assumes that `a` and `b` are sorted. The result is undefined if violated
 pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
+    println!("scalar boi");
+
     let mut ptr_a = a.as_ptr();
     let mut ptr_b = b.as_ptr();
     let ptr_a_end = ptr_a.add(a.len());

@@ -1,49 +1,19 @@
+#![cfg(test)]
+
 pub mod short;
 pub mod extended;
 
+use crate::container::Container;
+
 /// An internal trait for automating test setup
-trait TestUtils {
+pub trait TestUtils {
     fn create() -> Self;
 
     fn fill(&mut self, data: &[u16]);
 }
 
-impl TestUtils for ArrayContainer {
-    fn create() -> Self {
-        Self::new()
-    }
-
-    fn fill(&mut self, data: &[u16]) {
-        for value in data.iter() {
-            self.add(*value);
-        }
-    }
-}
-
-impl TestUtils for BitsetContianer {
-    fn create() -> Self {
-        Self::new()
-    }
-
-    fn fill(&mut self, data: &[u16]) {
-        self.set_list(data);
-    }
-}
-
-impl TestUtils for RunContainer {
-    fn create() -> Self {
-        Self::new()
-    }
-
-    fn fill(&mut self, data: &[u16]) {
-        for value in data.iter() {
-            self.add(*value);
-        }
-    }
-}
-
 /// Create an array container from the given data set
-fn make_container<T: TestUtils>(data: &[u16]) -> T<u16> {
+pub fn make_container<T: TestUtils>(data: &[u16]) -> T {
     let mut container = T::create();
     container.fill(data);
 
@@ -51,18 +21,18 @@ fn make_container<T: TestUtils>(data: &[u16]) -> T<u16> {
 }
 
 /// Run a test using the provided executor function and compare it against the expected value
-fn run_test<T, U, F>(data: &[u16], f: F) 
+pub fn run_test<T, U, F>(in_a: &[u16], in_b: &[u16], expected: &[u16], f: F) 
     where T: TestUtils,
           U: TestUtils,
           F: Fn(&mut T, &mut U) -> Container 
 {
-    let mut a = make_container::<T>(&DATA_A);
-    let mut b = make_container::<U>(&DATA_B);
+    let mut a = make_container::<T>(in_a);
+    let mut b = make_container::<U>(in_b);
     let result = (f)(&mut a, &mut b);
 
     // Check that the cardinality matches the precomputed result
-    let len0 = result.len();
-    let len1 = data.len();
+    let len0 = result.cardinality();
+    let len1 = expected.len();
     assert_eq!(
         len0, 
         len1, 
@@ -73,7 +43,7 @@ fn run_test<T, U, F>(data: &[u16], f: F)
 
     // Check that the output matches the precomputed result
     let pass = result.iter()
-        .zip(data.iter());
+        .zip(expected.iter());
     
     let (failed, found, expected) = {
         let mut out_found = 0;
@@ -81,9 +51,9 @@ fn run_test<T, U, F>(data: &[u16], f: F)
 
         let mut failed = false;
         for (found, expected) in pass {
-            if found != expected {
+            if found != *expected {
                 failed = true;
-                out_found = *found;
+                out_found = found;
                 out_expected = *expected;
                 break;
             }

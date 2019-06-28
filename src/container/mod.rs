@@ -593,7 +593,7 @@ impl<'a> Iterator for Iter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
          match &mut self.iter {
             ContainerIter::None => None,
-            ContainerIter::Array(c) => c.next().map(|v| *v),
+            ContainerIter::Array(c) => c.next().copied(),
             ContainerIter::Bitset(c) => c.next(),
             ContainerIter::Run(c) => c.next()
         }

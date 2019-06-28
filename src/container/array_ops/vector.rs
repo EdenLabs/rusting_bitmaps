@@ -1,6 +1,7 @@
 // Required since code is conditionally compiled out in this module
 #![allow(dead_code)]
 
+#[cfg(target_feature = "sse4.2")]
 use std::arch::x86_64::{
     _SIDD_BIT_MASK,
     _SIDD_CMP_EQUAL_ANY,
@@ -27,10 +28,12 @@ use std::arch::x86_64::{
     _mm_extract_epi32,
     _mm_or_si128,
 };
+
 use std::ptr;
 
 use super::scalar;
 
+#[cfg(target_feature = "sse4.2")]
 const CMPISTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
 
 /// Compute the union between `a` and `b` and append the result into `out`
@@ -40,6 +43,7 @@ const CMPISTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MAS
 /// 
 /// # Safety
 /// - Assumes `out` contains enough space to hold the output
+#[cfg(target_feature = "sse4.2")]
 pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     if a.len() < 8 || b.len() < 8 {
         return scalar::or(a, b, out);
@@ -148,6 +152,7 @@ pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 /// 
 /// # Safety
 /// - Assumes `out` contains enough space to hold the output
+#[cfg(target_feature = "sse4.2")]
 pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Both sets are empty, there's no possible intersection
     if a.len() == 0 || b.len() == 0 {
@@ -268,6 +273,7 @@ pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 }
 
 /// Find the cardinality of the intersection between `a` and `b`
+#[cfg(target_feature = "sse4.2")]
 pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
     // Both sets are empty, there's no possible intersection
     if a.len() == 0 || b.len() == 0 {
@@ -331,8 +337,6 @@ pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
                 loop {
                     let res = _mm_cmpistrm(vb, va, CMPISTRM_ARGS);
                     let r = _mm_extract_epi32(res, 0);
-                    let sm16 = _mm_lddqu_si128((SHUFFLE_MASK16.as_ptr() as *const __m128i).add(r as usize));
-                    let p = _mm_shuffle_epi8(va, sm16);
 
                     count += _popcnt32(r) as usize;
 
@@ -390,6 +394,7 @@ pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
 /// 
 /// # Safety
 /// - Assumes `out` contains enough space to hold the output
+#[cfg(target_feature = "sse4.2")]
 pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // A is the empty set therefore there are no elements in A not in B
     if a.len() == 0 {
@@ -538,7 +543,10 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 /// 
 /// # Safety
 /// - Assumes `out` contains enough space to hold the output
+#[cfg(target_feature = "sse4.2")]
 pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
+    println!("simd bby");
+
     // Use a scalar algorithm if the length of the two vectors is too short to use simd
     if a.len() < 8 || b.len() < 8 {
         return scalar::xor(a, b, out);
@@ -688,6 +696,7 @@ unsafe fn unique_xor(out: *mut u16, len: usize) -> usize {
     count
 }
 
+#[cfg(target_feature = "sse4.2")]
 unsafe fn store_or(old: __m128i, new: __m128i, output: *mut u16) -> usize {
     let temp = _mm_alignr_epi8(new, old, 16 - 2);
     let packed = _mm_packs_epi16(_mm_cmpeq_epi16(temp, new), _mm_setzero_si128());
@@ -700,6 +709,7 @@ unsafe fn store_or(old: __m128i, new: __m128i, output: *mut u16) -> usize {
     (8 - _popcnt32(mask)) as usize
 }
 
+#[cfg(target_feature = "sse4.2")]
 unsafe fn store_xor(old: __m128i, new: __m128i, output: *mut u16) -> usize {
     let temp_0 = _mm_alignr_epi8(new, old, 16 - 4);
     let temp_1 = _mm_alignr_epi8(new, old, 16 - 2);
@@ -719,6 +729,7 @@ unsafe fn store_xor(old: __m128i, new: __m128i, output: *mut u16) -> usize {
     (8 - _popcnt32(mask)) as usize
 }
 
+#[cfg(target_feature = "sse4.2")]
 unsafe fn merge(a: __m128i, b: __m128i, min: &mut __m128i, max: &mut __m128i) {
     let mut temp = _mm_min_epu16(a, b);
     *max = _mm_max_epu16(a, b);

@@ -10,10 +10,10 @@ mod scalar;
 ///  - Assumes that `out` has enough space to contain the full result
 pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
-    #[cfg(any(target_feature = "sse4.2", target_feature = "avx2"))]
+    #[cfg(target_feature = "sse4.2")]
     { vector::or(a, b, out) }
     
-    #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx2")))]
+    #[cfg(not(target_feature = "sse4.2"))]
     { scalar::or(a, b, out) }
 }
 
@@ -23,19 +23,19 @@ pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 ///  - Assumes that `out` has enough space to contain the full result
 pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
-    #[cfg(any(target_feature = "sse4.2", target_feature = "avx2"))]
+    #[cfg(target_feature = "sse4.2")]
     { vector::and(a, b, out) }
     
-    #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx2")))]
+    #[cfg(not(target_feature = "sse4.2"))]
     { scalar::and(a, b, out) }
 }
 
 pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
-    #[cfg(any(target_feature = "sse4.2", target_feature = "avx2"))]
+   #[cfg(target_feature = "sse4.2")]
     { vector::and_cardinality(a, b) }
     
-    #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx2")))]
+    #[cfg(not(target_feature = "sse4.2"))]
     { scalar::and_cardinality(a, b) }
 }
 
@@ -45,10 +45,10 @@ pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
 ///  - Assumes that `out` has enough space to contain the full result
 pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
-    #[cfg(any(target_feature = "sse4.2", target_feature = "avx2"))]
+    #[cfg(target_feature = "sse4.2")]
     { vector::and_not(a, b, out) }
     
-    #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx2")))]
+    #[cfg(not(target_feature = "sse4.2"))]
     { scalar::and_not(a, b, out) }
 }
 
@@ -58,10 +58,10 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 ///  - Assumes that `out` has enough space to contain the full result
 pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
-    #[cfg(any(target_feature = "sse4.2", target_feature = "avx2"))]
+    #[cfg(target_feature = "sse4.2")]
     { vector::xor(a, b, out) }
     
-    #[cfg(not(any(target_feature = "sse4.2", target_feature = "avx2")))]
+    #[cfg(not(target_feature = "sse4.2"))]
     { scalar::xor(a, b, out) }
 }
 
@@ -162,7 +162,6 @@ pub fn exponential_search<T>(slice: &[T], size: usize, key: T) -> Result<usize, 
 
 #[cfg(test)]
 mod test {
-    use crate::test::*;
     use crate::test::short::*;
     use super::scalar;
     use super::vector;
