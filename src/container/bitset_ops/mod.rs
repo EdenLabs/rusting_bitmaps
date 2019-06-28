@@ -48,6 +48,7 @@ pub fn and_cardinality(a: &[u64], b: &[u64]) -> usize {
 #[cfg(test)]
 mod test {
     use crate::test::*;
+    use crate::test::short::*;
     use crate::container::BitsetContainer;
 
     /// Create an array container from the given data set
@@ -61,8 +62,8 @@ mod test {
     fn run_test<F>(data: &[u16], f: F) 
         where F: Fn(&[u64], &[u64], &mut [u64]) 
     {
-        let a = make_container(&DATA_A);
-        let b = make_container(&DATA_B);
+        let a = make_container(&INPUT_A);
+        let b = make_container(&INPUT_B);
         let mut result = BitsetContainer::new();
 
         (f)(&a, &b, &mut result);
@@ -102,22 +103,22 @@ mod test {
 
     #[test]
     fn or() {
-        run_test(&DATA_OR, super::or);
+        run_test(&RESULT_OR, super::or);
     }
 
     #[test]
     fn and() {
-        run_test(&DATA_AND, super::and);
+        run_test(&RESULT_AND, super::and);
     }
 
     #[test]
     fn and_not() {
-        run_test(&DATA_AND_NOT, super::and_not);
+        run_test(&RESULT_AND_NOT, super::and_not);
     }
 
     #[test]
     fn xor() {
-        run_test(&DATA_XOR, super::xor);
+        run_test(&RESULT_XOR, super::xor);
     }
 
 }

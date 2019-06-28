@@ -163,6 +163,7 @@ pub fn exponential_search<T>(slice: &[T], size: usize, key: T) -> Result<usize, 
 #[cfg(test)]
 mod test {
     use crate::test::*;
+    use crate::test::short::*;
     use super::scalar;
     use super::vector;
 
@@ -177,8 +178,8 @@ mod test {
     fn run_test<F>(data: &[u16], f: F) 
         where F: Fn(&[u16], &[u16], *mut u16) -> usize 
     {
-        let a = make_container(&DATA_A);
-        let b = make_container(&DATA_B);
+        let a = make_container(&INPUT_A);
+        let b = make_container(&INPUT_B);
         let mut result = Vec::new();
 
         unsafe {
@@ -224,41 +225,41 @@ mod test {
 
     #[test]
     fn or_scalar() {
-        run_test(&DATA_OR, |a, b, out| unsafe { scalar::or(a, b, out) } );
+        run_test(&RESULT_OR, |a, b, out| unsafe { scalar::or(a, b, out) } );
     }
 
     #[test]
     fn and_scalar() {
-        run_test(&DATA_AND, |a, b, out| unsafe { scalar::and(a, b, out) } );
+        run_test(&RESULT_AND, |a, b, out| unsafe { scalar::and(a, b, out) } );
     }
 
     #[test]
     fn and_not_scalar() {
-        run_test(&DATA_AND_NOT, |a, b, out| unsafe { scalar::and_not(a, b, out) } );
+        run_test(&RESULT_AND_NOT, |a, b, out| unsafe { scalar::and_not(a, b, out) } );
     }
 
     #[test]
     fn xor_scalar() {
-        run_test(&DATA_XOR, |a, b, out| unsafe { scalar::xor(a, b, out) } );
+        run_test(&RESULT_XOR, |a, b, out| unsafe { scalar::xor(a, b, out) } );
     }
 
     #[test]
     fn or_vector() {
-        run_test(&DATA_OR, |a, b, out| unsafe { vector::or(a, b, out) } );
+        run_test(&RESULT_OR, |a, b, out| unsafe { vector::or(a, b, out) } );
     }
 
     #[test]
     fn and_vector() {
-        run_test(&DATA_AND, |a, b, out| unsafe { vector::and(a, b, out) } );
+        run_test(&RESULT_AND, |a, b, out| unsafe { vector::and(a, b, out) } );
     }
 
     #[test]
     fn and_not_vector() {
-        run_test(&DATA_AND_NOT, |a, b, out| unsafe { vector::and_not(a, b, out) } );
+        run_test(&RESULT_AND_NOT, |a, b, out| unsafe { vector::and_not(a, b, out) } );
     }
 
     #[test]
     fn xor_vector() {
-        run_test(&DATA_XOR, |a, b, out| unsafe { vector::xor(a, b, out) } );
+        run_test(&RESULT_XOR, |a, b, out| unsafe { vector::xor(a, b, out) } );
     }
 }

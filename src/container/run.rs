@@ -1892,3 +1892,24 @@ impl<'a> Iterator for Iter<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn or() {
+        
+    }
+
+    #[test]
+    fn and() {
+
+    }
+
+    fn and_not() {
+
+    }
+
+    fn xor() {
+
+    }
+}
