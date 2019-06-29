@@ -1,8 +1,9 @@
-#![allow(exceeding_bitshifts)]
+#![deny(exceeding_bitshifts)]
 
 use std::io::{self, Read, Write, Seek, SeekFrom};
 use std::ops::Range;
-use std::ptr;
+
+use tinybit::Endian;
 
 use crate::container::{self, *, array_ops};
 
@@ -1283,8 +1284,8 @@ impl RoaringBitmap {
         let has_run = self.has_run();
         if has_run {
             let len = self.containers.len();
-            let cookie = (Self::SERIAL_COOKIE | (((len - 1) << 16) as u32)).to_le_bytes();
-            bytes_written += buf.write(&cookie)?;
+            bytes_written += (Self::SERIAL_COOKIE | (((len - 1) << 16) as u32))
+                .write_le(buf)?;
 
             let s = (len + 7) / 8;
             let mut bitmap: Vec<u8> = vec![0; s];
@@ -1305,11 +1306,8 @@ impl RoaringBitmap {
             }
         }
         else {
-            let cookie = Self::SERIAL_COOKIE_NO_RUNCONTAINER.to_le_bytes();
-            bytes_written += buf.write(&cookie)?;
-
-            let len = (self.containers.len() as u32).to_le_bytes();
-            bytes_written += buf.write(&len)?;
+            bytes_written += Self::SERIAL_COOKIE_NO_RUNCONTAINER.write_le(buf)?;
+            bytes_written += (self.containers.len() as u32).write_le(buf)?;
 
             let len = self.containers.len();
             header_offset = 12 * len + 4 * len;
@@ -1320,19 +1318,14 @@ impl RoaringBitmap {
 
         // Write the keys and cardinality
         for (key, c) in pass {
-            let key_bytes = key.to_le_bytes();
-            bytes_written += buf.write(&key_bytes)?;
-
-            let card = (c.cardinality() as u16).to_le_bytes();
-            bytes_written += buf.write(&card)?;
+            bytes_written += key.write_le(buf)?;
+            bytes_written += (c.cardinality() as u16).write_le(buf)?;
         }
 
         // Write the container offsets if there's no run containers or we're above the no offset threshold
         if !has_run || (self.containers.len() as u32) >= Self::NO_OFFSET_THRESHOLD {
             for c in self.containers.iter() {
-                let offset = (header_offset as u32).to_le_bytes();
-                bytes_written += buf.write(&offset)?;
-
+                bytes_written += header_offset.write_le(buf)?;
                 header_offset += c.serialized_size();
             }
         }
@@ -1350,19 +1343,10 @@ impl RoaringBitmap {
     /// The deserialized bitmap
     #[cfg(target_endian = "little")]
     pub fn deserialize<R: Read + Seek>(buf: &mut R) -> Result<Self, DeserializeError> {
-        // Create a buffer to read from the stream into. We use one the size of a bitset
-        // since it's likely to contain the largest slice of data we'll ever need to read
-        // and will help cut down on the allocations done during deserialization
-        let mut read_buf: [u8; 256] = [0; 256]; // Enough for 64 32bit integers
-        let read_ptr = read_buf.as_ptr(); // TODO: Fix this code
-
         // Read out the cookie and number of containers
         let (cookie, size) = {
-            // Deserialize cookie
-            buf.read(&mut read_buf[0..2])
+            let cookie = u32::read_le(buf)
                 .map_err(DeserializeError::IoError)?;
-        
-            let cookie = unsafe { ptr::read(read_ptr as *const u32) };
 
             // Validate cookie
             if (cookie & 0xFFFF) != Self::SERIAL_COOKIE && cookie != Self::SERIAL_COOKIE_NO_RUNCONTAINER {
@@ -1375,10 +1359,8 @@ impl RoaringBitmap {
                     (cookie >> 16) + 1
                 }
                 else {
-                    buf.read(&mut read_buf[0..2])
-                        .map_err(DeserializeError::IoError)?;
-
-                    unsafe { ptr::read(read_ptr as *const u32) }
+                    u32::read_le(buf)
+                        .map_err(DeserializeError::IoError)?
                 }
             };
 
@@ -1408,14 +1390,11 @@ impl RoaringBitmap {
         // Read out the keys into the bitmap and save the cards for later
         let mut cards = Vec::with_capacity(size as usize);
         for _i in 0..size {
-            buf.read(&mut read_buf[0..4])
+            let key = u16::read_le(buf)
                 .map_err(DeserializeError::IoError)?;
 
-            let (key, card) = unsafe {
-                let ptr = read_ptr as *const u16;
-
-                (ptr::read(ptr), ptr::read(ptr.add(1)) + 1)
-            };
+            let card = u16::read_le(buf)
+                .map_err(DeserializeError::IoError)?;
 
             result.keys.push(key);
             cards.push(card);

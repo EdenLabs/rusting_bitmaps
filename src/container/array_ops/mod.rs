@@ -243,21 +243,25 @@ mod test {
     }
 
     #[test]
+    #[cfg(target_feature = "sse4.2")]
     fn or_vector() {
         run_test(&RESULT_OR, |a, b, out| unsafe { vector::or(a, b, out) } );
     }
 
     #[test]
+    #[cfg(target_feature = "sse4.2")]
     fn and_vector() {
         run_test(&RESULT_AND, |a, b, out| unsafe { vector::and(a, b, out) } );
     }
 
     #[test]
+    #[cfg(target_feature = "sse4.2")]
     fn and_not_vector() {
         run_test(&RESULT_AND_NOT, |a, b, out| unsafe { vector::and_not(a, b, out) } );
     }
 
     #[test]
+    #[cfg(target_feature = "sse4.2")]
     fn xor_vector() {
         run_test(&RESULT_XOR, |a, b, out| unsafe { vector::xor(a, b, out) } );
     }

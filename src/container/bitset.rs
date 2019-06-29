@@ -115,7 +115,9 @@ impl BitsetContainer {
         let word_index = index >> 6;
         let bit_index = index & 0x3F;
         let word = self.bitset[word_index];
-        let new_word = word & (!1 << bit_index);
+        let new_word = word & (!1_u64)
+            .checked_shl(bit_index as u32)
+            .unwrap_or(0);
 
         self.bitset[word_index] = new_word;
 
@@ -147,13 +149,17 @@ impl BitsetContainer {
     pub fn clear_list(&mut self, list: &[u16]) {
         for value in list.iter() {
             let offset = *value >> 6;
-            let index = *value & 64;
+            let index = u32::from(*value % 64);
             let load = self.bitset[offset as usize];
-            let new_load = load & !(1 << index);
+            let new_load = load & !(1_u64)
+                .checked_shl(index)
+                .unwrap_or(0);
 
             self.bitset[offset as usize] = new_load;
 
-            self.cardinality.decrement(((load ^ new_load) >> index) as usize);
+            self.cardinality.decrement(
+                (load ^ new_load).checked_shr(index).unwrap_or(0) as usize
+            );
         }
     }
 
@@ -201,10 +207,10 @@ impl BitsetContainer {
 
     /// Get the value of the bit at `index`
     pub fn get(&self, index: u16) -> bool {
-        assert!(index < (BITSET_SIZE_IN_WORDS * 64) as u16);
+        assert!((index as usize) < (BITSET_SIZE_IN_WORDS * 64));
 
         let word = self.bitset[(index >> 6) as usize];
-        return (word >> (index & 0x3F)) & 1 > 0;
+        ((word >> (index & 0x3F)) & 1) > 0
     }
 
     /// Check if all bits within a range are true
@@ -256,31 +262,15 @@ impl BitsetContainer {
 
     /// Flip all bits contained in `list`
     pub fn flip_list(&mut self, list: &[u16]) {
-        unsafe {
-            let ptr = list.as_ptr();
-            let mut i = 0;
-            while i < list.len() {
-                let val = *ptr.offset(i as isize);
-                let word_index = (val >> 6) as usize;// Index / word_size
-                let index = val % 64;
-                let load = self.bitset[word_index];
-                let store = load ^ (1 << index);
-
-                let index = index as isize;
-                let load = load as isize;
-
-                let change = 1 - 2 * (((1 << index) & load) >> index);// Update with -1 or +1
-                if change > 0 {
-                    self.cardinality.increment(1);
-                }
-                else {
-                    self.cardinality.decrement(1);
-                }
-
-                self.bitset[word_index] = store;
-
-                i += 1;
-            }
+        for value in list.iter() {
+            let word_index = (*value >> 6) as usize;
+            let index = *value % 64;
+            let load = self.bitset[word_index];
+            let store = load ^ (1_u64 << index);
+            let change = 1 - 2 * ((((1_u64 << index) & load) >> index) as isize);// Update with -1 or +1
+ 
+            self.cardinality.add(change);
+            self.bitset[word_index] = store;
         }
     }
 
@@ -966,22 +956,22 @@ impl<'a> Iterator for Iter<'a> {
 
             self.word = w ^ t;
 
-            // Check if that was the last bit in the word, if so advance for the next pass
-            if self.word == 0 {
-                self.word_index += 1;
-
-                if self.word_index < self.words.len() {
-                    unsafe {
-                        while self.word != 0 && self.word_index < self.words.len() {
-                            self.word = *self.words.get_unchecked(self.word_index);
-                            self.base += 64;
-                        }
-                    }
+            // Advance to the next word if the current one is 0
+            let mut new_base = self.base;
+            unsafe {
+                while self.word == 0 && self.word_index + 1 < self.words.len() {
+                    self.word_index += 1;
+                    self.word = *self.words.get_unchecked(self.word_index);
+                    new_base += 64;
                 }
             }
 
             // Guaranteed to not truncate due to how containers work
-            Some((r + self.base) as u16)
+            let value = (r + self.base) as u16;
+
+            self.base = new_base;
+
+            Some(value)
         }
     }
 }

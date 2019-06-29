@@ -5,3 +5,4 @@ authors = ["Techgeek1 <austin.rife@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+tinybit = { git = "https://github.com/techgeek1/tinybit" }

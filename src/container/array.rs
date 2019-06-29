@@ -350,7 +350,7 @@ impl<'a> From<&'a mut BitsetContainer> for ArrayContainer {
 
 impl<'a> From<&'a BitsetContainer> for ArrayContainer {
     fn from(container: &'a BitsetContainer) -> Self {
-        let len = container.len();
+        let len = container.cardinality();
         let mut array = ArrayContainer::with_capacity(len);
         
         for value in container.iter() {
@@ -762,8 +762,6 @@ impl SetAndNot<RunContainer> for ArrayContainer {
 
 impl SetXor<Self> for ArrayContainer {
     fn xor(&self, other: &Self) -> Container {
-        println!("self: {}, other: {}", self.len(), other.len());
-
         let len = self.len() + other.len();
         let mut result = ArrayContainer::with_capacity(len);
         let ptr = result.as_mut_ptr();
@@ -809,7 +807,7 @@ impl SetXor<BitsetContainer> for ArrayContainer {
         result.flip_list(&self.array);
 
         // Array is a better representation for this set, convert
-        if self.cardinality() <= DEFAULT_MAX_SIZE {
+        if result.cardinality() <= DEFAULT_MAX_SIZE {
             Container::Array(result.into())
         }
         // Bitset is a better representation
@@ -848,26 +846,29 @@ impl SetXor<RunContainer> for ArrayContainer {
 
 impl Subset<Self> for ArrayContainer {
     fn subset_of(&self, other: &Self) -> bool {
-        if self.len() > other.len() {
+        let card0 = self.cardinality();
+        let card1 = other.cardinality();
+
+        if card0 > card1 {
             return false;
         }
 
+        let mut i0 = 0;
         let mut i1 = 0;
-        let mut i2 = 0;
-        while i1 < self.array.len() && i2 < other.array.len() {
-            if self.array[i1] == other.array[i2] {
+        while i0 < card0 && i1 < card1 {
+            if self.array[i0] == other.array[i1] {
+                i0 += 1;
                 i1 += 1;
-                i2 += 1;
             }
-            else if self.array[i1] > other.array[i2] {
-                i2 += 1;
+            else if self.array[i0] > other.array[i1] {
+                i1 += 1;
             }
             else {
                 return false;
             }
         }
 
-        if i1 == self.array.len() {
+        if i0 == card0 {
             return true;
         }
         else {
@@ -878,7 +879,7 @@ impl Subset<Self> for ArrayContainer {
 
 impl Subset<BitsetContainer> for ArrayContainer {
     fn subset_of(&self, other: &BitsetContainer) -> bool {
-        if self.len() != other.len() {
+        if self.len() > other.len() {
             return false;
         }
         
@@ -946,7 +947,6 @@ impl SetNot for ArrayContainer {
 
 #[cfg(test)]
 mod test {
-    use crate::IntoBounded;
     use crate::container::*;
     use crate::test::*;
     use crate::test::short::*;
@@ -1016,7 +1016,7 @@ mod test {
         run_test::<ArrayContainer, ArrayContainer, _>(
             &INPUT_A, 
             &INPUT_B, 
-            &RESULT_OR,
+            &RESULT_AND_NOT,
             |a, b| a.and_not(b)
         );
     }
@@ -1026,7 +1026,7 @@ mod test {
         run_test::<ArrayContainer, ArrayContainer, _>(
             &INPUT_A, 
             &INPUT_B, 
-            &RESULT_OR,
+            &RESULT_XOR,
             |a, b| a.xor(b)
         );
     }
@@ -1043,7 +1043,7 @@ mod test {
     #[test]
     fn not() {
         let a = make_container::<ArrayContainer>(&INPUT_A);
-        let not_a = a.not((..).into_bounded());
+        let not_a = a.not(0..(a.cardinality() as u16));
 
         let mut failed = false;
         for value in a.iter() {
@@ -1056,32 +1056,56 @@ mod test {
         assert!(!failed);
     }
 
-    /*
     #[test]
     fn array_bitset_or() {
-
+        run_test::<ArrayContainer, BitsetContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_OR,
+            |a, b| a.or(b)
+        );
     }
 
     #[test]
     fn array_bitset_and() {
-
+        run_test::<ArrayContainer, BitsetContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_AND,
+            |a, b| a.and(b)
+        );
     }
 
     #[test]
     fn array_bitset_and_not() {
-
+        run_test::<ArrayContainer, BitsetContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_AND_NOT,
+            |a, b| a.and_not(b)
+        );
     }
 
     #[test]
     fn array_bitset_xor() {
-
+        run_test::<ArrayContainer, BitsetContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_XOR,
+            |a, b| a.xor(b)
+        );
     }
 
     #[test]
     fn array_bitset_is_subset() {
+        let a = make_container::<ArrayContainer>(&SUBSET_A);
+        let b = make_container::<BitsetContainer>(&SUBSET_B);
 
+        assert!(a.subset_of(&b));
+        assert!(!b.subset_of(&a));
     }
 
+    /*
     #[test]
     fn array_run_or() {
 

@@ -31,8 +31,8 @@ pub fn run_test<T, U, F>(in_a: &[u16], in_b: &[u16], expected: &[u16], f: F)
     let result = (f)(&mut a, &mut b);
 
     // Check that the cardinality matches the precomputed result
-    let len0 = result.cardinality();
-    let len1 = expected.len();
+    let len0 = expected.len();
+    let len1 = result.cardinality();
     assert_eq!(
         len0, 
         len1, 

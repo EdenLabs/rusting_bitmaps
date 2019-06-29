@@ -545,8 +545,6 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 /// - Assumes `out` contains enough space to hold the output
 #[cfg(target_feature = "sse4.2")]
 pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
-    println!("simd bby");
-
     // Use a scalar algorithm if the length of the two vectors is too short to use simd
     if a.len() < 8 || b.len() < 8 {
         return scalar::xor(a, b, out);

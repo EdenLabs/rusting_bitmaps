@@ -113,6 +113,13 @@ impl LazyCardinality {
         }
     }
 
+    pub fn add(&self, value: isize) {
+        match self.card.get() {
+            Some(card) => self.card.set(Some(((card as isize) + value) as usize)),
+            None => return
+        }
+    }
+
     /// Mark the cardinality as dirty
     #[inline]
     pub fn invalidate(&self) {
@@ -124,7 +131,9 @@ impl LazyCardinality {
         where F: Fn() -> usize
     {
         match self.card.get() {
-            Some(card) => card,
+            Some(card) => {
+                card
+            },
             None => {
                 let card = (eval)();
 

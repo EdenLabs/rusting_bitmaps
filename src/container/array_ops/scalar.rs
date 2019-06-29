@@ -221,8 +221,6 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     let mut count = 0;
 
     while ptr_a < ptr_a_end && ptr_b < ptr_b_end {
-        //println!("a: {:?}, b: {:?}", *ptr_a, *ptr_b);
-
         if *ptr_a < *ptr_b {
             *(out.add(count)) = *ptr_a;
             count += 1;
@@ -257,8 +255,6 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 /// # Remarks
 /// - Assumes that `a` and `b` are sorted. The result is undefined if violated
 pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
-    println!("scalar boi");
-
     let mut ptr_a = a.as_ptr();
     let mut ptr_b = b.as_ptr();
     let ptr_a_end = ptr_a.add(a.len());
