@@ -24,11 +24,11 @@ pub fn make_container<T: TestUtils>(data: &[u16]) -> T {
 pub fn run_test<T, U, F>(in_a: &[u16], in_b: &[u16], expected: &[u16], f: F) 
     where T: TestUtils,
           U: TestUtils,
-          F: Fn(&mut T, &mut U) -> Container 
+          F: Fn(T, U) -> Container 
 {
-    let mut a = make_container::<T>(in_a);
-    let mut b = make_container::<U>(in_b);
-    let result = (f)(&mut a, &mut b);
+    let a = make_container::<T>(in_a);
+    let b = make_container::<U>(in_b);
+    let result = (f)(a, b);
 
     // Check that the cardinality matches the precomputed result
     let len0 = expected.len();

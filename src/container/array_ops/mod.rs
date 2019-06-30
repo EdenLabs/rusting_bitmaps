@@ -146,6 +146,8 @@ pub fn advance_until(slice: &[u16], index: usize, min: u16) -> usize {
 mod test {
     use crate::test::short::*;
     use super::scalar;
+
+    #[cfg(target_feature = "sse4.2")]
     use super::vector;
 
     /// Create an array container from the given data set

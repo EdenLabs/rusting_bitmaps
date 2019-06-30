@@ -1,8 +1,9 @@
 // Required since code is conditionally compiled out in this module
 #![allow(dead_code)]
 
-#[cfg(target_feature = "sse4.2")]
-use std::arch::x86_64::{
+#[cfg(target_feature = "sse4.2")] use super::scalar;
+#[cfg(target_feature = "sse4.2")] use std::ptr;
+#[cfg(target_feature = "sse4.2")] use std::arch::x86_64::{
     _SIDD_BIT_MASK,
     _SIDD_CMP_EQUAL_ANY,
     _SIDD_UWORD_OPS,
@@ -28,10 +29,6 @@ use std::arch::x86_64::{
     _mm_extract_epi32,
     _mm_or_si128,
 };
-
-use std::ptr;
-
-use super::scalar;
 
 #[cfg(target_feature = "sse4.2")]
 const CMPISTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;

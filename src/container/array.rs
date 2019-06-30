@@ -8,13 +8,15 @@ use crate::container::*;
 use crate::container::array_ops;
 
 /// An array container. Elements are sorted numerically and represented as individual values in the array
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArrayContainer {
+    /// The internal array containing container values
     array: Vec<u16>
 }
 
 impl ArrayContainer {
     /// Create a new array container
+    #[inline]
     pub fn new() -> Self {
         Self {
             array: Vec::new()
@@ -22,6 +24,7 @@ impl ArrayContainer {
     }
 
     /// Create a new array container with a specified capacity
+    #[inline]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             array: Vec::with_capacity(capacity)
@@ -170,6 +173,7 @@ impl ArrayContainer {
     }
 
     /// Check if the array contains a specified value
+    #[inline]
     pub fn contains(&self, value: u16) -> bool {
         self.array.binary_search(&value).is_ok()
     }
@@ -326,24 +330,18 @@ impl ArrayContainer {
 impl Deref for ArrayContainer {
     type Target = [u16];
 
+    #[inline]
     fn deref(&self) -> &[u16] {
         &self.array
     }
 }
 
 impl DerefMut for ArrayContainer {
+    #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.array
     }
 }
-
-impl PartialEq for ArrayContainer {
-    fn eq(&self, other: &Self) -> bool {
-        self == other
-    }
-}
-
-impl Eq for ArrayContainer { }
 
 impl From<BitsetContainer> for ArrayContainer {
     #[inline]
@@ -494,16 +492,21 @@ impl SetOr<BitsetContainer> for ArrayContainer {
         Container::Bitset(result)
     }
     
+    // TODO: Find a way to do this inplace
+    #[inline]
     fn inplace_or(self, other: &BitsetContainer) -> Container {
         SetOr::or(&self, other)
     }
 }
 
 impl SetOr<RunContainer> for ArrayContainer {
+    #[inline]
     fn or(&self, other: &RunContainer) -> Container {
         SetOr::or(other, self)
     }
     
+    // TODO: Find a way to do this inplace
+    #[inline]
     fn inplace_or(self, other: &RunContainer) -> Container {
         SetOr::or(&self, other)
     }
@@ -528,6 +531,7 @@ impl SetAnd<Self> for ArrayContainer {
         Container::Array(result)
     }
     
+    #[inline]
     fn and_cardinality(&self, other: &Self) -> usize {
         array_ops::and_cardinality(&self.array, &other.array)
     }
@@ -589,12 +593,15 @@ impl SetAnd<BitsetContainer> for ArrayContainer {
         card
     }
     
+    // TODO: Find a way to do this inplace
+    #[inline]
     fn inplace_and(self, other: &BitsetContainer) -> Container {
         SetAnd::and(&self, other)
     }
 }
 
 impl SetAnd<RunContainer> for ArrayContainer {
+    #[inline]
     fn and(&self, other: &RunContainer) -> Container {
         SetAnd::and(other, self)
     }
@@ -644,6 +651,8 @@ impl SetAnd<RunContainer> for ArrayContainer {
         }
     }
     
+    // TODO: Find a way to do this inplace
+    #[inline]
     fn inplace_and(self, other: &RunContainer) -> Container {
         SetAnd::and(&self, other)
     }
@@ -710,6 +719,7 @@ impl SetAndNot<BitsetContainer> for ArrayContainer {
         Container::Array(result)
     }
     
+    // TODO: Find a way to do this inplace
     fn inplace_and_not(self, other: &BitsetContainer) -> Container {
         SetAndNot::and_not(&self, other)
     }
@@ -768,6 +778,8 @@ impl SetAndNot<RunContainer> for ArrayContainer {
         Container::Array(result)
     }
     
+    // TODO: Find a way to do this inplace
+    #[inline]
     fn inplace_and_not(self, other: &RunContainer) -> Container {
         SetAndNot::and_not(&self, other)
     }
@@ -829,6 +841,8 @@ impl SetXor<BitsetContainer> for ArrayContainer {
         }
     }
     
+    // TODO: Find a way to do this inplace
+    #[inline]
     fn inplace_xor(self, other: &BitsetContainer) -> Container {
         SetXor::xor(&self, other)
     }
@@ -844,15 +858,17 @@ impl SetXor<RunContainer> for ArrayContainer {
         // Process as an array since the final result is probably an array
         if other.cardinality() <= DEFAULT_MAX_SIZE {
             let array = ArrayContainer::from(other);
-            return SetXor::xor(&array, self);
+            return SetXor::inplace_xor(array, self);
         }
         // Process as a bitset since the final result may be a bitset
         else {
             let bitset = BitsetContainer::from(other);
-            return SetXor::xor(&bitset, self);
+            return SetXor::inplace_xor(bitset, self);
         }
     }
     
+    // TODO: Find a way to do this inplace
+    #[inline]
     fn inplace_xor(self, other: &RunContainer) -> Container {
         SetXor::xor(&self, other)
     }
@@ -1168,7 +1184,7 @@ mod test {
             &INPUT_A, 
             &INPUT_B, 
             &RESULT_OR,
-            |a, b| a.or(b)
+            |a, b| a.or(&b)
         );
     }
 
@@ -1178,7 +1194,7 @@ mod test {
             &INPUT_A, 
             &INPUT_B, 
             &RESULT_AND,
-            |a, b| a.and(b)
+            |a, b| a.and(&b)
         );
     }
 
@@ -1188,7 +1204,7 @@ mod test {
             &INPUT_A, 
             &INPUT_B, 
             &RESULT_AND_NOT,
-            |a, b| a.and_not(b)
+            |a, b| a.and_not(&b)
         );
     }
 
@@ -1198,7 +1214,7 @@ mod test {
             &INPUT_A, 
             &INPUT_B, 
             &RESULT_XOR,
-            |a, b| a.xor(b)
+            |a, b| a.xor(&b)
         );
     }
 
@@ -1233,7 +1249,7 @@ mod test {
             &INPUT_A, 
             &INPUT_B, 
             &RESULT_OR,
-            |a, b| a.or(b)
+            |a, b| a.or(&b)
         );
     }
 
@@ -1243,7 +1259,7 @@ mod test {
             &INPUT_A, 
             &INPUT_B, 
             &RESULT_AND,
-            |a, b| a.and(b)
+            |a, b| a.and(&b)
         );
     }
 
@@ -1253,7 +1269,7 @@ mod test {
             &INPUT_A, 
             &INPUT_B, 
             &RESULT_AND_NOT,
-            |a, b| a.and_not(b)
+            |a, b| a.and_not(&b)
         );
     }
 
@@ -1263,7 +1279,7 @@ mod test {
             &INPUT_A, 
             &INPUT_B, 
             &RESULT_XOR,
-            |a, b| a.xor(b)
+            |a, b| a.xor(&b)
         );
     }
 
@@ -1282,7 +1298,7 @@ mod test {
             &INPUT_A, 
             &INPUT_B, 
             &RESULT_OR,
-            |a, b| a.or(b)
+            |a, b| a.or(&b)
         );
     }
 
@@ -1292,7 +1308,7 @@ mod test {
             &INPUT_A, 
             &INPUT_B, 
             &RESULT_AND,
-            |a, b| a.and(b)
+            |a, b| a.and(&b)
         );
     }
 
@@ -1302,7 +1318,7 @@ mod test {
             &INPUT_A, 
             &INPUT_B, 
             &RESULT_AND_NOT,
-            |a, b| a.and_not(b)
+            |a, b| a.and_not(&b)
         );
     }
 
@@ -1312,7 +1328,47 @@ mod test {
             &INPUT_A, 
             &INPUT_B, 
             &RESULT_XOR,
-            |a, b| a.xor(b)
+            |a, b| a.xor(&b)
+        );
+    }
+
+    #[test]
+    fn array_run_inplace_or() {
+        run_test::<ArrayContainer, RunContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_OR,
+            |a, b| a.inplace_or(&b)
+        );
+    }
+
+    #[test]
+    fn array_run_inplace_and() {
+        run_test::<ArrayContainer, RunContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_AND,
+            |a, b| a.inplace_and(&b)
+        );
+    }
+
+    #[test]
+    fn array_run_inplace_and_not() {
+        run_test::<ArrayContainer, RunContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_AND_NOT,
+            |a, b| a.inplace_and_not(&b)
+        );
+    }
+
+    #[test]
+    fn array_run_inplace_xor() {
+        run_test::<ArrayContainer, RunContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_XOR,
+            |a, b| a.inplace_xor(&b)
         );
     }
 
