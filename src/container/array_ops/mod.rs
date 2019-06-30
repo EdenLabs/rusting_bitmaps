@@ -142,24 +142,6 @@ pub fn advance_until(slice: &[u16], index: usize, min: u16) -> usize {
     upper
 }
 
-pub fn exponential_search<T>(slice: &[T], size: usize, key: T) -> Result<usize, usize>
-    where T: Copy + Ord + Eq
-{
-    // TODO: Optimize
-
-    //  No values to find or size extends beyond slice length
-    if size == 0 || size > slice.len() {
-        return Err(0);
-    }
-
-    let mut bound = 0;
-    while bound < size && slice[bound] < key {
-        bound *= 2;
-    }
-
-    return slice[(bound / 2)..((bound + 1).min(size))].binary_search(&key);
-}
-
 #[cfg(test)]
 mod test {
     use crate::test::short::*;

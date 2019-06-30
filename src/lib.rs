@@ -16,7 +16,8 @@
 
 // TODO: Inline trivial fns
 // TODO: Reduce unsafe code usage without impacting performance much
-// TODO: Ensure all bounds are inclusive so ranges aren't cutoff
+// TODO: Ensure ranges aren't cutoff
+// TODO: Run through and change any operations on intermediate containers to be inplace to reduce memory churn
 
 mod container;
 mod roaring;

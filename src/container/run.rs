@@ -36,7 +36,7 @@ impl Rle16 {
     /// The last value in the run
     #[inline] 
     pub fn end(&self) -> u16 {
-        self.value + self.length + 1
+        self.value + self.length
     }
     
     /// Get the start and end value of the run
@@ -96,7 +96,7 @@ impl RunContainer {
     pub fn new() -> Self {
         Self {
             runs: Vec::new(),
-            cardinality: LazyCardinality::with_value(0)
+            cardinality: LazyCardinality::none()
         }
     }
     
@@ -104,7 +104,7 @@ impl RunContainer {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             runs: Vec::with_capacity(capacity),
-            cardinality: LazyCardinality::with_value(0)
+            cardinality: LazyCardinality::none()
         }
     }
     
@@ -112,11 +112,6 @@ impl RunContainer {
     #[inline]
     pub fn shrink_to_fit(&mut self) {
         self.runs.shrink_to_fit()
-    }
-    
-    /// Reserve space for `additional` runs in the run container
-    pub fn reserve(&mut self, additional: usize) {
-        self.runs.reserve(additional);
     }
     
     /// Add a value to the run container
@@ -173,7 +168,7 @@ impl RunContainer {
                 }
 
                 let new_run = Rle16::new(value, 0);
-                self.runs.insert(0, new_run);
+                self.runs.push(new_run);
             }
         }
     }
@@ -396,9 +391,9 @@ impl RunContainer {
     fn compute_cardinality(&self) -> usize {
         let mut card = 0;
         for rle in self.iter_runs() {
-            card += rle.length as usize;
+            card += (rle.length + 1) as usize;
         }
-
+        
         card
     }
 
@@ -522,9 +517,13 @@ impl RunContainer {
 
     /// Perform a binary search for a given key in the set
     fn binary_search(&self, key: u16) -> SearchResult {
+        if self.runs.is_empty() {
+            return SearchResult::NoMatch;
+        }
+
         let mut low = 0;
         let mut high = self.runs.len() - 1;
-        while low < high {
+        while low <= high {
             let middle = (low + high) >> 1;
             let value = self.runs[middle].value;
 
@@ -912,8 +911,7 @@ impl SetOr<ArrayContainer> for RunContainer {
             return Container::Run(self.clone());
         }
 
-        let mut result = RunContainer::new();
-        result.reserve(2 * other.cardinality() + self.runs.len());
+        let mut result = RunContainer::with_capacity(other.cardinality() + self.runs.len());
 
         let mut rle_index = 0;
         let mut array_index = 0;
@@ -931,7 +929,7 @@ impl SetOr<ArrayContainer> for RunContainer {
         }
 
         while rle_index < self.runs.len() && array_index < other.cardinality() {
-            if self.runs[rle_index].value < other[array_index] {
+            if self.runs[rle_index].value <= other[array_index] {
                 run_ops::append(&mut result.runs, self.runs[rle_index], &mut prev_rle);
                 rle_index += 1;
             }

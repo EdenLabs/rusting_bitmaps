@@ -90,13 +90,6 @@ impl LazyCardinality {
         }
     }
 
-    /// Create a new `LazyCardinality` with a specified value
-    pub fn with_value(value: usize) -> Self {
-        Self {
-            card: Cell::new(Some(value))
-        }
-    }
-
     /// Increment the cardinality by `value` if not dirty
     pub fn increment(&self, value: usize) {
         match self.card.get() {

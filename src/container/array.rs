@@ -164,8 +164,9 @@ impl ArrayContainer {
         }
 
         let len = self.len();
-
-        self.array.copy_within((range.end)..len, range.start);
+        let remainder = (range.end)..len;
+        self.array.copy_within(remainder.clone(), range.start);
+        self.array.truncate(range.start + remainder.len());
     }
 
     /// Check if the array contains a specified value
@@ -178,11 +179,11 @@ impl ArrayContainer {
         let rs = range.start;
         let re = range.end - 1;
 
-        let min = array_ops::exponential_search(&self.array, self.len(), rs);
-        let max = array_ops::exponential_search(&self.array, self.len(), re);
+        let min = array_ops::advance_until(&self.array, 0, rs);
+        let max = array_ops::advance_until(&self.array, 0, re);
 
-        if let (Ok(min_index), Ok(max_index)) = (min, max) {
-            return max_index - min_index == (re - rs) as usize && self.array[min_index] == rs && self.array[max_index] == re;
+        if  min < self.len() && max < self.len() {
+            return max - min == (re - rs) as usize && self.array[min] == rs && self.array[max] == re;
         }
 
         false
@@ -194,7 +195,10 @@ impl ArrayContainer {
         self.array.len() == DEFAULT_MAX_SIZE
     }
 
-    /// Find the element of a given rank starting at `start_rank`. Returns None if no element is present and updates `start_rank`
+    /// Find the element of a given rank from `start_rank`. 
+    /// 
+    /// # Returns 
+    /// None if no element is present and updates `start_rank` accordingly
     pub fn select(&self, rank: u32, start_rank: &mut u32) -> Option<u16> {
         let cardinality = self.cardinality() as u32;
         if *start_rank + cardinality <= rank {
@@ -203,12 +207,7 @@ impl ArrayContainer {
             None
         }
         else {
-            unsafe {
-                let index = (rank - *start_rank) as usize;
-                let element = self.array.get_unchecked(index);
-
-                Some(*element)
-            }
+            Some(self.array[(rank - *start_rank) as usize])
         }
     }
 
@@ -245,8 +244,12 @@ impl ArrayContainer {
 
     /// Compute the number of runs in the array
     pub fn num_runs(&self) -> usize {
-        let mut num_runs = 0;
-        let mut previous = 0;
+        if self.is_empty() {
+            return 0;
+        }
+
+        let mut num_runs = 0; // Always at least one run
+        let mut previous = self.array[0];
 
         for value in self.array.iter() {
             if *value != previous + 1 {
@@ -392,7 +395,7 @@ impl<'a> From<&'a RunContainer> for ArrayContainer {
             let run_start = run.value;
             let run_end = run_start + run.length;
 
-            for i in run_start..run_end {
+            for i in run_start..(run_end + 1) {
                 array.push(i);
             }
         }
@@ -714,52 +717,54 @@ impl SetAndNot<BitsetContainer> for ArrayContainer {
 
 impl SetAndNot<RunContainer> for ArrayContainer {
     fn and_not(&self, other: &RunContainer) -> Container {
-        let mut result = ArrayContainer::with_capacity(self.cardinality());
-
-        if other.num_runs() == 0 {
+        if other.is_empty() {
             return Container::Array(self.clone());
         }
 
-        unsafe {
-            let runs = other.deref();
-            let mut run_start = runs.get_unchecked(0).value as usize;
-            let mut run_end = run_start + runs.get_unchecked(0).length as usize;
-            let mut which_run = 0;
+        if other.is_full() {
+            return Container::Array(ArrayContainer::new());
+        }
 
-            let mut i = 0;
-            while i < self.cardinality() {
-                let val = *self.array.get_unchecked(0) as usize;
-                if val < run_start {
-                    result.push(val as u16);
-                    continue;
-                }
+        let mut result = ArrayContainer::with_capacity(self.cardinality());
+ 
+        let runs = other.deref();
+        let run = runs[0];
+        let mut run_start: usize = usize::from(run.value);
+        let mut run_end: usize = usize::from(run.end());
+        let mut which_run = 0;
 
-                if val <= run_end {
-                    continue;
-                }
+        let mut i = 0;
+        while i < self.cardinality() {
+            let value = usize::from(self.array[i]);
 
-                loop {
+            if value < run_start {
+                result.push(value as u16);
+            } else if value <= run_end {
+                ;
+            }
+            else {
+                while value > run_end {
                     if which_run + 1 < runs.len() {
                         which_run += 1;
 
-                        let rle = runs.get_unchecked(which_run);
-                        run_start = rle.value as usize;
-                        run_end = rle.end() as usize;
+                        let run = runs[which_run];
+                        run_start = usize::from(run.value);
+                        run_end = usize::from(run.end());
                     }
                     else {
-                        run_start = (1 << 16) + 1;
                         run_end = (1 << 16) + 1;
-                    }
-
-                    if val <= run_end {
-                        break;
+                        run_start = run_end;
                     }
                 }
 
-                i -= 1;
+                if i > 0 {
+                    i -= 1;
+                }
             }
+
+            i += 1;
         }
-        
+
         Container::Array(result)
     }
     
@@ -843,7 +848,8 @@ impl SetXor<RunContainer> for ArrayContainer {
         }
         // Process as a bitset since the final result may be a bitset
         else {
-            return SetXor::xor(other.into(), self);
+            let bitset = BitsetContainer::from(other);
+            return SetXor::xor(&bitset, self);
         }
     }
     
@@ -1013,47 +1019,109 @@ mod test {
 
     #[test]
     fn remove() {
+        let range = 0..10;
+        let mut array = ArrayContainer::with_capacity(range.len());
+        array.add_range(range.clone());
 
+        array.remove(8);
+        array.remove(9);
+
+        assert_eq!(array.cardinality(), 8);
+        
+        let pass = array.iter()
+            .zip(range);
+
+        for (found, expected) in pass {
+            assert_eq!(*found, expected);
+        }
     }
 
     #[test]
     fn remove_range() {
+        let range = 0..60;
+        let mut array = ArrayContainer::with_capacity(range.len());
+        array.add_range(range.clone());
 
+        array.remove_range(45..60);
+
+        assert_eq!(array.cardinality(), 45);
+
+        let pass = array.iter()
+            .zip(range);
+
+        for (found, expected) in pass {
+            assert_eq!(*found, expected);
+        }
     }
 
     #[test]
     fn contains() {
+        let range = 0..10;
+        let mut array = ArrayContainer::with_capacity(range.len());
+        array.add_range(range);
 
+        assert!(array.contains(5));
     }
 
     #[test]
     fn contains_range() {
+        let range = 0..30;
+        let mut array = ArrayContainer::with_capacity(range.len());
+        array.add_range(range);
 
+        assert!(array.contains_range(10..20));
     }
 
     #[test]
     fn select() {
+        let range = 0..30;
+        let mut array = ArrayContainer::with_capacity(range.len());
+        array.add_range(range);
 
+        let mut start_rank = 5;
+        let selected = array.select(20, &mut start_rank);
+        
+        assert!(selected.is_some());
+        assert_eq!(selected.unwrap(), 15);
     }
 
     #[test]
     fn min() {
+        let range = 0..10;
+        let mut array = ArrayContainer::with_capacity(range.len());
+        array.add_range(range);
 
+        let min = array.min();
+        assert!(min.is_some());
+        assert_eq!(min.unwrap(), 0);
     }
 
     #[test]
     fn max() {
+        let range = 0..10;
+        let mut array = ArrayContainer::with_capacity(range.len());
+        array.add_range(range);
 
+        let max = array.max();
+        assert!(max.is_some());
+        assert_eq!(max.unwrap(), 9);
     }
 
     #[test]
     fn rank() {
+        let range = 0..100;
+        let mut array = ArrayContainer::with_capacity(range.len());
+        array.add_range(range);
 
+        let rank = array.rank(20);
+        assert_eq!(rank, 21);
     }
 
     #[test]
     fn num_runs() {
+        let array = make_container::<ArrayContainer>(&RUNS);
 
+        assert_eq!(array.num_runs(), NUM_RUNS);
     }
 
     #[test]
@@ -1208,30 +1276,52 @@ mod test {
         assert!(!b.subset_of(&a));
     }
 
-    /*
     #[test]
     fn array_run_or() {
-
+        run_test::<ArrayContainer, RunContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_OR,
+            |a, b| a.or(b)
+        );
     }
 
     #[test]
     fn array_run_and() {
-
+        run_test::<ArrayContainer, RunContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_AND,
+            |a, b| a.and(b)
+        );
     }
 
     #[test]
     fn array_run_and_not() {
-
+        run_test::<ArrayContainer, RunContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_AND_NOT,
+            |a, b| a.and_not(b)
+        );
     }
 
     #[test]
     fn array_run_xor() {
-
+        run_test::<ArrayContainer, RunContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_XOR,
+            |a, b| a.xor(b)
+        );
     }
 
     #[test]
     fn array_run_is_subset() {
+        let a = make_container::<ArrayContainer>(&SUBSET_A);
+        let b = make_container::<RunContainer>(&SUBSET_B);
 
+        assert!(a.subset_of(&b));
+        assert!(!b.subset_of(&a));
     }
-    */
 }

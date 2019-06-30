@@ -230,7 +230,7 @@ pub fn xor(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
 /// # Notes
 /// Expects `runs` to have at least 1 element and `previous_run` to point to that last element. 
 pub fn append(runs: &mut Vec<Rle16>, run: Rle16, previous_run: &mut Rle16) {
-    let prev_end = previous_run.value + previous_run.length;
+    let prev_end = previous_run.end();
 
     // Add a new run
     if run.value > prev_end + 1 {
@@ -301,19 +301,16 @@ pub fn append_exclusive(runs: &mut Vec<Rle16>, start: u16, length: u16) {
 
 pub fn append_value(runs: &mut Vec<Rle16>, value: u16, prev_rle: &mut Rle16) {
     let prev_end = prev_rle.end();
-    if value > prev_end  {
+    if value > prev_end + 1 {
         let rle = Rle16::new(value, 0);
         runs.push(rle);
 
         *prev_rle = rle;
-        return;
     }
-    
-    if value == prev_end {
+    else if value == prev_end + 1 {
         prev_rle.length += 1;
 
         let len = runs.len();
         runs[len - 1] = *prev_rle;
-        return;
     }
 }
