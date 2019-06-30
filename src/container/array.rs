@@ -79,7 +79,7 @@ impl ArrayContainer {
     /// # Notes
     /// Assumes that the value is greater than all other elements in the array
     pub fn push(&mut self, value: u16) {
-        assert!({
+        debug_assert!({
             // Ensure that value is greater than any element in the set
             if self.len() > 0 {
                 value > self.max().unwrap()
@@ -127,7 +127,7 @@ impl ArrayContainer {
 
     /// Add all values within the specified range
     pub fn add_range(&mut self, range: Range<u16>) {
-        assert!(range.len() > 0);
+        debug_assert!(range.len() > 0);
 
         // Resize to fit all new elements
         let len = self.len();
@@ -305,7 +305,15 @@ impl ArrayContainer {
             let num_bytes = mem::size_of::<u16>() * cardinality;
             let bytes_slice = slice::from_raw_parts_mut(ptr, num_bytes);
 
-            buf.read(bytes_slice)?;
+            let num_read = buf.read(bytes_slice)?;
+            if num_read != num_bytes {
+                return Err(
+                    io::Error::new(io::ErrorKind::UnexpectedEof, 
+                    "Unexpected end of stream"
+                ));
+            }
+
+            result.set_cardinality(cardinality);
 
             Ok(result)
         }
@@ -988,6 +996,101 @@ mod test {
         }
 
         assert!(!failed);
+    }
+
+    #[test]
+    fn load_range() {
+        let range = 50..200;
+        let mut array = ArrayContainer::with_capacity(range.len());
+        array.add_range(range.clone());
+
+        assert_eq!(array.cardinality(), range.len());
+
+        for (found, expected) in array.iter().zip(range) {
+            assert_eq!(*found, expected);
+        }
+    }
+
+    #[test]
+    fn remove() {
+
+    }
+
+    #[test]
+    fn remove_range() {
+
+    }
+
+    #[test]
+    fn contains() {
+
+    }
+
+    #[test]
+    fn contains_range() {
+
+    }
+
+    #[test]
+    fn select() {
+
+    }
+
+    #[test]
+    fn min() {
+
+    }
+
+    #[test]
+    fn max() {
+
+    }
+
+    #[test]
+    fn rank() {
+
+    }
+
+    #[test]
+    fn num_runs() {
+
+    }
+
+    #[test]
+    fn round_trip_serialize() {
+        let array = make_container::<ArrayContainer>(&INPUT_A);
+
+        let serialized_size = ArrayContainer::serialized_size(array.cardinality());
+        let mut buffer: Vec<u8> = Vec::with_capacity(serialized_size);
+
+        // Serialize and check that it worked as expected
+        let bytes = {
+            let result = array.serialize(&mut buffer);
+            assert!(result.is_ok());
+
+            result.unwrap()
+        };
+
+        // We have to subtract 2 since `serialized_size` includes space for a 2 byte header
+        assert_eq!(bytes, serialized_size - 2, "Invalid serialized size");
+
+        let result = {
+            let mut read = std::io::Cursor::new(&buffer);
+            let result = ArrayContainer::deserialize(array.cardinality(), &mut read);
+            assert!(result.is_ok());
+
+            result.unwrap()
+        };
+
+        // Check that the deserialized version matches the initial one
+        assert_eq!(result.cardinality(), array.cardinality());
+
+        let pass = result.iter()
+            .zip(array.iter());
+
+        for (found, expected) in pass {
+            assert_eq!(*found, *expected);
+        }
     }
 
     // Ops
