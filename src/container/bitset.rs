@@ -57,14 +57,12 @@ impl BitsetContainer {
     /// Set all the bits within the range denoted by [min-max)
     pub fn set_range(&mut self, range: Range<usize>) {
         if range.len() == 0 {
+            self.set(range.start);
             return;
         }
 
         let min = range.start;
         let max = range.end;
-
-        assert!(max < BITSET_SIZE_IN_WORDS * 64);
-
         let first_index = min >> 6;
         let last_index = (max >> 6) - 1;
 
@@ -80,8 +78,6 @@ impl BitsetContainer {
         }
 
         self.bitset[last_index] |= !0_u64 >> ((!max as u64 + 1) >> & 0x3F);
-        
-        // TODO: Update cardinality
         
         self.cardinality.invalidate();
     }
@@ -109,10 +105,10 @@ impl BitsetContainer {
     }
 
     /// Unset the bit at `index`
-    pub fn unset(&mut self, index: usize) {
-        assert!(index < BITSET_SIZE_IN_WORDS * 64);
+    pub fn unset(&mut self, index: u16) {
+        debug_assert!(usize::from(index) < BITSET_SIZE_IN_WORDS * 64);
 
-        let word_index = index >> 6;
+        let word_index = usize::from(index >> 6);
         let bit_index = index & 0x3F;
         let word = self.bitset[word_index];
         let new_word = word & (!1_u64)
@@ -125,22 +121,29 @@ impl BitsetContainer {
     }
 
     /// Unset all the bits between [min-max)
-    pub fn unset_range(&mut self, range: Range<usize>) {
-        if range.len() == 1 {
+    pub fn unset_range(&mut self, range: Range<u16>) { 
+        if range.len() == 0 {
             self.unset(range.start);
             return;
         }
 
-        let first_word = range.start >> 6;
-        let last_word = (range.end - 1) >> 6;
+        let first_word = usize::from(range.start >> 6);
+        let last_word = usize::from((range.end - 1) >> 6);
 
-        self.bitset[first_word] ^= !(!0 << (range.start % 64));
+        if first_word == last_word {
+            self.bitset[first_word] &= !((!0 << (range.start % 64)) & (!0 >> ((!range.end + 1) % 64)));
+            self.cardinality.invalidate();
 
-        for word in first_word..last_word {
-            self.bitset[word] = !self.bitset[word];
+            return;
         }
 
-        self.bitset[last_word] ^= !0 >> ((!range.end + 1) % 64);
+        self.bitset[first_word] &= !(!0 << (range.start % 64));
+
+        for word in (first_word + 1)..last_word {
+            self.bitset[word] = 0;
+        }
+
+        self.bitset[last_word] &= !(!0 >> ((!range.end + 1) % 64));
         
         self.cardinality.invalidate();
     }
@@ -245,18 +248,22 @@ impl BitsetContainer {
 
     /// Flip all bits in the range [min-max)
     pub fn flip_range(&mut self, range: Range<u16>) {
-        let min = range.start as usize;
-        let max = range.end as usize;
-        let first_word = min / 64;
-        let last_word = max / 64;
+        if range.len() == 0 {
+            return;
+        }
+
+        let min = range.start as u32;
+        let max = range.end as u32;
+        let first_word = (min / 64) as usize;
+        let last_word = ((max - 1) / 64) as usize;
         
-        self.bitset[first_word] ^= !(!0 << (min % 64));
+        self.bitset[first_word] ^= !((!0) << (min % 64));
         
         for i in first_word..last_word {
             self.bitset[i] = !self.bitset[i];
         }
 
-        self.bitset[last_word] ^= !0 >> ((!max + 1) % 64);
+        self.bitset[last_word] ^= (!0) >> ((!max).wrapping_add(1) % 64);
         self.cardinality.invalidate();
     }
 
@@ -323,16 +330,6 @@ impl BitsetContainer {
         result as usize
     }
 
-    /// Set the cardinality of the bitset
-    /// 
-    /// # Safety
-    /// This function is marked unsafe as it can potentially 
-    /// out of bounds indexing on operations that rely on the cardinality.
-    /// It also would violate many logical invariants if set incorrectly
-    pub unsafe fn set_cardinality(&mut self, cardinality: usize) {
-        self.cardinality.set(cardinality);
-    }
-    
     /// Get the smallest value in the bitset
     pub fn min(&self) -> Option<u16> {
         for (i, word) in (*self.bitset).iter().enumerate() {
@@ -361,24 +358,23 @@ impl BitsetContainer {
 
     /// Find the number of values equal to or smaller than `value`
     pub fn rank(&self, value: u16) -> usize {
-        unsafe {
-            let ptr = self.as_ptr();
-            let end = (value / 64) as usize;
-            let mut sum = 0;
+        let end = (value / 64) as usize;
+        let mut sum = 0;
 
-            let mut i = 0;
-            while i < end {
-                sum += (*(ptr.add(i))).count_ones();
+        let iter = self.bitset[0..end].iter()
+            .enumerate();
 
-                i += 1;
-            }
-
-            let rem = (value as usize) - (i * 64) + 1;
-            let rem_word = (*(ptr.add(i))) << ((64 - rem) & 63);
-            sum += rem_word.count_ones();
-
-            sum as usize
+        let mut last = 0;
+        for (i, word) in iter {
+            sum += word.count_ones();
+            last = i;
         }
+
+        let rem = (value as usize) - (last * 64) + 1;
+        let rem_word = self.bitset[last] << ((64 - rem) & 63);
+        sum += rem_word.count_ones();
+
+        sum as usize
     }
 
     /// Find the element of a given rank starting at `start_rank`. Returns None if no element is present and updates `start_rank`
@@ -391,36 +387,33 @@ impl BitsetContainer {
             return None;
         }
 
-        unsafe {
-            let ptr = self.as_ptr();
+        let iter = self.bitset.iter()
+            .enumerate();
 
-            let mut i = 0;
-            while i < BITSET_SIZE_IN_WORDS {
-                let mut w = *(ptr.add(1));
+        for (i, word) in iter {
+            let mut w = *word;
+            
+            let size = w.count_ones();
+            if rank <= *start_rank + size {
+                let base = (i * 64) as u32;
                 
-                let size = w.count_ones();
-                if rank <= *start_rank + size {
-                    let base = (i * 64) as u32;
-                    
-                    while w != 0 {
-                        let t = w & (!w + 1);
-                        let r = w.leading_zeros();
+                while w != 0 {
+                    let t = w & (!w + 1);
+                    let r = w.leading_zeros();
 
-                        if *start_rank == rank {
-                            return Some((r + base) as u16);
-                        }
-
-                        w ^= t;
-                        *start_rank += 1;
+                    if *start_rank == rank {
+                        return Some((r + base) as u16);
                     }
-                }
-                else {
-                    *start_rank += size;
-                }
 
-                i += 1;
+                    w ^= t;
+                    *start_rank += 1;
+                }
+            }
+            else {
+                *start_rank += size;
             }
         }
+
         unreachable!()
     }
     
@@ -440,26 +433,19 @@ impl BitsetContainer {
     /// Get the number of runs in the bitset
     pub fn num_runs(&self) -> usize {
         let mut num_runs = 0;
+        let mut next_word = self.bitset[0];
 
-        unsafe {
-            let mut next_word = self.bitset[0];
-            let mut i = 0;
-            let ptr = self.as_ptr();
+        for word in self.bitset.iter() {
+            let prev_word = next_word;
+            next_word = *word;
+            num_runs += (!prev_word & (prev_word << 1) + ((prev_word >> 63) & !next_word)).count_ones();
+        }
 
-            while i < BITSET_SIZE_IN_WORDS {
-                let word = next_word;
-                next_word = *(ptr.add(i));
-                num_runs += (!word & (word << 1) + ((word >> 63) & !next_word)).count_ones();
+        let word = next_word;
+        num_runs += (!word & (word << 1) + ((word >> 63) & !next_word)).count_ones();
 
-                i += 1;
-            }
-
-            let word = next_word;
-            num_runs += (!word & (word << 1) + ((word >> 63) & !next_word)).count_ones();
-
-            if word & 0x8000000000000000 != 0 {
-                num_runs += 1;
-            }
+        if word & 0x8000000000000000 != 0 {
+            num_runs += 1;
         }
 
         num_runs as usize
@@ -489,12 +475,6 @@ impl BitsetContainer {
         }
     }
     
-    /// Get a pointer to the words of the bitset
-    #[inline]
-    pub fn as_ptr(&self) -> *const u64 {
-        self.bitset.as_ptr()
-    }
-
     /// Get a mutable pointer to the words of the bitset
     #[inline]
     pub fn as_mut_ptr(&mut self) -> *mut u64 {
@@ -577,8 +557,6 @@ impl<'a> From<&'a mut RunContainer> for BitsetContainer {
 
 impl<'a> From<&'a RunContainer> for BitsetContainer {
     fn from(container: &'a RunContainer) -> Self {
-        let cardinality = container.cardinality();
-
         let mut bitset = BitsetContainer::new();
         for run in container.iter_runs() {
             let min = run.value as usize;
@@ -589,7 +567,7 @@ impl<'a> From<&'a RunContainer> for BitsetContainer {
 
         // We know this is safe since we're just copying the cardinality from the other
         // container and that all elements of a run are set
-        unsafe { bitset.set_cardinality(cardinality) };
+        bitset.cardinality.set(container.cardinality());
         bitset
     }
 }
@@ -659,7 +637,7 @@ impl SetOr<RunContainer> for BitsetContainer {
             Container::Run(other.clone())
         }
         else {
-            let mut result = BitsetContainer::new();
+            let mut result = self.clone();
             for rle in other.iter_runs() {
                 result.set_range(rle.into_range());
             }
@@ -755,15 +733,14 @@ impl SetAnd<RunContainer> for BitsetContainer {
         }
 
         let mut start = 0;
-        for rle in other.iter_runs() {
-            let end = rle.value as usize;
+        for run in other.iter_runs() {
+            let end = run.value;
             self.unset_range(start..end);
 
-            start = end + (rle.length as usize) + 1;
+            start = end + run.length + 1;
         }
 
-        self.unset_range(start..(1 << 16));
-
+        self.unset_range(start..(!0));
         self.into_efficient_container()
     }
 }
@@ -808,7 +785,7 @@ impl SetAndNot<RunContainer> for BitsetContainer {
         let mut bitset = self.clone();
 
         for run in other.iter_runs() {
-            bitset.unset_range((run.value as usize)..((run.end()) as usize));
+            bitset.unset_range(run.into_range());
         }
 
         bitset.into_efficient_container()
@@ -900,12 +877,12 @@ impl Subset<ArrayContainer> for BitsetContainer {
 
 impl Subset<RunContainer> for BitsetContainer {
     fn subset_of(&self, other: &RunContainer) -> bool {
-        if self.cardinality() != other.cardinality() {
+        if self.cardinality() > other.cardinality() {
             return false;
         }
 
-        for value in self.iter() {
-            if !other.contains(value) {
+        for run in other.iter_runs() {
+            if !self.contains_range(run.into_range()) {
                 return false;
             }
         }
@@ -917,7 +894,7 @@ impl Subset<RunContainer> for BitsetContainer {
 impl SetNot for BitsetContainer {
     fn not(&self, range: Range<u16>) -> Container {
         let mut bitset = self.clone();
-        bitset.unset_range((range.start as usize)..(range.end as usize));
+        bitset.flip_range(range);
         bitset.into_efficient_container()
     }
 
@@ -950,19 +927,22 @@ impl<'a> Iterator for Iter<'a> {
             None
         }
         else {
-            let w = self.word;
             let t = self.word & (!self.word).wrapping_add(1);
-            let r = w.trailing_zeros();
+            let r = self.word.trailing_zeros();
 
-            self.word = w ^ t;
+            self.word = self.word ^ t;
 
             // Advance to the next word if the current one is 0
             let mut new_base = self.base;
-            unsafe {
-                while self.word == 0 && self.word_index + 1 < self.words.len() {
+            if self.word == 0 {
+                for word in self.words[(self.word_index + 1)..].iter() {
                     self.word_index += 1;
-                    self.word = *self.words.get_unchecked(self.word_index);
+                    self.word = *word;
                     new_base += 64;
+
+                    if *word != 0 {
+                        break;
+                    }
                 }
             }
 
@@ -980,6 +960,8 @@ impl<'a> Iterator for Iter<'a> {
 mod test {
     use crate::container::*;
     use crate::test::*;
+    use crate::test::short::*;
+    use super::BITSET_SIZE_IN_WORDS;
 
     impl TestUtils for BitsetContainer {
         fn create() -> Self {
@@ -989,5 +971,312 @@ mod test {
         fn fill(&mut self, data: &[u16]) {
             self.set_list(data);
         }
+    }
+
+    #[test]
+    fn bitset_bitset_or() {
+        run_test::<BitsetContainer, BitsetContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_OR,
+            |a, b| a.or(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_bitset_and() {
+        run_test::<BitsetContainer, BitsetContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND,
+            |a, b| a.and(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_bitset_and_cardinality() {
+        let a = make_container::<BitsetContainer>(&INPUT_A);
+        let b = make_container::<BitsetContainer>(&INPUT_B);
+
+        let card = a.and_cardinality(&b);
+
+        assert_eq!(card, RESULT_AND.len());
+    }
+
+    #[test]
+    fn bitset_bitset_and_not() {
+        run_test::<BitsetContainer, BitsetContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND_NOT,
+            |a, b| a.and_not(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_bitset_xor() {
+        run_test::<BitsetContainer, BitsetContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_XOR,
+            |a, b| a.xor(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_bitset_is_subset() {
+        let a = make_container::<BitsetContainer>(&SUBSET_A);
+        let b = make_container::<BitsetContainer>(&SUBSET_B);
+
+        assert!(a.subset_of(&b));
+        assert!(!b.subset_of(&a));
+    }
+
+    #[test]
+    fn bitset_not() {
+        let a = make_container::<BitsetContainer>(&INPUT_A);
+        let not_a = a.not(0..(((BITSET_SIZE_IN_WORDS * 64) - 1) as u16));
+
+        for value in a.iter() {
+            assert!(!not_a.contains(value), "{} found in set", value);
+        }
+    }
+
+    #[test]
+    fn bitset_bitset_inplace_or() {
+        run_test::<BitsetContainer, BitsetContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_OR,
+            |a, b| a.inplace_or(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_bitset_inplace_and() {
+        run_test::<BitsetContainer, BitsetContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND,
+            |a, b| a.inplace_and(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_bitset_inplace_and_not() {
+        run_test::<BitsetContainer, BitsetContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND_NOT,
+            |a, b| a.inplace_and_not(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_bitset_inplace_xor() {
+        run_test::<BitsetContainer, BitsetContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_XOR,
+            |a, b| a.inplace_xor(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_array_or() {
+        run_test::<BitsetContainer, ArrayContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_OR,
+            |a, b| a.or(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_array_and() {
+        run_test::<BitsetContainer, ArrayContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND,
+            |a, b| a.and(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_array_and_cardinality() {
+        let a = make_container::<BitsetContainer>(&INPUT_A);
+        let b = make_container::<ArrayContainer>(&INPUT_B);
+
+        let card = a.and_cardinality(&b);
+
+        assert_eq!(card, RESULT_AND.len());
+    }
+
+    #[test]
+    fn bitset_array_and_not() {
+        run_test::<BitsetContainer, ArrayContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND_NOT,
+            |a, b| a.and_not(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_array_xor() {
+        run_test::<BitsetContainer, ArrayContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_XOR,
+            |a, b| a.xor(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_array_inplace_or() {
+        run_test::<BitsetContainer, ArrayContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_OR,
+            |a, b| a.inplace_or(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_array_inplace_and() {
+        run_test::<BitsetContainer, ArrayContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND,
+            |a, b| a.inplace_and(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_array_inplace_and_not() {
+        run_test::<BitsetContainer, ArrayContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND_NOT,
+            |a, b| a.inplace_and_not(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_array_inplace_xor() {
+        run_test::<BitsetContainer, ArrayContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_XOR,
+            |a, b| a.inplace_xor(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_array_is_subset() {
+        let a = make_container::<BitsetContainer>(&SUBSET_A);
+        let b = make_container::<ArrayContainer>(&SUBSET_B);
+
+        assert!(a.subset_of(&b));
+        assert!(!b.subset_of(&a));
+    }
+
+    #[test]
+    fn bitset_run_or() {
+        run_test::<BitsetContainer, RunContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_OR,
+            |a, b| a.or(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_run_and() {
+        run_test::<BitsetContainer, RunContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND,
+            |a, b| a.and(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_run_and_cardinality() {
+        let a = make_container::<BitsetContainer>(&INPUT_A);
+        let b = make_container::<RunContainer>(&INPUT_B);
+
+        let card = a.and_cardinality(&b);
+
+        assert_eq!(card, RESULT_AND.len());
+    }
+
+    #[test]
+    fn bitset_run_and_not() {
+        run_test::<BitsetContainer, RunContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND_NOT,
+            |a, b| a.and_not(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_run_xor() {
+        run_test::<BitsetContainer, RunContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_XOR,
+            |a, b| a.xor(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_run_inplace_or() {
+        run_test::<BitsetContainer, RunContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_OR,
+            |a, b| a.inplace_or(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_run_inplace_and() {
+        run_test::<BitsetContainer, RunContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND,
+            |a, b| a.inplace_and(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_run_inplace_and_not() {
+        run_test::<BitsetContainer, RunContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND_NOT,
+            |a, b| a.inplace_and_not(&b)
+        );
+    }
+
+    #[test]
+    fn bitset_run_inplace_xor() {
+        run_test::<BitsetContainer, RunContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_XOR,
+            |a, b| a.inplace_xor(&b)
+        );
+    }
+    
+    #[test]
+    fn bitset_run_is_subset() {
+        let a = make_container::<BitsetContainer>(&SUBSET_A);
+        let b = make_container::<RunContainer>(&SUBSET_B);
+
+        assert!(a.subset_of(&b));
+        assert!(!b.subset_of(&a));
     }
 }

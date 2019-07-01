@@ -355,17 +355,13 @@ impl Container {
                     return false;
                 }
                 else if result_card < DEFAULT_MAX_SIZE {
-                    c.unset_range((range.start as usize)..(range.end as usize));
-                    unsafe { c.set_cardinality(result_card); }
-                    
+                    c.unset_range(range);
                     *self = Container::Array(c.into());
 
                     return true;
                 }
                 else {
-                    c.unset_range((range.start as usize)..(range.end as usize));
-                    unsafe { c.set_cardinality(result_card); }
-
+                    c.unset_range(range);
                     return true;
                 }
             },

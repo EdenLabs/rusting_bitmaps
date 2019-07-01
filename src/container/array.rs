@@ -130,21 +130,19 @@ impl ArrayContainer {
 
     /// Add all values within the specified range
     pub fn add_range(&mut self, range: Range<u16>) {
-        debug_assert!(range.len() > 0);
-
-        // Resize to fit all new elements
-        let len = self.len();
-        let cap = self.capacity();
-        let slack = cap - len;
-        if slack < range.len() {
-            self.array.reserve(range.len() - slack);
+        if range.len() == 0 {
+            self.add(range.start);
         }
+        else {
+            // Resize to fit all new elements
+            self.reserve(range.len());
 
-        // Append new elements
-        for i in range {
-            // This is technically valid since we only store the lower 16 bits
-            // inside containers. The upper 16 are stored as keys in the roaring bitmap
-            self.array.push(i as u16);
+            // Append new elements
+            for i in range {
+                // This is technically valid since we only store the lower 16 bits
+                // inside containers. The upper 16 are stored as keys in the roaring bitmap
+                self.array.push(i as u16);
+            }
         }
     }
 
@@ -426,24 +424,24 @@ impl SetOr<Self> for ArrayContainer {
         
         // Contents will end up as an array container, work inplace
         if max_cardinality <= DEFAULT_MAX_SIZE {
-            // Make sure the contents will fit
-            let required = max_cardinality - self.capacity();
-            if required > 0 {
-                self.reserve(required);
-            }
-
             unsafe {
+                // Make sure the contents will fit
+                let required = max_cardinality - self.len();
+                self.reserve(required);
+
                 // Offset the contents of self so we can put the result in the beginning of the array
                 let start = self.as_mut_ptr();
                 let end = start.add(other.len());
 
-                ptr::copy_nonoverlapping(start, end, self.len());
+                ptr::copy(start, end, self.len());
 
                 // Run the optimized union code on the contents
                 let s0 = slice::from_raw_parts(end, self.len());
                 let s1 = other.array.as_slice();
 
-                array_ops::or(s0, s1, start);
+                let card = array_ops::or(s0, s1, start);
+
+                self.set_cardinality(card);
             }
 
             Container::Array(self)
@@ -462,15 +460,10 @@ impl SetOr<Self> for ArrayContainer {
                     self.reserve(required);
                 }
 
-                // Load the contenst of the bitset into the array
+                // Load the contents of the bitset into the array
                 self.clear();
-
-                let mut iter = bitset.iter();
-                let mut value = iter.next();
-                while value.is_some() {
-                    self.push(value.unwrap());
-
-                    value = iter.next();
+                for value in bitset.iter() {
+                    self.push(value);
                 }
 
                 Container::Array(self)
@@ -541,17 +534,14 @@ impl SetAnd<Self> for ArrayContainer {
             // Shift the elements of self over to accomodate new contents
             let len = self.len();
             let req = len.max(other.len());
-            let slack = req + len;
-            if self.capacity() < slack {
-                self.reserve(slack - self.capacity());
+            self.reserve(req);
 
-                let src = self.as_mut_ptr();
-                let dst = src.add(req);
+            let src = self.as_mut_ptr();
+            let dst = src.add(req);
 
-                ptr::copy(src, dst, len);
-            }
+            ptr::copy(src, dst, len);
             
-            let ptr = self.as_ptr();
+            let ptr = self.as_ptr().add(req);
             let slice = slice::from_raw_parts(ptr, self.len());
             
             let card = array_ops::and(slice, &other, self.as_mut_ptr());
@@ -681,18 +671,16 @@ impl SetAndNot<Self> for ArrayContainer {
         unsafe {
             // Shift the elements of self over to accomodate new contents
             let len = self.len();
-            let slack = len * 2;
-            if self.capacity() < slack {
-                self.reserve(slack - self.capacity());
+            self.reserve(len);
 
-                let src = self.as_mut_ptr();
-                let dst = src.add(len);
-
-                ptr::copy(src, dst, len);
-            }
+            let src = self.as_mut_ptr();
+            let dst = src.add(len);
+            ptr::copy(src, dst, len);
             
-            let ptr = self.as_ptr();
-            let slice = slice::from_raw_parts(ptr, self.len());
+            let slice = slice::from_raw_parts(
+                self.as_ptr().add(len),
+                self.len()
+            );
 
             let card = array_ops::and_not(slice, &other, self.as_mut_ptr());
             self.set_cardinality(card);
@@ -801,22 +789,21 @@ impl SetXor<Self> for ArrayContainer {
     }
     
     fn inplace_xor(mut self, other: &Self) -> Container {
+        // TODO: See if this wouldn't be more optimal using a scalar approach to avoid realloc
         unsafe {
             // Shift the elements of self over to accomodate new contents
             let len = self.len();
             let req = len + other.len();
-            let slack = req + len;
-            if self.capacity() < slack {
-                self.reserve(slack - self.capacity());
+            self.reserve(req);
 
-                let src = self.as_mut_ptr();
-                let dst = src.add(req);
-
-                ptr::copy(src, dst, len);
-            }
+            let src = self.as_mut_ptr();
+            let dst = src.add(req);
+            ptr::copy_nonoverlapping(src, dst, len);
             
-            let ptr = self.as_ptr();
-            let slice = slice::from_raw_parts(ptr, self.len());
+            let slice = slice::from_raw_parts(
+                self.as_ptr().add(req),
+                len
+            );
 
             let card = array_ops::xor(slice, &other, self.as_mut_ptr());
             self.set_cardinality(card);
@@ -830,7 +817,7 @@ impl SetXor<BitsetContainer> for ArrayContainer {
     fn xor(&self, other: &BitsetContainer) -> Container {
         let mut result = other.clone();
         result.flip_list(&self.array);
-
+        
         // Array is a better representation for this set, convert
         if result.cardinality() <= DEFAULT_MAX_SIZE {
             Container::Array(result.into())
@@ -1199,6 +1186,16 @@ mod test {
     }
 
     #[test]
+    fn array_array_and_cardinality() {
+        let a = make_container::<ArrayContainer>(&INPUT_A);
+        let b = make_container::<ArrayContainer>(&INPUT_B);
+
+        let card = a.and_cardinality(&b);
+
+        assert_eq!(card, RESULT_AND.len());
+    }
+
+    #[test]
     fn array_array_and_not() {
         run_test::<ArrayContainer, ArrayContainer, _>(
             &INPUT_A, 
@@ -1228,7 +1225,7 @@ mod test {
     }
 
     #[test]
-    fn not() {
+    fn array_not() {
         let a = make_container::<ArrayContainer>(&INPUT_A);
         let not_a = a.not(0..(a.cardinality() as u16));
 
@@ -1241,6 +1238,46 @@ mod test {
         }
 
         assert!(!failed);
+    }
+
+    #[test]
+    fn array_array_inplace_or() {
+        run_test::<ArrayContainer, ArrayContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_OR,
+            |a, b| a.inplace_or(&b)
+        );
+    }
+
+    #[test]
+    fn array_array_inplace_and() {
+        run_test::<ArrayContainer, ArrayContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_AND,
+            |a, b| a.inplace_and(&b)
+        );
+    }
+
+    #[test]
+    fn array_array_inplace_and_not() {
+        run_test::<ArrayContainer, ArrayContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_AND_NOT,
+            |a, b| a.inplace_and_not(&b)
+        );
+    }
+
+    #[test]
+    fn array_array_inplace_xor() {
+        run_test::<ArrayContainer, ArrayContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_XOR,
+            |a, b| a.inplace_xor(&b)
+        );
     }
 
     #[test]
@@ -1261,6 +1298,16 @@ mod test {
             &RESULT_AND,
             |a, b| a.and(&b)
         );
+    }
+
+        #[test]
+    fn array_bitset_and_cardinality() {
+        let a = make_container::<ArrayContainer>(&INPUT_A);
+        let b = make_container::<BitsetContainer>(&INPUT_B);
+
+        let card = a.and_cardinality(&b);
+
+        assert_eq!(card, RESULT_AND.len());
     }
 
     #[test]
@@ -1293,6 +1340,46 @@ mod test {
     }
 
     #[test]
+    fn array_bitset_inplace_or() {
+        run_test::<ArrayContainer, BitsetContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_OR,
+            |a, b| a.inplace_or(&b)
+        );
+    }
+
+    #[test]
+    fn array_bitset_inplace_and() {
+        run_test::<ArrayContainer, BitsetContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_AND,
+            |a, b| a.inplace_and(&b)
+        );
+    }
+
+    #[test]
+    fn array_bitset_inplace_and_not() {
+        run_test::<ArrayContainer, BitsetContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_AND_NOT,
+            |a, b| a.inplace_and_not(&b)
+        );
+    }
+
+    #[test]
+    fn array_bitset_inplace_xor() {
+        run_test::<ArrayContainer, BitsetContainer, _>(
+            &INPUT_A, 
+            &INPUT_B, 
+            &RESULT_XOR,
+            |a, b| a.inplace_xor(&b)
+        );
+    }
+
+    #[test]
     fn array_run_or() {
         run_test::<ArrayContainer, RunContainer, _>(
             &INPUT_A, 
@@ -1310,6 +1397,16 @@ mod test {
             &RESULT_AND,
             |a, b| a.and(&b)
         );
+    }
+
+        #[test]
+    fn array_run_and_cardinality() {
+        let a = make_container::<ArrayContainer>(&INPUT_A);
+        let b = make_container::<RunContainer>(&INPUT_B);
+
+        let card = a.and_cardinality(&b);
+
+        assert_eq!(card, RESULT_AND.len());
     }
 
     #[test]

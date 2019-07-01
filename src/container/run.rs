@@ -626,14 +626,6 @@ impl RunContainer {
 
         return self.runs.len() - low;
     }
-
-    /// Ensure that there is enough room for at least `capacity` elements
-    #[inline]
-    fn ensure_fit(&mut self, capacity: usize) {
-        if self.runs.capacity() > capacity {
-            self.runs.reserve(capacity - self.runs.capacity());
-        }
-    }
 }
 
 impl RunContainer {
@@ -820,9 +812,8 @@ impl SetOr<Self> for RunContainer {
                 return Container::Run(self);
             }
             else {
-                self.ensure_fit(other.runs.len());
-
                 self.runs.clear();
+                self.runs.reserve(other.runs.len());
                 self.runs.extend_from_slice(&other.runs);
 
                 return Container::Run(self);
@@ -831,11 +822,7 @@ impl SetOr<Self> for RunContainer {
 
         // Check for and reserve enough space to hold the contents
         let max_runs = self.num_runs() + other.num_runs();
-        let req_cap = max_runs + self.num_runs();
-        if self.runs.capacity() < req_cap {
-            self.runs.reserve(req_cap - self.runs.capacity());
-        }
-
+        self.runs.reserve(max_runs);
 
         unsafe {
             let len = self.len();
@@ -962,8 +949,7 @@ impl SetOr<ArrayContainer> for RunContainer {
 
         // Make sure there's enough room to fit the new runs
         let max_runs = other.cardinality() + self.num_runs();
-        let req_cap = max_runs + self.num_runs();
-        self.ensure_fit(req_cap);
+        self.runs.reserve(max_runs);
 
         unsafe {
             // Move the original contents of the run to the end of the buffer
@@ -1350,7 +1336,11 @@ impl SetAnd<BitsetContainer> for RunContainer {
                 let min = run.value as u16;
                 let max = run.end() as u16;
 
-                array.add_range(min..max);
+                for value in min..(max + 1)  {
+                    if other.contains(value) {
+                        array.push(value);
+                    }
+                }
             }
 
             return Container::Array(array);
@@ -1361,13 +1351,13 @@ impl SetAnd<BitsetContainer> for RunContainer {
             // Unset all bits in between the runs
             let mut start = 0;
             for run in self.runs.iter() {
-                let end = run.value as usize;
+                let end = run.value;
                 bitset.unset_range(start..end);
 
-                start = end + run.length as usize + 1;
+                start = end + run.length + 1;
             }
 
-            bitset.unset_range(start..(1 << 16));
+            bitset.unset_range(start..(!0));
 
             if bitset.cardinality() > DEFAULT_MAX_SIZE {
                 Container::Bitset(bitset)
@@ -1571,13 +1561,13 @@ impl SetAndNot<BitsetContainer> for RunContainer {
                 let start = rle.value;
                 let end = rle.end();
 
-                bitset.unset_range(last_pos..(start as usize));
+                bitset.unset_range(last_pos..start);
                 bitset.flip_range(start..end);
 
-                last_pos = end as usize;
+                last_pos = end;
             }
 
-            bitset.unset_range(last_pos..(1 << 16));
+            bitset.unset_range(last_pos..(!0));
 
             // Result is not a bitset, convert to array
             if bitset.cardinality() <= DEFAULT_MAX_SIZE {
@@ -1656,12 +1646,11 @@ impl SetXor<ArrayContainer> for RunContainer {
 impl SetXor<BitsetContainer> for RunContainer {
     fn xor(&self, other: &BitsetContainer) -> Container {
         let mut result = other.clone();
-
         for rle in self.runs.iter() {
-            result.flip_range(rle.value..(rle.end()));
+            result.flip_range(rle.value..(rle.end() + 1));
         }
 
-        if result.cardinality() < DEFAULT_MAX_SIZE {
+        if result.cardinality() <= DEFAULT_MAX_SIZE {
             Container::Array(result.into())
         }
         else {

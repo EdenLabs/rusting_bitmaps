@@ -42,10 +42,7 @@ pub fn or(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
         }
         
         // Perform the union
-        let max_capacity = a.len() + b.len();
-        if out.capacity() < max_capacity {
-            out.reserve(max_capacity - out.capacity());
-        }
+        out.reserve(a.len() + b.len());
     
         let ptr_a = a.as_ptr();
         let ptr_b = b.as_ptr();
@@ -110,10 +107,7 @@ pub fn and_not(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
         return;
     }
 
-    let max_capacity = a.len() + b.len();
-    if out.capacity() < max_capacity {
-        out.reserve(max_capacity - out.capacity());
-    }
+    out.reserve(a.len() + b.len());
 
     unsafe {
         let mut i_a = 0;
@@ -184,10 +178,7 @@ pub fn xor(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
         return;
     }
 
-    let max_capacity = a.len() + b.len();
-    if out.capacity() < max_capacity {
-        out.reserve(max_capacity - out.capacity());
-    }
+    out.reserve(a.len() + b.len());
 
     unsafe {
         let mut i_a = 0;
