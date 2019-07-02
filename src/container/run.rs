@@ -1,10 +1,13 @@
 use std::ops::{Deref, DerefMut};
+use std::io;
 use std::iter;
 use std::mem;
 use std::ptr;
 use std::fmt;
 use std::iter::Iterator;
 use std::slice;
+
+use tinybit::Endian;
 
 use crate::container::*;
 use crate::container::array_ops;
@@ -35,13 +38,13 @@ impl Rle16 {
 
     /// The last value in the run
     #[inline] 
-    pub fn end(&self) -> u16 {
+    pub fn end(self) -> u16 {
         self.value + self.length
     }
     
     /// Get the start and end value of the run
     #[inline]
-    pub fn range(&self) -> (u16, u16) {
+    pub fn range(self) -> (u16, u16) {
         (self.value, self.value + self.length + 1)
     }
 }
@@ -67,6 +70,7 @@ impl fmt::Debug for Rle16 {
 }
 
 /// The result for a binary search
+#[allow(clippy::enum_variant_names)] // Clippy is wrong in this instance
 enum SearchResult {
     /// An exact match was found, the index is contained
     ExactMatch(usize),
@@ -118,7 +122,6 @@ impl RunContainer {
     pub fn add(&mut self, value: u16) {
         match self.binary_search(value) {
             SearchResult::ExactMatch(_index) => {
-                return;
             },
             SearchResult::PossibleMatch(index) => {
                 let v = self.runs[index];
@@ -158,7 +161,7 @@ impl RunContainer {
             },
             SearchResult::NoMatch => {
                 // Check if the run needs extended, if so extend it
-                if self.runs.len() > 0 {
+                if !self.runs.is_empty() {
                     let v0 = &mut self.runs[0];
                     if v0.value == value + 1 {
                         v0.length += 1;
@@ -212,7 +215,7 @@ impl RunContainer {
                     rle.length -= 1;
                 }
 
-                return true;
+                true
             },
             SearchResult::PossibleMatch(prev_index) => {
                 let rle = self.runs[prev_index];
@@ -232,10 +235,10 @@ impl RunContainer {
                     return true;
                 }
 
-                return false;
+                false
             },
             SearchResult::NoMatch => {
-                return false;
+                false
             }
         }
     }
@@ -309,12 +312,7 @@ impl RunContainer {
             SearchResult::PossibleMatch(index) => {
                 let v = self.runs[index];
 
-                if value - v.value <= v.length {
-                    true
-                }
-                else {
-                    false
-                }
+                value - v.value <= v.length
             },
             SearchResult::NoMatch => {
                 false
@@ -363,13 +361,14 @@ impl RunContainer {
                 break;
             }
 
-            let min_length;
-            if stop > min {
-                min_length = stop - min;
-            }
-            else {
-                min_length = 0;
-            }
+            let min_length = {
+                if stop > min { 
+                    stop - min 
+                }
+                else {
+                    0
+                }
+            };
 
             if min_length < run.length {
                 count += min_length;
@@ -379,10 +378,11 @@ impl RunContainer {
             }
         }
 
-        return count >= max - min - 1;
+        count >= max - min - 1
     }
     
     /// The cardinality of the run container
+    #[inline]
     pub fn cardinality(&self) -> usize {
         self.cardinality.get(|| self.compute_cardinality())
     }
@@ -398,18 +398,20 @@ impl RunContainer {
     }
 
     /// The number of runs in the run container
+    #[inline]
     pub fn num_runs(&self) -> usize {
         self.runs.len()
     }
 
     /// Check whether the container is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
-        self.runs.len() == 0
+        self.runs.is_empty()
     }
     
     /// Check whether the container is full
     pub fn is_full(&self) -> bool {
-        if self.runs.len() == 0 {
+        if self.runs.is_empty() {
             return false;
         }
 
@@ -420,7 +422,7 @@ impl RunContainer {
 
     /// Get the minimum value of this container
     pub fn min(&self) -> Option<u16> {
-        if self.runs.len() == 0 {
+        if self.runs.is_empty() {
             return None;
         }
 
@@ -429,7 +431,7 @@ impl RunContainer {
     
     /// Get the maximum value of this container
     pub fn max(&self) -> Option<u16> {
-        if self.runs.len() == 0 {
+        if self.runs.is_empty() {
             return None;
         }
 
@@ -458,7 +460,7 @@ impl RunContainer {
             }
         }
 
-        return sum as usize;
+        sum as usize
     }
 
     /// Select the element with `rank` starting the search from `start_rank`
@@ -497,7 +499,7 @@ impl RunContainer {
         }
 
         // Bitset is smallest, convert
-        return Container::Bitset(self.into());
+        Container::Bitset(self.into())
     }
     
     /// Iterate over the values of the run container
@@ -575,7 +577,7 @@ impl RunContainer {
 
     /// Get the number of runs before `value` 
     fn rle_count_less(&self, value: u16) -> usize {
-        if self.runs.len() == 0 {
+        if self.runs.is_empty() {
             return 0;
         }
 
@@ -597,12 +599,12 @@ impl RunContainer {
             }
         }
 
-        return low;
+        low
     }
 
     /// Get the number of runs after `value`
     fn rle_count_greater(&self, value: u16) -> usize {
-        if self.runs.len() == 0 {
+        if self.runs.is_empty() {
             return 0;
         }
 
@@ -624,7 +626,7 @@ impl RunContainer {
             }
         }
 
-        return self.runs.len() - low;
+        self.runs.len() - low
     }
 }
 
@@ -656,12 +658,7 @@ impl RunContainer {
     /// Deserialize a run container from the provided buffer
     #[cfg(target_endian = "little")]
     pub fn deserialize<R: Read>(buf: &mut R) -> io::Result<Self> {
-        let num_runs = unsafe {
-            let mut read_buf: [u8; 2] = [0; 2];
-            buf.read(&mut read_buf)?;
-
-            ptr::read(read_buf.as_ptr() as *const u16) as usize
-        };
+        let num_runs = u16::read_le(buf)? as usize;
 
         let mut result = Self::with_capacity(num_runs);
 
@@ -670,7 +667,10 @@ impl RunContainer {
             let ptr = result.as_mut_ptr() as *mut u8;
             let slice = slice::from_raw_parts_mut(ptr, num_bytes);
 
-            buf.read(slice)?;
+            let num_read = buf.read(slice)?;
+            if num_read != num_bytes {
+                return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
+            }
         }
 
         Ok(result)
@@ -1020,8 +1020,8 @@ impl SetOr<BitsetContainer> for RunContainer {
         let mut result = other.clone();
 
         for rle in self.iter_runs() {
-            let min = rle.value as usize;
-            let max = rle.end() as usize;
+            let min = rle.value;
+            let max = rle.end();
 
             result.set_range(min..max);
         }
@@ -1231,7 +1231,7 @@ impl SetAnd<ArrayContainer> for RunContainer {
             return Container::Array(other.clone());
         }
 
-        if self.runs.len() == 0 {
+        if self.runs.is_empty() {
             return Container::Array(ArrayContainer::new());
         }
 
@@ -1275,7 +1275,7 @@ impl SetAnd<ArrayContainer> for RunContainer {
             return other.cardinality();
         }
 
-        if self.runs.len() == 0 {
+        if self.runs.is_empty() {
             return 0;
         }
 
@@ -1336,14 +1336,14 @@ impl SetAnd<BitsetContainer> for RunContainer {
                 let min = run.value as u16;
                 let max = run.end() as u16;
 
-                for value in min..(max + 1)  {
+                for value in min..=max {
                     if other.contains(value) {
                         array.push(value);
                     }
                 }
             }
 
-            return Container::Array(array);
+            Container::Array(array)
         }
         else {
             let mut bitset = other.clone();
@@ -1433,7 +1433,7 @@ impl SetAndNot<ArrayContainer> for RunContainer {
                             rle0_end = r.end();
                         }
                     }
-                    else if rle1_start + 1 <= rle0_start {
+                    else if rle1_start < rle0_start {
                         rle1_pos += 1;
 
                         if rle1_pos < other.cardinality() {
@@ -1696,12 +1696,7 @@ impl Subset<Self> for RunContainer {
                 }
             }
 
-            if i_0 == self.runs.len() {
-                return true;
-            }
-            else {
-                return false;
-            }
+            i_0 == self.runs.len()
         }
     }
 }

@@ -17,14 +17,14 @@ unsafe fn append_slice(slice: &[u16], dst: *mut u16) {
 /// - Assumes that `a` and `b` are sorted. The result is undefined if violated
 pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Second operand is empty, just copy into out
-    if b.len() == 0 {
+    if b.is_empty() {
         append_slice(a, out);
         
         return a.len();
     }
 
     // First operand is empty, copy into out
-    if a.len() == 0 {
+    if a.is_empty() {
         append_slice(b, out);
         
         return b.len();
@@ -102,7 +102,7 @@ pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 /// # Remarks
 /// - Assumes that `a` and `b` are sorted. The result is undefined if violated
 pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
-    if a.len() == 0 || b.len() == 0 {
+    if a.is_empty() || b.is_empty() {
         return 0;
     }
 
@@ -151,7 +151,7 @@ pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 /// # Remarks
 /// - Assumes that `a` and `b` are sorted. The result is undefined if violated
 pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
-    if a.len() == 0 || b.len() == 0 {
+    if a.is_empty() || b.is_empty() {
         return 0;
     }
 
@@ -204,11 +204,11 @@ pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
 /// # Remarks
 /// - Assumes that `a` and `b` are sorted. The result is undefined if violated
 pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
-    if a.len() == 0 {
+    if a.is_empty() {
         return 0;
     }
     
-    if b.len() == 0 {
+    if b.is_empty() {
         append_slice(a, out);
         return a.len();
     }

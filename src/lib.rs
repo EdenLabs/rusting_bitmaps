@@ -3,9 +3,15 @@
 #![feature(slice_partition_dedup)]
 #![feature(seek_convenience)]
 
+// To appease clippy
+#![feature(range_is_empty)]
+#![feature(exact_size_is_empty)]
+
 // TODO: Enable these lints after sketching out the api
 //#![deny(missing_docs)]
 #![deny(bare_trait_objects)]
+#![allow(clippy::collapsible_if)] // No, just no. These were written that way to simplify reading
+#![allow(clippy::range_plus_one)] // Another "programmer knows better". The api relies on bounded range structs currently
 
 //! Rusting Bitmaps is a loose port of CRoaring with a few differences
 //!

@@ -101,7 +101,7 @@ pub fn advance_until(slice: &[u16], index: usize, min: u16) -> usize {
     let mut bound = lower + span_size;
 
     while bound < slice.len() && slice[bound] < min {
-        span_size = span_size << 1;
+        span_size <<= 1;
 
         bound = lower + span_size;
     }

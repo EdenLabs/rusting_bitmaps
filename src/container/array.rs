@@ -113,16 +113,16 @@ impl ArrayContainer {
 
         match self.array.binary_search(&value) {
             Ok(_index) => {
-                return true;
+                true
             },
             Err(index) => {
                 if self.cardinality() < (std::u16::MAX as usize) {
                     self.array.insert(index, value);
 
-                    return true;
+                    true
                 }
                 else {
-                    return false;
+                    false
                 }
             }
         }
@@ -130,7 +130,7 @@ impl ArrayContainer {
 
     /// Add all values within the specified range
     pub fn add_range(&mut self, range: Range<u16>) {
-        if range.len() == 0 {
+        if range.is_empty() {
             self.add(range.start);
         }
         else {
@@ -160,7 +160,7 @@ impl ArrayContainer {
 
     /// Remove all elements within the spefied range, exclusive
     pub fn remove_range(&mut self, range: Range<usize>) {
-        if range.len() == 0 || range.end as usize > self.len() {
+        if range.is_empty() || range.end as usize > self.len() {
             return;
         }
 
@@ -216,7 +216,7 @@ impl ArrayContainer {
     /// The smallest element in the array. Returns `None` if `cardinality` is 0
     #[inline]
     pub fn min(&self) -> Option<u16> {
-        if self.array.len() == 0 {
+        if self.array.is_empty() {
             None
         }
         else {
@@ -227,7 +227,7 @@ impl ArrayContainer {
     /// The largest element in the array. Returns `None` if the cardinality is 0
     #[inline]
     pub fn max(&self) -> Option<u16> {
-        if self.array.len() == 0 {
+        if self.array.is_empty() {
             None
         }
         else {
@@ -391,7 +391,7 @@ impl<'a> From<&'a RunContainer> for ArrayContainer {
             let run_start = run.value;
             let run_end = run_start + run.length;
 
-            for i in run_start..(run_end + 1) {
+            for i in run_start..=run_end {
                 array.push(i);
             }
         }
@@ -844,13 +844,11 @@ impl SetXor<RunContainer> for ArrayContainer {
 
         // Process as an array since the final result is probably an array
         if other.cardinality() <= DEFAULT_MAX_SIZE {
-            let array = ArrayContainer::from(other);
-            return SetXor::inplace_xor(array, self);
+            SetXor::inplace_xor(ArrayContainer::from(other), self)
         }
         // Process as a bitset since the final result may be a bitset
         else {
-            let bitset = BitsetContainer::from(other);
-            return SetXor::inplace_xor(bitset, self);
+            SetXor::inplace_xor(BitsetContainer::from(other), self)
         }
     }
     
@@ -885,12 +883,7 @@ impl Subset<Self> for ArrayContainer {
             }
         }
 
-        if i0 == card0 {
-            return true;
-        }
-        else {
-            return false;
-        }
+        i0 == card0
     }
 }
 
@@ -938,12 +931,7 @@ impl Subset<RunContainer> for ArrayContainer {
                 }
             }
             
-            if i_a == self.len() {
-                true
-            }
-            else {
-                false
-            }
+            i_a == self.len()
         }
     }
 }

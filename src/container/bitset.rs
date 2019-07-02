@@ -41,11 +41,11 @@ impl BitsetContainer {
     // TODO: See if this is still necessary
 
     /// Set the bit at `index`
-    pub fn set(&mut self, index: usize) {
-        debug_assert!(index < BITSET_SIZE_IN_WORDS * 64);
+    pub fn set(&mut self, index: u16) {
+        debug_assert!(usize::from(index) < BITSET_SIZE_IN_WORDS * 64);
 
-        let word_index = index >> 6;
-        let bit_index = index & 0x3F;
+        let word_index = usize::from(index / 64);
+        let bit_index = index % 64;
         let word = self.bitset[word_index];
         let new_word = word | (1 << bit_index);
 
@@ -55,29 +55,32 @@ impl BitsetContainer {
     }
 
     /// Set all the bits within the range denoted by [min-max)
-    pub fn set_range(&mut self, range: Range<usize>) {
-        if range.len() == 0 {
+    pub fn set_range(&mut self, range: Range<u16>) {
+        if range.is_empty() {
             self.set(range.start);
             return;
         }
 
         let min = range.start;
         let max = range.end;
-        let first_index = min >> 6;
-        let last_index = (max >> 6) - 1;
+        let first_word = usize::from(min / 64);
+        let last_word = usize::from((max - 1) / 64);
 
-        if first_index == last_index {
-            self.bitset[first_index] |= (!0_u64 << (min as u64 & 0x3F)) & (!0_u64 >> ((!max as u64 + 1) >> & 0x3F));
+        if first_word == last_word {
+            let w0 = (!0) << (min % 64);
+            let w1 = (!0) >> (((!max) + 1) % 64);
+            self.bitset[first_word] |= w0 & w1;
+
             return;
         }
 
-        self.bitset[first_index] |= !0_u64 << (min as u64 & 0x3F);
+        self.bitset[first_word] |= (!0) << (min % 64);
         
-        for i in (first_index + 1)..last_index {
-            self.bitset[i] = !0;
+        for word in self.bitset[(first_word + 1)..last_word].iter_mut() {
+            *word = !0;
         }
 
-        self.bitset[last_index] |= !0_u64 >> ((!max as u64 + 1) >> & 0x3F);
+        self.bitset[last_word] |= (!0) >> ((!max + 1) % 64);
         
         self.cardinality.invalidate();
     }
@@ -112,7 +115,7 @@ impl BitsetContainer {
         let bit_index = index & 0x3F;
         let word = self.bitset[word_index];
         let new_word = word & (!1_u64)
-            .checked_shl(bit_index as u32)
+            .checked_shl(u32::from(bit_index))
             .unwrap_or(0);
 
         self.bitset[word_index] = new_word;
@@ -122,7 +125,7 @@ impl BitsetContainer {
 
     /// Unset all the bits between [min-max)
     pub fn unset_range(&mut self, range: Range<u16>) { 
-        if range.len() == 0 {
+        if range.is_empty() {
             self.unset(range.start);
             return;
         }
@@ -187,7 +190,7 @@ impl BitsetContainer {
     /// Add all values in [min-max) to the bitset
     #[inline]
     pub fn add_range(&mut self, range: Range<u16>) {
-        self.set_range((range.start as usize)..(range.end as usize))
+        self.set_range(range)
     }
 
     /// Add `value` from the set and return true if it was removed
@@ -205,7 +208,7 @@ impl BitsetContainer {
 
         self.cardinality.decrement(change);
 
-        return change > 0;
+        change > 0
     }
 
     /// Get the value of the bit at `index`
@@ -243,17 +246,17 @@ impl BitsetContainer {
             }
         }
 
-        return true;
+        true
     }
 
     /// Flip all bits in the range [min-max)
     pub fn flip_range(&mut self, range: Range<u16>) {
-        if range.len() == 0 {
+        if range.is_empty() {
             return;
         }
 
-        let min = range.start as u32;
-        let max = range.end as u32;
+        let min = u32::from(range.start);
+        let max = u32::from(range.end);
         let first_word = (min / 64) as usize;
         let last_word = ((max - 1) / 64) as usize;
         
@@ -432,19 +435,28 @@ impl BitsetContainer {
 
     /// Get the number of runs in the bitset
     pub fn num_runs(&self) -> usize {
+        #[inline]
+        fn count_runs(word: u64, next_word: u64) -> u32 {
+            let w0 = (!word) & (word << 1);
+            let w1 = (word >> 63) & (!next_word);
+
+            (w0 + w1).count_ones()
+        }
+
         let mut num_runs = 0;
         let mut next_word = self.bitset[0];
 
-        for word in self.bitset.iter() {
-            let prev_word = next_word;
-            next_word = *word;
-            num_runs += (!prev_word & (prev_word << 1) + ((prev_word >> 63) & !next_word)).count_ones();
+        for w in self.bitset[1..].iter() {
+            let word = next_word;
+            next_word = *w;
+
+            num_runs += count_runs(word, next_word);
         }
 
         let word = next_word;
-        num_runs += (!word & (word << 1) + ((word >> 63) & !next_word)).count_ones();
+        num_runs += count_runs(word, next_word);
 
-        if word & 0x8000000000000000 != 0 {
+        if word & (1 << 31) != 0 {
             num_runs += 1;
         }
 
@@ -509,7 +521,10 @@ impl BitsetContainer {
             let num_bytes = mem::size_of::<u64>() * BITSET_SIZE_IN_WORDS;
             let bytes_slice = slice::from_raw_parts_mut(ptr, num_bytes);
 
-            buf.read(bytes_slice)?;
+            let num_read = buf.read(bytes_slice)?;
+            if num_read != num_bytes {
+                return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
+            }
 
             result.cardinality.invalidate();
 
@@ -559,8 +574,8 @@ impl<'a> From<&'a RunContainer> for BitsetContainer {
     fn from(container: &'a RunContainer) -> Self {
         let mut bitset = BitsetContainer::new();
         for run in container.iter_runs() {
-            let min = run.value as usize;
-            let max = (run.length - 1) as usize;
+            let min = run.value;
+            let max = run.length - 1;
 
             bitset.set_range(min..max);
         }
@@ -930,7 +945,7 @@ impl<'a> Iterator for Iter<'a> {
             let t = self.word & (!self.word).wrapping_add(1);
             let r = self.word.trailing_zeros();
 
-            self.word = self.word ^ t;
+            self.word ^= t;
 
             // Advance to the next word if the current one is 0
             let mut new_base = self.base;

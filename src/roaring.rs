@@ -72,7 +72,7 @@ impl RoaringBitmap {
     /// Create a new roaring bitmap with the specified range and step
     pub fn from_range(range: Range<u32>) -> Self {
         // No elements, just return an empty bitmap
-        if range.len() == 0 {
+        if range.is_empty() {
             return Self::new();
         }
 
@@ -192,11 +192,9 @@ impl RoaringBitmap {
 
                src -= 1;
             }
-            else {
-                if let Some(container) = Container::from_range(container_min..container_max) {
-                    self.containers.insert(dst as usize, container);
-                    self.keys.insert(dst as usize, key);
-                }
+            else if let Some(container) = Container::from_range(container_min..container_max) {
+                self.containers.insert(dst as usize, container);
+                self.keys.insert(dst as usize, key);
             }
 
             dst -= 1;
@@ -250,7 +248,7 @@ impl RoaringBitmap {
 
     /// Remove a range of values from the bitmap
     pub fn remove_range(&mut self, range: Range<u32>) {
-        debug_assert!(range.len() > 0);
+        debug_assert!(!range.is_empty());
 
         let min = range.start;
         let max = range.end;
@@ -329,7 +327,7 @@ impl RoaringBitmap {
     /// Check if the bitmap contains a range of values
     pub fn contains_range(&self, range: Range<u32>) -> bool {
         // We always contain the empty set
-        if range.len() == 0 {
+        if range.is_empty() {
             return true;
         }
 
@@ -858,11 +856,9 @@ impl RoaringBitmap {
                 self.keys.push(key);
             }
         }
-        else {
-            if let Some(c) = Container::from_range(range) {
-                self.containers.push(c);
-                self.keys.push(key);
-            }
+        else if let Some(c) = Container::from_range(range) {
+            self.containers.push(c);
+            self.keys.push(key);
         }
     }
 
@@ -1233,7 +1229,7 @@ impl RoaringBitmap {
         Iter {
             containers: &self.containers,
             keys: &self.keys,
-            iter: iter,
+            iter,
             index: 0
         }
     }
@@ -1413,17 +1409,14 @@ impl RoaringBitmap {
         // Load in the containers
         for i in 0..(size as usize) {
             let card = cards[i] as usize;
-            let is_bitset;
-            let is_run;
-
-            if has_run && bitmap[i / 8] & (1 << (i % 8)) != 0 {
-                is_bitset = false;
-                is_run = true;
-            }
-            else {
-                is_bitset = card > DEFAULT_MAX_SIZE;
-                is_run = false;
-            }
+            let (is_bitset, is_run) = {
+                if has_run && bitmap[i / 8] & (1 << (i % 8)) != 0 {
+                    (false, true)
+                }
+                else {
+                    (card > DEFAULT_MAX_SIZE, false)
+                }
+            };
 
             // Container is a bitset
             if is_bitset {

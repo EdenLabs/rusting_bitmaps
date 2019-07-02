@@ -92,24 +92,21 @@ impl LazyCardinality {
 
     /// Increment the cardinality by `value` if not dirty
     pub fn increment(&self, value: usize) {
-        match self.card.get() {
-            Some(card) => self.card.set(Some(card + value)),
-            None => return
+        if let Some(card) = self.card.get() {
+            self.card.set(Some(card + value));
         }
     }
 
     /// Decrement the cardinality by `value` if not dirty
     pub fn decrement(&self, value: usize) {
-        match self.card.get() {
-            Some(card) => self.card.set(Some(card - value)),
-            None => return
+        if let Some(card) = self.card.get() {
+            self.card.set(Some(card - value));
         }
     }
 
     pub fn add(&self, value: isize) {
-        match self.card.get() {
-            Some(card) => self.card.set(Some(((card as isize) + value) as usize)),
-            None => return
+        if let Some(card) = self.card.get() {
+            self.card.set(Some(((card as isize) + value) as usize));
         }
     }
 
@@ -235,7 +232,7 @@ pub enum Container {
 impl Container {
     /// Create a container with all values in the specified range
     pub fn from_range(range: Range<u16>) -> Option<Self> {
-        debug_assert!(range.len() > 0);
+        debug_assert!(!range.is_empty());
 
         let size = range.len();
 
@@ -249,7 +246,7 @@ impl Container {
         // Result is a bitset
         else {
             let mut container = BitsetContainer::new();
-            container.set_range((range.start as usize)..(range.end as usize));
+            container.set_range(range);
 
             Some(Container::Bitset(container))
         }
@@ -275,7 +272,7 @@ impl Container {
     pub fn shrink_to_fit(&mut self) {
         match self {
             Container::Array(c) => c.shrink_to_fit(),
-            Container::Bitset(_c) => return,            // Bitsets are fixed in size
+            Container::Bitset(_c) => (),            // Bitsets are fixed in size
             Container::Run(c) => c.shrink_to_fit(),
             Container::None => unreachable!()
         }
@@ -315,10 +312,8 @@ impl Container {
                 c.remove(value);
             },
             Container::Bitset(c) => {
-                if c.remove(value) {
-                    if c.cardinality() < DEFAULT_MAX_SIZE {
-                        *self = Container::Array(c.into());
-                    }
+                if c.remove(value) && c.cardinality() < DEFAULT_MAX_SIZE {
+                    *self = Container::Array(c.into());
                 }
             },
             Container::Run(c) => {
@@ -340,29 +335,30 @@ impl Container {
                 let result_card = vals_less + vals_greater;
 
                 if result_card == 0 {
-                    return false;
+                    false
                 }
                 else {
                     c.remove_range((range.start as usize)..(range.end as usize));
 
-                    return true;
+                    true
                 }
             },
             Container::Bitset(c) => {
                 let result_card = c.cardinality() - c.cardinality_range(range.clone());
 
                 if result_card == 0 {
-                    return false;
+                    false
                 }
                 else if result_card < DEFAULT_MAX_SIZE {
                     c.unset_range(range);
                     *self = Container::Array(c.into());
 
-                    return true;
+                    true
                 }
                 else {
                     c.unset_range(range);
-                    return true;
+
+                    true
                 }
             },
             Container::Run(c) => {
@@ -383,15 +379,15 @@ impl Container {
                 c.remove_range(range);
 
                 if RunContainer::serialized_size(num_runs) < BitsetContainer::serialized_size() {
-                    return true;
+                    true
                 }
                 else {
                     *self = Container::Bitset(c.into());
-                    return true;
+                    true
                 }
             },
             Container::None => unreachable!()
-        };
+        }
     }
 
     /// Check if the container contains a specific value
@@ -534,7 +530,7 @@ impl Container {
         };
         
         Iter {
-            iter: iter
+            iter
         }
     }
 }

@@ -19,12 +19,12 @@ pub unsafe fn is_full(runs: &[Rle16]) -> bool {
 /// The number of runs appended to `out`
 pub fn or(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
     // Append if one of the slices has no elements
-    if a.len() == 0 {
+    if a.is_empty() {
         out.extend_from_slice(b);
         return;
     }
     
-    if b.len() == 0 {
+    if b.is_empty() {
         out.extend_from_slice(a);
         return;
     }
@@ -98,11 +98,11 @@ pub fn or(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
 
 /// Calculate the difference (`A \ B`) between two rle slices and append the result in `out`
 pub fn and_not(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
-    if a.len() == 0 {
+    if a.is_empty() {
         return;
     }
 
-    if b.len() == 0 {
+    if b.is_empty() {
         out.extend_from_slice(a);
         return;
     }
@@ -168,12 +168,12 @@ pub fn and_not(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
 
 /// Calculate the symmetric difference (`(A \ B) ∪ (B \ A)`) between two rle slices and append the result in `out`
 pub fn xor(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
-    if a.len() == 0 {
+    if a.is_empty() {
         out.extend_from_slice(b);
         return;
     }
 
-    if b.len() == 0 {
+    if b.is_empty() {
         out.extend_from_slice(b);
         return;
     }
@@ -244,7 +244,7 @@ pub fn append(runs: &mut Vec<Rle16>, run: Rle16, previous_run: &mut Rle16) {
 /// # Safety
 /// Assumes that `runs` has at least one element
 pub fn append_exclusive(runs: &mut Vec<Rle16>, start: u16, length: u16) {
-    if runs.len() == 0 {
+    if runs.is_empty() {
         runs.push(Rle16::new(start, length));
         return;
     }
