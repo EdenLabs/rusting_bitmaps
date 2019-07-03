@@ -1,8 +1,9 @@
 use std::io::{self, Read, Write};
 use std::iter::Iterator;
 use std::mem;
-use std::ops::{Deref, DerefMut};
+use std::ops::{Deref, DerefMut, RangeBounds};
 
+use crate::IntoBound;
 use crate::container::*;
 
 use super::bitset_ops;
@@ -55,14 +56,14 @@ impl BitsetContainer {
     }
 
     /// Set all the bits within the range denoted by [min-max)
-    pub fn set_range(&mut self, range: Range<u16>) {
-        if range.is_empty() {
-            self.set(range.start);
+    pub fn set_range<R: RangeBounds<u16>>(&mut self, range: R) {
+        let (min, max) = range.into_bound();
+
+        if min == max {
+            self.set(min);
             return;
         }
 
-        let min = range.start;
-        let max = range.end;
         let first_word = usize::from(min / 64);
         let last_word = usize::from((max - 1) / 64);
 
@@ -124,14 +125,16 @@ impl BitsetContainer {
     }
 
     /// Unset all the bits between [min-max)
-    pub fn unset_range(&mut self, range: Range<u16>) { 
-        if range.is_empty() {
-            self.unset(range.start);
+    pub fn unset_range<R: RangeBounds<u16>>(&mut self, range: R) {
+        let (min, max) = range.into_bound();
+
+        if min == max {
+            self.unset(min);
             return;
         }
 
-        let first_word = usize::from(range.start >> 6);
-        let last_word = usize::from((range.end - 1) >> 6);
+        let first_word = usize::from(min >> 6);
+        let last_word = usize::from((max - 1) >> 6);
 
         if first_word == last_word {
             self.bitset[first_word] &= !((!0 << (range.start % 64)) & (!0 >> ((!range.end + 1) % 64)));
@@ -140,13 +143,13 @@ impl BitsetContainer {
             return;
         }
 
-        self.bitset[first_word] &= !(!0 << (range.start % 64));
+        self.bitset[first_word] &= !(!0 << (min % 64));
 
         for word in (first_word + 1)..last_word {
             self.bitset[word] = 0;
         }
 
-        self.bitset[last_word] &= !(!0 >> ((!range.end + 1) % 64));
+        self.bitset[last_word] &= !(!0 >> ((!max + 1) % 64));
         
         self.cardinality.invalidate();
     }
@@ -189,7 +192,7 @@ impl BitsetContainer {
 
     /// Add all values in [min-max) to the bitset
     #[inline]
-    pub fn add_range(&mut self, range: Range<u16>) {
+    pub fn add_range<R: RangeBounds<u16>>(&mut self, range: R) {
         self.set_range(range)
     }
 
@@ -220,9 +223,15 @@ impl BitsetContainer {
     }
 
     /// Check if all bits within a range are true
-    pub fn get_range(&self, range: Range<u16>) -> bool {
-        let start = (range.start >> 6) as usize;
-        let end = ((range.end - 1) >> 6) as usize;
+    pub fn get_range<R: RangeBounds<u16>>(&self, range: R) -> bool {
+        let (min, max) = range.into_bound();
+
+        if min == max {
+            return self.get(min);
+        }
+
+        let start = (min >> 6) as usize;
+        let end = ((max - 1) >> 6) as usize;
 
         let first = !((1 << (start & 0x3F)) - 1);
         let last = (1 << (end & 0x3F)) - 1;
@@ -249,14 +258,24 @@ impl BitsetContainer {
         true
     }
 
+    /// Flip a specific bit in the bitset
+    pub fn flip(index: u16) {
+        let word_index = index / 64;
+        let bit_index = word % 64;
+
+        self.bitset[word_index] ^= !((!0) << bit_)
+    }
+
     /// Flip all bits in the range [min-max)
-    pub fn flip_range(&mut self, range: Range<u16>) {
-        if range.is_empty() {
-            return;
+    pub fn flip_range<R: RangeBounds<u16>>(&mut self, range: R) {
+        let (min, max) = range.into_bound();
+
+        if min == max {
+            return self.flip(min);
         }
 
-        let min = u32::from(range.start);
-        let max = u32::from(range.end);
+        let min = u32::from(min);
+        let max = u32::from(max);
         let first_word = (min / 64) as usize;
         let last_word = ((max - 1) / 64) as usize;
         
@@ -292,7 +311,7 @@ impl BitsetContainer {
 
     /// Check if the bitset contains all bits in the range [min-max)
     #[inline]
-    pub fn contains_range(&self, range: Range<u16>) -> bool {
+    pub fn contains_range<R: RangeBounds<u16>>(&self, range: R) -> bool {
         self.get_range(range)
     }
 
@@ -308,9 +327,15 @@ impl BitsetContainer {
     }
 
     /// Get the cardinality of a range in the bitset
-    pub fn cardinality_range(&self, range: Range<u16>) -> usize {
-        let start = range.start as usize;
-        let len_minus_one = range.len() - 1;
+    pub fn cardinality_range<R: RangeBounds<u16>>(&self, range: R) -> usize {
+        let (min, max) = range.into_bound();
+
+        if min == max {
+            return if self.get(min) { 1 } else { 0 };
+        }
+
+        let start = min as usize;
+        let len_minus_one = ((max - min) - 1) as usize;
 
         let first_word = start >> 6;
         let last_word = (start + len_minus_one) >> 6;
@@ -653,8 +678,8 @@ impl SetOr<RunContainer> for BitsetContainer {
         }
         else {
             let mut result = self.clone();
-            for rle in other.iter_runs() {
-                result.set_range(rle.into_range());
+            for run in other.iter_runs() {
+                result.set_range(run.into_range());
             }
 
             Container::Bitset(result)
@@ -986,6 +1011,205 @@ mod test {
         fn fill(&mut self, data: &[u16]) {
             self.set_list(data);
         }
+    }
+
+    #[test]
+    fn set() {
+
+    }
+
+    #[test]
+    fn set_range() {
+
+    }
+
+    #[test]
+    fn set_list() {
+
+    }
+
+    #[test]
+    fn set_all() {
+        let mut a = BitsetContainer::new();
+        a.set_all();
+
+        assert_eq!(a.cardinality(), BITSET_SIZE_IN_WORDS * 64);
+    }
+
+    #[test]
+    fn unset() {
+        let mut a = BitsetContainer::new();
+        a.set_range(0..10);
+        a.unset(5);
+        a.unset(4);
+
+        assert!(!a.contains_range(4..6));
+        assert_eq!(a.cardinality(), 8);
+    }
+
+    #[test]
+    fn unset_range() {
+        let mut a = BitsetContainer::new();
+        a.set_range(0..10);
+        a.unset_range(4..6);
+
+        assert!(!a.contains_range(4..6));
+        assert_eq!(a.cardinality(), 8);
+    }
+
+    #[test]
+    fn clear_list() {
+
+    }
+
+    #[test]
+    fn add() {
+
+    }
+
+    #[test]
+    fn add_list() {
+
+    }
+
+    #[test]
+    fn get() {
+        let mut a = BitsetContainer::new();
+        a.set_range(0..10);
+
+        assert!(a.get(6));
+        assert!(a.get(11));
+    }
+
+    #[test]
+    fn get_range() {
+        let mut a = BitsetContainer::new();
+        a.set_range(0..100);
+
+        assert!(a.get_range(25..75));
+        assert!(!a.get_range(100..150));
+    }
+
+    #[test]
+    fn flip_range() {
+        let mut a = BitsetContainer::new();
+        a.set_range(0..100);
+        a.flip_range(25..75);
+
+        assert_eq!(a.cardinality(), 50);
+    }
+
+    #[test]
+    fn flip_list() {
+        
+    }
+
+    #[test]
+    fn contains() {
+        let mut a = BitsetContainer::new();
+        a.set_range(0..10);
+
+        assert!(a.contains(6));
+        assert!(!a.contains(11));
+    }
+
+    #[test]
+    fn contains_range() {
+        let mut a = BitsetContainer::new();
+        a.set_range(0..100);
+
+        assert!(a.contains_range(25..75));
+        assert!(a.contains_range(100..150));
+    }
+
+    #[test]
+    fn is_full() {
+        let max = (BITSET_SIZE_IN_WORDS * 64 - 1) as u16;
+        let mut a = BitsetContainer::new();
+        a.set_range(0..max);
+
+        assert!(a.is_full());
+        assert!(!a.is_empty());
+        assert_eq!(a.cardinality(), BITSET_SIZE_IN_WORDS * 64);
+    }
+
+    #[test]
+    fn cardinality() {
+        let range = 50..100;
+        let mut a = BitsetContainer::new();
+        a.set_range(range.clone());
+
+        assert_eq!(a.cardinality(), range.len());
+    }
+
+    #[test]
+    fn cardinality_range() {
+        let range = 50..100;
+        let mut a = BitsetContainer::new();
+        a.set_range(range.clone());
+
+        assert_eq!(a.cardinality(), range.len());
+
+        let iter = a.iter()
+            .zip(range);
+
+        for (found, expected) in iter {
+            assert_eq!(found, expected);
+        }
+    }
+
+    #[test]
+    fn min() {
+        let a = make_container::<BitsetContainer>(&INPUT_A);
+        
+        let min = a.min();
+        assert!(min.is_some());
+        assert_eq!(min.unwrap(), INPUT_A[0]);
+    }
+
+    #[test]
+    fn max() {
+        let a = make_container::<BitsetContainer>(&INPUT_A);
+        
+        let max = a.max();
+        assert!(max.is_some());
+        assert_eq!(max.unwrap(), INPUT_A[INPUT_A.len() - 1]);
+    }
+
+    #[test]
+    fn rank() {
+
+    }
+
+    #[test]
+    fn select() {
+
+    }
+
+    #[test]
+    fn num_runs() {
+        let a = make_container::<BitsetContainer>(&RUNS);
+        
+        assert_eq!(a.num_runs(), NUM_RUNS);
+    }
+
+    #[test]
+    fn iter() {
+        let a = make_container::<BitsetContainer>(&INPUT_A);
+
+        assert_eq!(a.cardinality(), INPUT_A.len());
+
+        let iter = a.iter()
+            .zip(INPUT_A.iter());
+
+        for (found, expected) in iter {
+            assert_eq!(found, *expected);
+        }
+    }
+
+    #[test]
+    fn round_trip_serialize() {
+
     }
 
     #[test]

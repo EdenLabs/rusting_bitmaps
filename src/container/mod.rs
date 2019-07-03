@@ -27,12 +27,6 @@ use std::slice;
 /// Default maximum size of an array container before it is converted to another type
 pub const DEFAULT_MAX_SIZE: usize = 4096;
 
-/// Convert a range into a range of a different type
-trait IntoRange<T> {
-    /// Convert self into a range
-    fn into_range(self) -> Range<T>;
-}
-
 /// The set union operation
 trait SetOr<T> {
     fn or(&self, other: &T) -> Container;

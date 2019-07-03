@@ -47,19 +47,10 @@ impl Rle16 {
     pub fn range(self) -> (u16, u16) {
         (self.value, self.value + self.length + 1)
     }
-}
-
-impl IntoRange<u16> for Rle16 {
+    
     #[inline]
-    fn into_range(self) -> Range<u16> {
+    pub fn into_range(self) -> Range<u16> {
         self.value..(self.value + self.length + 1)
-    }
-}
-
-impl IntoRange<usize> for Rle16 {
-    #[inline]
-    fn into_range(self) -> Range<usize> {
-        (self.value as usize)..((self.value + self.length) as usize)
     }
 }
 

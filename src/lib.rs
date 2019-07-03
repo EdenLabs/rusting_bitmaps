@@ -34,16 +34,16 @@ pub use roaring::RoaringBitmap;
 
 use std::ops::{RangeBounds, Bound, Range};
 
-/// Convert a range into a bounded range based on some defined constraints
-trait IntoBounded<T> {
-    fn into_bounded(self) -> Range<T>;
+/// Convert a range into a bounded range based on some internal constraints
+trait IntoBound<T> {
+    fn into_bound(self) -> (u16, u16);
 }
 
-impl<T> IntoBounded<u16> for T
+impl<T> IntoBound<u16> for T
     where T: RangeBounds<u16>
 {
     /// Convert the range into a range bounded by [0-max]
-    fn into_bounded(self) -> Range<u16> {
+    fn into_bound(self) -> (u16, u16) {
         let start = match self.start_bound() {
             Bound::Excluded(bound) => *bound + 1,
             Bound::Included(bound) => *bound,
@@ -56,6 +56,6 @@ impl<T> IntoBounded<u16> for T
             Bound::Unbounded => std::u16::MAX
         };
 
-        start..end
+        (start, end)
     }
 }
