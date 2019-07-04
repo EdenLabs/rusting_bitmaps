@@ -1883,23 +1883,213 @@ mod test {
         }
     }
 
-    /*
     #[test]
-    fn or() {
-        
+    fn load() {
+        unimplemented!()
     }
 
     #[test]
-    fn and() {
-
+    fn add() {
+        unimplemented!()
     }
 
-    fn and_not() {
-
+    #[test]
+    fn add_range() {
+        unimplemented!()
     }
 
-    fn xor() {
-
+    #[test]
+    fn remove() {
+        unimplemented!()
     }
-    */
+
+    #[test]
+    fn remove_range() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn contains() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn contains_range() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn cardinality() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn is_empty() {
+        unimplemented!()
+    }   
+
+    #[test]
+    fn is_full() {
+        unimplemented!()
+    } 
+
+    #[test]
+    fn min() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn max() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn rank() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn select() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn round_trip_serialize() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_run_or() {
+        unimplemented!()        
+    }
+
+    #[test]
+    fn run_run_and() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_run_and_cardinality() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_run_and_not() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_run_xor() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_run_inplace_or() {
+        unimplemented!()        
+    }
+
+    #[test]
+    fn run_run_inplace_and() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_run_and_inplace_not() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_run_inplace_xor() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_array_or() {
+        unimplemented!()        
+    }
+
+    #[test]
+    fn run_array_and() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_array_and_cardinality() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_array_and_not() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_array_xor() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_array_inplace_or() {
+        unimplemented!()        
+    }
+
+    #[test]
+    fn run_array_inplace_and() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_array_and_inplace_not() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_array_inplace_xor() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_bitset_or() {
+        unimplemented!()        
+    }
+
+    #[test]
+    fn run_bitset_and() {
+        unimplemented!()        
+    }
+
+    #[test]
+    fn run_bitset_and_cardinality() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_bitset_and_not() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_bitset_xor() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_bitset_inplace_or() {
+        unimplemented!()        
+    }
+
+    #[test]
+    fn run_bitset_inplace_and() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_bitset_and_inplace_not() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn run_bitset_inplace_xor() {
+        unimplemented!()
+    }
 }
