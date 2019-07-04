@@ -20,9 +20,7 @@
 //! - Custom allocator support
 //! - Copy-on-Write is unsupported
 
-// TODO: Inline trivial fns
 // TODO: Reduce unsafe code usage without impacting performance much
-// TODO: Ensure ranges aren't cutoff
 // TODO: Run through and change any operations on intermediate containers to be inplace to reduce memory churn
 
 mod container;
@@ -39,44 +37,32 @@ trait IntoBound<T>: Sized {
     fn into_bound(self) -> (T, T);
 }
 
-impl<T> IntoBound<u16> for T
-    where T: RangeBounds<u16>
-{
-    /// Convert the range into a range bounded by [0-max]
-    fn into_bound(self) -> (u16, u16) {
-        let start = match self.start_bound() {
-            Bound::Excluded(bound) => *bound + 1,
-            Bound::Included(bound) => *bound,
-            Bound::Unbounded => 0
-        };
+macro_rules! impl_into_bound {
+    ($type:ident) => {
+        impl<T> IntoBound<$type> for T
+    where T: RangeBounds<$type>
+    {
+        /// Convert the range into a range bounded by [0-max]
+        fn into_bound(self) -> ($type, $type) {
+            let start = match self.start_bound() {
+                Bound::Excluded(bound) => *bound + 1,
+                Bound::Included(bound) => *bound,
+                Bound::Unbounded => 0
+            };
 
-        let end = match self.end_bound() {
-            Bound::Excluded(bound) => *bound,
-            Bound::Included(bound) => *bound + 1,
-            Bound::Unbounded => std::u16::MAX
-        };
+            let end = match self.end_bound() {
+                Bound::Excluded(bound) => *bound,
+                Bound::Included(bound) => *bound + 1,
+                Bound::Unbounded => <$type>::max_value()
+            };
 
-        (start, end)
+            (start, end)
+        }
     }
+
+    };
 }
 
-impl<T> IntoBound<usize> for T
-    where T: RangeBounds<usize>
-{
-    /// Convert the range into a range bounded by [0-max]
-    fn into_bound(self) -> (usize, usize) {
-        let start = match self.start_bound() {
-            Bound::Excluded(bound) => *bound + 1,
-            Bound::Included(bound) => *bound,
-            Bound::Unbounded => 0
-        };
-
-        let end = match self.end_bound() {
-            Bound::Excluded(bound) => *bound,
-            Bound::Included(bound) => *bound + 1,
-            Bound::Unbounded => std::usize::MAX
-        };
-
-        (start, end)
-    }
-}
+impl_into_bound!(u16);
+impl_into_bound!(usize);
+impl_into_bound!(u32);

@@ -1,10 +1,11 @@
 #![deny(exceeding_bitshifts)]
 
 use std::io::{self, Read, Write, Seek, SeekFrom};
-use std::ops::Range;
+use std::ops::{RangeBounds, Range};
 
 use tinybit::Endian;
 
+use crate::IntoBound;
 use crate::container::{self, *, array_ops};
 
 // TODO: Add support for custom allocators
@@ -70,14 +71,13 @@ impl RoaringBitmap {
     }
     
     /// Create a new roaring bitmap with the specified range and step
-    pub fn from_range(range: Range<u32>) -> Self {
+    pub fn from_range<R: RangeBounds<u32>>(range: R) -> Self {
+        let (min, max) = range.into_bound();
+
         // No elements, just return an empty bitmap
-        if range.is_empty() {
+        if max - min == 0 {
             return Self::new();
         }
-
-        let min = range.start;
-        let max = range.end;
 
         let mut bitmap = Self::new();
 
@@ -159,13 +159,12 @@ impl RoaringBitmap {
     }
 
     /// Add a range of values to the bitmap
-    pub fn add_range(&mut self, range: Range<u32>) {
-        let min = range.start;
-        let max = range.end;
+    pub fn add_range<R: RangeBounds<u32>>(&mut self, range: R) {
+        let (min, max) = range.into_bound();
 
         // Determine keys
-        let min_key = (range.start >> 16) as u16;
-        let max_key = ((range.end - 1) >> 16) as u16;
+        let min_key = (min >> 16) as u16;
+        let max_key = ((max - 1) >> 16) as u16;
         let span = (max_key - min_key) as isize;
         
         // Determine lengths
@@ -247,14 +246,11 @@ impl RoaringBitmap {
     }
 
     /// Remove a range of values from the bitmap
-    pub fn remove_range(&mut self, range: Range<u32>) {
-        debug_assert!(!range.is_empty());
-
-        let min = range.start;
-        let max = range.end;
+    pub fn remove_range<R: RangeBounds<u32>>(&mut self, range: R) {
+        let (min, max) = range.into_bound();
         
-        let min_key = (range.start >> 16) as u16;
-        let max_key = (range.end >> 16) as u16;
+        let min_key = (min >> 16) as u16;
+        let max_key = (max >> 16) as u16;
 
         let mut src = array_ops::count_less(&self.keys, min_key);
         let mut dst = src;
@@ -325,20 +321,23 @@ impl RoaringBitmap {
     }
     
     /// Check if the bitmap contains a range of values
-    pub fn contains_range(&self, range: Range<u32>) -> bool {
+    pub fn contains_range<R: RangeBounds<u32>>(&self, range: R) -> bool {
+        let (min, max) = range.into_bound();
+        
         // We always contain the empty set
-        if range.is_empty() {
+        let len = max - min;
+        if len == 0 {
             return true;
         }
 
         // Do an optimized single value contains if there's only one element in the set
-        if range.len() == 1 {
-            return self.contains(range.start);
+        if len == 1 {
+            return self.contains(min);
         }
 
         // Do a ranged contains operation
-        let key_min = (range.start >> 16) as u16;
-        let key_max = (range.end >> 16) as u16;
+        let key_min = (min >> 16) as u16;
+        let key_max = (max >> 16) as u16;
         let key_span = (key_max - key_min) as usize;
 
         // Key range exceeds those stored in this bitmap, can't possibly contain the set
@@ -362,8 +361,8 @@ impl RoaringBitmap {
             return false;
         }
 
-        let val_min = range.start as u16;
-        let val_max = range.end as u16;
+        let val_min = min as u16;
+        let val_max = max as u16;
         let container = &self.containers[ci_min];
 
         // Min and max are the same, do contains on the single container
@@ -787,14 +786,15 @@ impl RoaringBitmap {
     }
 
     /// Negate all elements within `range` in this bitmap
-    pub fn not(&self, range: Range<u32>) -> Self {
+    pub fn not<R: RangeBounds<u32>>(&self, range: R) -> Self {
+        let (min, max) = range.into_bound();
         let mut result = Self::new();
 
-        let mut start_high = (range.start >> 16) as u16;
-        let start_low = range.start as u16;
+        let mut start_high = (min >> 16) as u16;
+        let start_low = min as u16;
 
-        let mut end_high = (range.end >> 16) as u16;
-        let end_low = range.end as u16;
+        let mut end_high = (max >> 16) as u16;
+        let end_low = max as u16;
 
         // Append all preceding elements that are not to be flipped
         let end = array_ops::advance_until(&self.keys, 0, start_high);
@@ -1096,11 +1096,12 @@ impl RoaringBitmap {
     /// Same as [`not`] but operates in place on `self`
     /// 
     /// [`not`]: RoaringBitmap::not
-    pub fn inplace_not(&mut self, range: Range<u32>) {
-        let high_start = (range.start >> 16) as u16;
-        let mut high_end = (range.end >> 16) as u16;
-        let low_start = range.start as u16;
-        let low_end = range.end as u16;
+    pub fn inplace_not<R: RangeBounds<u32>>(&mut self, range: R) {
+        let (min, max) = range.into_bound();
+        let high_start = (min >> 16) as u16;
+        let mut high_end = (max >> 16) as u16;
+        let low_start = min as u16;
+        let low_end = max as u16;
 
         // Keys are the same, just do it in place
         if high_start == high_end {

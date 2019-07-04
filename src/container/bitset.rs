@@ -202,7 +202,7 @@ impl BitsetContainer {
     }
 
     /// Check if all bits within a range are true
-    pub fn get_range<R: RangeBounds<u16>>(&self, range: R) -> bool {
+    pub fn get_range<R: RangeBounds<u16>>(&self, range: R) -> bool { // TODO: lift this up to the public api
         let (min, max) = range.into_bound();
 
         if min == max {
@@ -1270,10 +1270,10 @@ mod test {
 
         let deserialized = deserialized.unwrap();
         let iter = deserialized.iter()
-            .zip(INPUT_A.iter());
+            .zip(a.iter());
 
         for (found, expected) in iter {
-            assert_eq!(found, *expected);
+            assert_eq!(found, expected);
         }
     }
 

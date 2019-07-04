@@ -1970,7 +1970,7 @@ mod test {
     #[test]
     fn is_full() {
         let a = RunContainer::new();
-        let a = a.not(..);
+        let a = a.not(0..std::u16::MAX);
 
         assert!(!a.is_empty());
         assert!(a.is_full());
@@ -2016,7 +2016,7 @@ mod test {
         assert!(num_written.is_ok());
         assert_eq!(num_written.unwrap(), num_bytes);
 
-        let cursor = std::io::Cursor::new(&buffer);
+        let mut cursor = std::io::Cursor::new(&buffer);
         let deserialized = RunContainer::deserialize(&mut cursor);
         assert!(deserialized.is_ok());
 
@@ -2081,7 +2081,7 @@ mod test {
     #[test]
     fn run_not() {
         let a = make_container::<RunContainer>(&INPUT_A);
-        let not_a = a.not(..);
+        let not_a = a.not(0..std::u16::MAX);
 
         assert_eq!(
             not_a.cardinality(), 
