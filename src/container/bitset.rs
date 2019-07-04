@@ -55,12 +55,11 @@ impl BitsetContainer {
         self.cardinality.increment(((word ^ new_word) >> 1) as usize);
     }
 
-    /// Set all the bits within the range denoted by [min-max)
+    /// Set all the bits within the range denoted by [min-max]
     pub fn set_range<R: RangeBounds<u16>>(&mut self, range: R) {
         let (min, max) = range.into_bound();
 
         if min == max {
-            self.set(min);
             return;
         }
 
@@ -68,20 +67,21 @@ impl BitsetContainer {
         let last_word = usize::from((max - 1) / 64);
 
         if first_word == last_word {
-            let w0 = (!0) << (min % 64);
-            let w1 = (!0) >> (((!max) + 1) % 64);
+            let w0 = std::u64::MAX << (min % 64);
+            let w1 = std::u64::MAX >> ((!max + 1) % 64);
             self.bitset[first_word] |= w0 & w1;
+            self.cardinality.invalidate();
 
             return;
         }
 
-        self.bitset[first_word] |= (!0) << (min % 64);
+        self.bitset[first_word] |= std::u64::MAX << (min % 64);
         
         for word in self.bitset[(first_word + 1)..last_word].iter_mut() {
-            *word = !0;
+            *word = std::u64::MAX;
         }
 
-        self.bitset[last_word] |= (!0) >> ((!max + 1) % 64);
+        self.bitset[last_word] |= std::u64::MAX >> ((!max + 1) % 64);
         
         self.cardinality.invalidate();
     }
@@ -129,27 +129,28 @@ impl BitsetContainer {
         let (min, max) = range.into_bound();
 
         if min == max {
-            self.unset(min);
             return;
         }
 
-        let first_word = usize::from(min >> 6);
-        let last_word = usize::from((max - 1) >> 6);
+        let first_word = usize::from(min / 64);
+        let last_word = usize::from((max - 1) / 64);
 
         if first_word == last_word {
-            self.bitset[first_word] &= !((!0 << (range.start % 64)) & (!0 >> ((!range.end + 1) % 64)));
+            let w0 = std::u64::MAX << (min % 64);
+            let w1 = std::u64::MAX >> ((!max + 1) % 64);
+            self.bitset[first_word] &= !(w0 & w1);
             self.cardinality.invalidate();
 
             return;
         }
 
-        self.bitset[first_word] &= !(!0 << (min % 64));
-
-        for word in (first_word + 1)..last_word {
-            self.bitset[word] = 0;
+        self.bitset[first_word] &= !(std::u64::MAX << (min % 64));
+        
+        for word in self.bitset[(first_word + 1)..last_word].iter_mut() {
+            *word = 0;
         }
 
-        self.bitset[last_word] &= !(!0 >> ((!max + 1) % 64));
+        self.bitset[last_word] &= (std::u64::MAX >> ((!max + 1) % 64));
         
         self.cardinality.invalidate();
     }
@@ -230,26 +231,25 @@ impl BitsetContainer {
             return self.get(min);
         }
 
-        let start = (min >> 6) as usize;
-        let end = ((max - 1) >> 6) as usize;
-
-        let first = !((1 << (start & 0x3F)) - 1);
-        let last = (1 << (end & 0x3F)) - 1;
+        let first_word = (min >> 6) as usize;
+        let last_word = ((max + 1) >> 6) as usize;
+        let w0 = std::u64::MAX << (min % 64);
+        let w1 = std::u64::MAX >> ((!max + 1) % 64);
 
         // Start and end are the same, check if the range of bits are set
-        if start == end {
-            return self.bitset[end] & first & last == first & last;
+        if first_word == last_word {
+            return (self.bitset[last_word] & first & last) == (first & last);
         }
 
-        if self.bitset[start] & first != first {
+        if self.bitset[first_word] & first != first {
             return false;
         }
 
-        if self.bitset[end] & last != last {
+        if self.bitset[last_word] & last != last {
             return false;
         }
 
-        for i in (start + 1)..end {
+        for i in (first_word + 1)..last_word {
             if self.bitset[i] != std::u64::MAX {
                 return false;
             }
@@ -259,11 +259,12 @@ impl BitsetContainer {
     }
 
     /// Flip a specific bit in the bitset
-    pub fn flip(index: u16) {
+    pub fn flip(&mut self, index: u16) {
         let word_index = index / 64;
-        let bit_index = word % 64;
+        let bit_index = index % 64;
 
-        self.bitset[word_index] ^= !((!0) << bit_)
+        self.bitset[word_index as usize] ^= !(1 << bit_index);
+        self.cardinality.invalidate();
     }
 
     /// Flip all bits in the range [min-max)
@@ -1020,7 +1021,13 @@ mod test {
 
     #[test]
     fn set_range() {
+        let mut a = BitsetContainer::new();
+        a.set_range(0..10);
 
+        println!("{:#064b}", a.bitset[0]);
+
+        assert_eq!(a.cardinality(), 10);
+        assert!(a.contains_range(0..10));
     }
 
     #[test]
@@ -1053,6 +1060,8 @@ mod test {
         a.set_range(0..10);
         a.unset_range(4..6);
 
+        println!("{:#064b}", a.bitset[0]);
+
         assert!(!a.contains_range(4..6));
         assert_eq!(a.cardinality(), 8);
     }
@@ -1078,7 +1087,7 @@ mod test {
         a.set_range(0..10);
 
         assert!(a.get(6));
-        assert!(a.get(11));
+        assert!(!a.get(11));
     }
 
     #[test]
@@ -1119,7 +1128,7 @@ mod test {
         a.set_range(0..100);
 
         assert!(a.contains_range(25..75));
-        assert!(a.contains_range(100..150));
+        assert!(!a.contains_range(100..150));
     }
 
     #[test]

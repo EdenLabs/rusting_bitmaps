@@ -32,7 +32,7 @@ mod roaring;
 
 pub use roaring::RoaringBitmap;
 
-use std::ops::{RangeBounds, Bound, Range};
+use std::ops::{RangeBounds, Bound};
 
 /// Convert a range into a bounded range based on some internal constraints
 trait IntoBound<T> {
@@ -51,8 +51,8 @@ impl<T> IntoBound<u16> for T
         };
 
         let end = match self.end_bound() {
-            Bound::Excluded(bound) => *bound - 1,
-            Bound::Included(bound) => *bound,
+            Bound::Excluded(bound) => *bound,
+            Bound::Included(bound) => *bound + 1,
             Bound::Unbounded => std::u16::MAX
         };
 
