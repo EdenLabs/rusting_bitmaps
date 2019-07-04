@@ -71,8 +71,6 @@ impl BitsetContainer {
             let w1 = std::u64::MAX >> ((!max + 1) % 64);
             self.bitset[first_word] |= w0 & w1;
             self.cardinality.invalidate();
-
-            return;
         }
         else {
             self.bitset[first_word] |= std::u64::MAX << (min % 64);
