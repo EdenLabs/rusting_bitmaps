@@ -954,7 +954,6 @@ impl SetNot for ArrayContainer {
 mod test {
     use crate::container::*;
     use crate::test::*;
-    use crate::test::short::*;
     use super::*;
 
     impl TestUtils for ArrayContainer {

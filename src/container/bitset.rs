@@ -981,7 +981,6 @@ impl<'a> Iterator for Iter<'a> {
 mod test {
     use crate::container::*;
     use crate::test::*;
-    use crate::test::short::*;
     use super::BITSET_SIZE_IN_WORDS;
 
     impl TestUtils for BitsetContainer {

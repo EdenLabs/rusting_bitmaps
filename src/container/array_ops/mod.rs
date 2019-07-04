@@ -144,7 +144,7 @@ pub fn advance_until(slice: &[u16], index: usize, min: u16) -> usize {
 
 #[cfg(test)]
 mod test {
-    use crate::test::short::*;
+    use crate::test::*;
     use super::scalar;
 
     #[cfg(target_feature = "sse4.2")]

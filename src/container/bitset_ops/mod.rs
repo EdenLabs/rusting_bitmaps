@@ -47,7 +47,7 @@ pub fn and_cardinality(a: &[u64], b: &[u64]) -> usize {
 
 #[cfg(test)]
 mod test {
-    use crate::test::short::*;
+    use crate::test::*;
     use crate::container::BitsetContainer;
 
     /// Create an array container from the given data set
