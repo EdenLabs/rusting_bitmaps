@@ -1203,7 +1203,7 @@ mod test {
     }
 
     #[test]
-    fn array_array_is_subset() {
+    fn array_array_subset_of() {
         let a = make_container::<ArrayContainer>(&SUBSET_A);
         let b = make_container::<ArrayContainer>(&SUBSET_B);
 
@@ -1318,7 +1318,7 @@ mod test {
     }
 
     #[test]
-    fn array_bitset_is_subset() {
+    fn array_bitset_subset_of() {
         let a = make_container::<ArrayContainer>(&SUBSET_A);
         let b = make_container::<BitsetContainer>(&SUBSET_B);
 
@@ -1457,7 +1457,7 @@ mod test {
     }
 
     #[test]
-    fn array_run_is_subset() {
+    fn array_run_subset_of() {
         let a = make_container::<ArrayContainer>(&SUBSET_A);
         let b = make_container::<RunContainer>(&SUBSET_B);
 

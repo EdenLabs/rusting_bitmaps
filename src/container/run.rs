@@ -1960,12 +1960,22 @@ mod test {
 
     #[test]
     fn run_run_or() {
-        unimplemented!()        
+        run_test::<RunContainer, RunContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_OR,
+            |a, b| a.or(&b)
+        );
     }
 
     #[test]
     fn run_run_and() {
-        unimplemented!()
+        run_test::<RunContainer, RunContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND,
+            |a, b| a.and(&b)
+        );
     }
 
     #[test]
@@ -1975,42 +1985,92 @@ mod test {
 
     #[test]
     fn run_run_and_not() {
-        unimplemented!()
+        run_test::<RunContainer, RunContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND_NOT,
+            |a, b| a.and_not(&b)
+        );
     }
 
     #[test]
     fn run_run_xor() {
+        run_test::<RunContainer, RunContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_XOR,
+            |a, b| a.xor(&b)
+        );
+    }
+
+    #[test]
+    fn run_not() {
         unimplemented!()
     }
 
     #[test]
     fn run_run_inplace_or() {
-        unimplemented!()        
+        run_test::<RunContainer, RunContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_OR,
+            |a, b| a.inplace_or(&b)
+        );
     }
 
     #[test]
     fn run_run_inplace_and() {
-        unimplemented!()
+        run_test::<RunContainer, RunContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND,
+            |a, b| a.and(&b)
+        );
     }
 
     #[test]
-    fn run_run_and_inplace_not() {
-        unimplemented!()
+    fn run_run_inplace_and_not() {
+        run_test::<RunContainer, RunContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND_NOT,
+            |a, b| a.and_not(&b)
+        );
     }
 
     #[test]
     fn run_run_inplace_xor() {
+        run_test::<RunContainer, RunContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_XOR,
+            |a, b| a.xor(&b)
+        );
+    }
+
+    #[test]
+    fn run_run_subset_of() {
         unimplemented!()
     }
 
     #[test]
     fn run_array_or() {
-        unimplemented!()        
+        run_test::<RunContainer, ArrayContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_OR,
+            |a, b| a.or(&b)
+        );
     }
 
     #[test]
     fn run_array_and() {
-        unimplemented!()
+        run_test::<RunContainer, ArrayContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND,
+            |a, b| a.and(&b)
+        );
     }
 
     #[test]
@@ -2020,42 +2080,87 @@ mod test {
 
     #[test]
     fn run_array_and_not() {
-        unimplemented!()
+        run_test::<RunContainer, ArrayContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND_NOT,
+            |a, b| a.and_not(&b)
+        );
     }
 
     #[test]
     fn run_array_xor() {
-        unimplemented!()
+        run_test::<RunContainer, ArrayContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_XOR,
+            |a, b| a.xor(&b)
+        );
     }
 
     #[test]
     fn run_array_inplace_or() {
-        unimplemented!()        
+        run_test::<RunContainer, ArrayContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_OR,
+            |a, b| a.inplace_or(&b)
+        );
     }
 
     #[test]
     fn run_array_inplace_and() {
-        unimplemented!()
+        run_test::<RunContainer, ArrayContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND,
+            |a, b| a.inplace_and(&b)
+        );
     }
 
     #[test]
-    fn run_array_and_inplace_not() {
-        unimplemented!()
+    fn run_array_inplace_and_not() {
+        run_test::<RunContainer, ArrayContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND_NOT,
+            |a, b| a.inplace_and_not(&b)
+        );
     }
 
     #[test]
     fn run_array_inplace_xor() {
+        run_test::<RunContainer, ArrayContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_XOR,
+            |a, b| a.inplace_xor(&b)
+        );
+    }
+
+    #[test]
+    fn run_array_subset_of() {
         unimplemented!()
     }
 
     #[test]
     fn run_bitset_or() {
-        unimplemented!()        
+        run_test::<RunContainer, BitsetContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_OR,
+            |a, b| a.or(&b)
+        );
     }
 
     #[test]
     fn run_bitset_and() {
-        unimplemented!()        
+        run_test::<RunContainer, BitsetContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND,
+            |a, b| a.and(&b)
+        );
     }
 
     #[test]
@@ -2065,31 +2170,66 @@ mod test {
 
     #[test]
     fn run_bitset_and_not() {
-        unimplemented!()
+        run_test::<RunContainer, BitsetContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND_NOT,
+            |a, b| a.and_not(&b)
+        );
     }
 
     #[test]
     fn run_bitset_xor() {
-        unimplemented!()
+        run_test::<RunContainer, BitsetContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_XOR,
+            |a, b| a.xor(&b)
+        );
     }
 
     #[test]
     fn run_bitset_inplace_or() {
-        unimplemented!()        
+        run_test::<RunContainer, BitsetContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_OR,
+            |a, b| a.inplace_or(&b)
+        );
     }
 
     #[test]
     fn run_bitset_inplace_and() {
-        unimplemented!()
+        run_test::<RunContainer, BitsetContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND,
+            |a, b| a.inplace_and(&b)
+        );
     }
 
     #[test]
-    fn run_bitset_and_inplace_not() {
-        unimplemented!()
+    fn run_bitset_inplace_and_not() {
+        run_test::<RunContainer, BitsetContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_AND_NOT,
+            |a, b| a.inplace_and_not(&b)
+        );
     }
 
     #[test]
     fn run_bitset_inplace_xor() {
-        unimplemented!()
+        run_test::<RunContainer, BitsetContainer, _>(
+            &INPUT_A,
+            &INPUT_B,
+            &RESULT_XOR,
+            |a, b| a.xor(&b)
+        );
+    }
+
+    #[test]
+    fn run_bitset_subset_of() {
+
     }
 }
