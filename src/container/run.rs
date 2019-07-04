@@ -1884,63 +1884,116 @@ mod test {
     }
 
     #[test]
-    fn load() {
-        unimplemented!()
-    }
-
-    #[test]
     fn add() {
-        unimplemented!()
+        let mut a = RunContainer::new();
+        for value in 0..20 {
+            a.add(value);
+        }
+
+        assert_eq!(a.cardinality(), 20);
+
+        for (found, expected) in a.iter().zip(0..20) {
+            assert_eq!(found, expected);
+        }
     }
 
     #[test]
     fn add_range() {
-        unimplemented!()
+        let mut a = RunContainer::new();
+        a.add_range(0..20);
+
+        assert_eq!(a.cardinality(), 20);
+
+        for (found, expected) in a.iter().zip(0..20) {
+            assert_eq!(found, expected);
+        }
     }
 
     #[test]
     fn remove() {
-        unimplemented!()
+        let mut a = RunContainer::new();
+        a.add_range(0..20);
+
+        a.remove(10);
+
+        assert_eq!(a.cardinality(), 19);
+        assert!(!a.contains(10));
     }
 
     #[test]
     fn remove_range() {
-        unimplemented!()
+        let mut a = RunContainer::new();
+        a.add_range(0..20);
+
+        a.remove_range(10..20);
+
+        assert_eq!(a.cardinality(), 10);
+
+        for (found, expected) in a.iter().zip(0..10) {
+            assert_eq!(found, expected);
+        }
     }
 
     #[test]
     fn contains() {
-        unimplemented!()
+        let mut a = RunContainer::new();
+        a.add_range(0..50);
+
+        assert!(a.contains(10));
+        assert!(!a.contains(100));
     }
 
     #[test]
     fn contains_range() {
-        unimplemented!()
+        let mut a = RunContainer::new();
+        a.add_range(0..100);
+
+        assert!(a.contains_range(25..75));
     }
 
     #[test]
     fn cardinality() {
-        unimplemented!()
+        let a = make_container::<RunContainer>(&INPUT_A);
+        let card = a.cardinality();
+
+        assert_eq!(card, INPUT_A.len());
     }
 
     #[test]
     fn is_empty() {
-        unimplemented!()
+        let a = RunContainer::new();
+
+        assert!(a.is_empty());
+        assert!(!a.is_full());
     }   
 
     #[test]
     fn is_full() {
-        unimplemented!()
+        let a = RunContainer::new();
+        let a = a.not(..);
+
+        assert!(!a.is_empty());
+        assert!(a.is_full());
     } 
 
     #[test]
     fn min() {
-        unimplemented!()
+        let mut a = RunContainer::new();
+        a.add_range(0..100);
+
+        let min = a.min();
+        assert!(min.is_some());
+        assert_eq!(min.unwrap(), 0);
     }
 
     #[test]
     fn max() {
-        unimplemented!()
+        let mut a = RunContainer::new();
+        a.add_range(0..100);
+
+        let max = a.max();
+        assert!(max.is_some());
+        assert_eq!(max.unwrap(), 99);
     }
 
     #[test]
@@ -1955,7 +2008,25 @@ mod test {
 
     #[test]
     fn round_trip_serialize() {
-        unimplemented!()
+        let a = make_container::<RunContainer>(&INPUT_A);
+        let num_bytes = RunContainer::serialized_size(a.num_runs());
+        let mut buffer = Vec::<u8>::with_capacity(num_bytes);
+        
+        let num_written = a.serialize(&mut buffer);
+        assert!(num_written.is_ok());
+        assert_eq!(num_written.unwrap(), num_bytes);
+
+        let cursor = std::io::Cursor::new(&buffer);
+        let deserialized = RunContainer::deserialize(&mut cursor);
+        assert!(deserialized.is_ok());
+
+        let deserialized = deserialized.unwrap();
+        let iter = deserialized.iter()
+            .zip(a.iter());
+
+        for (found, expected) in iter {
+            assert_eq!(found, expected);
+        }
     }
 
     #[test]
@@ -1980,7 +2051,11 @@ mod test {
 
     #[test]
     fn run_run_and_cardinality() {
-        unimplemented!()
+        let a = make_container::<RunContainer>(&INPUT_A);
+        let b = make_container::<RunContainer>(&INPUT_B);
+        let card = a.and_cardinality(&b);
+
+        assert_eq!(card, RESULT_AND.len());
     }
 
     #[test]
@@ -2005,7 +2080,18 @@ mod test {
 
     #[test]
     fn run_not() {
-        unimplemented!()
+        let a = make_container::<RunContainer>(&INPUT_A);
+        let not_a = a.not(..);
+
+        assert_eq!(
+            not_a.cardinality(), 
+            usize::from(std::u16::MAX) - a.cardinality()
+        );
+
+        // Ensure that `not_a` contains no elements of A
+        for value in a.iter() {
+            assert!(not_a.contains(value));
+        }
     }
 
     #[test]
@@ -2050,7 +2136,11 @@ mod test {
 
     #[test]
     fn run_run_subset_of() {
-        unimplemented!()
+        let a = make_container::<RunContainer>(&SUBSET_A);
+        let b = make_container::<RunContainer>(&SUBSET_B);
+        
+        assert!(a.subset_of(&b));
+        assert!(!b.subset_of(&a));
     }
 
     #[test]
@@ -2075,7 +2165,11 @@ mod test {
 
     #[test]
     fn run_array_and_cardinality() {
-        unimplemented!()
+        let a = make_container::<RunContainer>(&INPUT_A);
+        let b = make_container::<ArrayContainer>(&INPUT_B);
+        let card = a.and_cardinality(&b);
+
+        assert_eq!(card, RESULT_AND.len());
     }
 
     #[test]
@@ -2140,7 +2234,11 @@ mod test {
 
     #[test]
     fn run_array_subset_of() {
-        unimplemented!()
+        let a = make_container::<RunContainer>(&SUBSET_A);
+        let b = make_container::<ArrayContainer>(&SUBSET_B);
+        
+        assert!(a.subset_of(&b));
+        assert!(!b.subset_of(&a));
     }
 
     #[test]
@@ -2165,7 +2263,11 @@ mod test {
 
     #[test]
     fn run_bitset_and_cardinality() {
-        unimplemented!()
+        let a = make_container::<RunContainer>(&INPUT_A);
+        let b = make_container::<BitsetContainer>(&INPUT_B);
+        let card = a.and_cardinality(&b);
+
+        assert_eq!(card, RESULT_AND.len());
     }
 
     #[test]
@@ -2230,6 +2332,10 @@ mod test {
 
     #[test]
     fn run_bitset_subset_of() {
-
+        let a = make_container::<RunContainer>(&SUBSET_A);
+        let b = make_container::<BitsetContainer>(&SUBSET_B);
+        
+        assert!(a.subset_of(&b));
+        assert!(!b.subset_of(&a));
     }
 }
