@@ -240,7 +240,7 @@ impl ArrayContainer {
     pub fn rank(&self, value: u16) -> usize {
         match self.array.binary_search(&value) {
             Ok(index) => index + 1,
-            Err(index) => index - 1
+            Err(index) => if index > 0 { index - 1 } else { 0 }
         }
     }
 

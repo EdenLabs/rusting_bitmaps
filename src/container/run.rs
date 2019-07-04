@@ -41,7 +41,7 @@ impl Rle16 {
     pub fn end(self) -> u16 {
         self.value + self.length
     }
-    
+
     /// Get the start and end value of the run
     #[inline]
     pub fn range(self) -> (u16, u16) {

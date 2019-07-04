@@ -36,7 +36,7 @@ pub fn run_test<T, U, F>(in_a: &[u16], in_b: &[u16], expected: &[u16], f: F)
     assert_eq!(
         len0, 
         len1, 
-        "\n\nUnequal cardinality; expected {}, found {}.\n\n", 
+        "\nUnequal cardinality; expected {}, found {}.\n", 
         len0, 
         len1
     );

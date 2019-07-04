@@ -42,17 +42,17 @@ impl BitsetContainer {
     // TODO: See if this is still necessary
 
     /// Set the bit at `index`
-    pub fn set(&mut self, index: u16) {
-        debug_assert!(usize::from(index) < BITSET_SIZE_IN_WORDS * 64);
-
+    pub fn set(&mut self, index: u16) -> bool {
         let word_index = usize::from(index / 64);
         let bit_index = index % 64;
         let word = self.bitset[word_index];
         let new_word = word | (1 << bit_index);
+        let change = ((word ^ new_word) >> 1) as usize;
 
         self.bitset[word_index] = new_word;
+        self.cardinality.increment(change);
 
-        self.cardinality.increment(((word ^ new_word) >> 1) as usize);
+        change > 0
     }
 
     /// Set all the bits within the range denoted by [min-max]
@@ -74,22 +74,23 @@ impl BitsetContainer {
 
             return;
         }
+        else {
+            self.bitset[first_word] |= std::u64::MAX << (min % 64);
+            
+            for word in self.bitset[(first_word + 1)..last_word].iter_mut() {
+                *word = std::u64::MAX;
+            }
 
-        self.bitset[first_word] |= std::u64::MAX << (min % 64);
-        
-        for word in self.bitset[(first_word + 1)..last_word].iter_mut() {
-            *word = std::u64::MAX;
+            self.bitset[last_word] |= std::u64::MAX >> ((!max + 1) % 64);
+            
+            self.cardinality.invalidate();
         }
-
-        self.bitset[last_word] |= std::u64::MAX >> ((!max + 1) % 64);
-        
-        self.cardinality.invalidate();
     }
 
     /// Set bits for the elements in `list`
     pub fn set_list(&mut self, list: &[u16]) {
         for value in list.iter() {
-            let offset = (*value >> 6) as usize;
+            let offset = (*value / 64) as usize;
             let index = *value % 64;
             let load = self.bitset[offset];
             let new_load = load | (1_u64 << index);
@@ -109,19 +110,20 @@ impl BitsetContainer {
     }
 
     /// Unset the bit at `index`
-    pub fn unset(&mut self, index: u16) {
-        debug_assert!(usize::from(index) < BITSET_SIZE_IN_WORDS * 64);
+    pub fn unset(&mut self, index: u16) -> bool {
+        let word_index = usize::from(index / 64);
+        let bit_index = u64::from(index % 64);
 
-        let word_index = usize::from(index >> 6);
-        let bit_index = index & 0x3F;
         let word = self.bitset[word_index];
-        let new_word = word & (!1_u64)
-            .checked_shl(u32::from(bit_index))
-            .unwrap_or(0);
+        let mask = 1_u64 << bit_index;
+        let new_word = word & !mask;
+        let delta = (word ^ new_word) & mask;
+        let change = (delta >> bit_index) as usize;
 
         self.bitset[word_index] = new_word;
+        self.cardinality.decrement(change);
 
-        self.cardinality.decrement(((word ^ new_word) >> 1) as usize);
+        change > 0
     }
 
     /// Unset all the bits between [min-max)
@@ -150,8 +152,8 @@ impl BitsetContainer {
             *word = 0;
         }
 
-        self.bitset[last_word] &= (std::u64::MAX >> ((!max + 1) % 64));
-        
+        self.bitset[last_word] &= !(std::u64::MAX >> ((!max + 1) % 64));
+    
         self.cardinality.invalidate();
     }
 
@@ -174,21 +176,9 @@ impl BitsetContainer {
     }
 
     /// Add `value` to the set and return true if it was set
+    #[inline]
     pub fn add(&mut self, value: u16) -> bool {
-        assert!(value < (BITSET_SIZE_IN_WORDS * 64) as u16);
-        
-        let word_index = (value >> 6) as usize;
-        let bit_index = value & 0x3F;
-        let word = self.bitset[word_index];
-        let new_word = word | (1 << bit_index);
-
-        self.bitset[word_index] = new_word;
-
-        let change = ((word ^ new_word) >> 1) as usize;
-
-        self.cardinality.increment(change);
-
-        change > 0
+        self.set(value)
     }
 
     /// Add all values in [min-max) to the bitset
@@ -197,30 +187,20 @@ impl BitsetContainer {
         self.set_range(range)
     }
 
-    /// Add `value` from the set and return true if it was removed
+    /// Remove `value` from the set and return true if it was removed
+    #[inline]
     pub fn remove(&mut self, value: u16) -> bool {
-        assert!(value < (BITSET_SIZE_IN_WORDS * 64) as u16);
-
-        let word_index = (value >> 6) as usize;
-        let bit_index = value & 0x3F;
-        let word = self.bitset[word_index];
-        let new_word = word & (!1 << bit_index);
-
-        self.bitset[word_index] = new_word;
-
-        let change = ((word ^ new_word) >> 1) as usize;
-
-        self.cardinality.decrement(change);
-
-        change > 0
+        self.unset(value)
     }
 
     /// Get the value of the bit at `index`
     pub fn get(&self, index: u16) -> bool {
-        assert!((index as usize) < (BITSET_SIZE_IN_WORDS * 64));
+        let word_index = usize::from(index / 64);
+        let bit_index = index % 64;
+        let word = self.bitset[word_index];
+        let mask = 1 << bit_index;
 
-        let word = self.bitset[(index >> 6) as usize];
-        ((word >> (index & 0x3F)) & 1) > 0
+        (word & mask) > 0
     }
 
     /// Check if all bits within a range are true
@@ -238,14 +218,14 @@ impl BitsetContainer {
 
         // Start and end are the same, check if the range of bits are set
         if first_word == last_word {
-            return (self.bitset[last_word] & first & last) == (first & last);
+            return (self.bitset[last_word] & w0 & w1) == (w0 & w1);
         }
 
-        if self.bitset[first_word] & first != first {
+        if self.bitset[first_word] & w0 != w0 {
             return false;
         }
 
-        if self.bitset[last_word] & last != last {
+        if self.bitset[last_word] & w1 != w1 {
             return false;
         }
 
@@ -420,15 +400,15 @@ impl BitsetContainer {
             .enumerate();
 
         for (i, word) in iter {
-            let mut w = *word;
+            let size = word.count_ones();
             
-            let size = w.count_ones();
             if rank <= *start_rank + size {
+                let mut w = *word;
                 let base = (i * 64) as u32;
                 
                 while w != 0 {
                     let t = w & (!w + 1);
-                    let r = w.leading_zeros();
+                    let r = w.trailing_zeros();
 
                     if *start_rank == rank {
                         return Some((r + base) as u16);
@@ -779,10 +759,12 @@ impl SetAnd<RunContainer> for BitsetContainer {
             self.unset_range(start..end);
 
             start = end + run.length + 1;
+
         }
 
         self.unset_range(start..(!0));
-        self.into_efficient_container()
+        //self.into_efficient_container()
+        Container::Bitset(self)
     }
 }
 
@@ -922,8 +904,8 @@ impl Subset<RunContainer> for BitsetContainer {
             return false;
         }
 
-        for run in other.iter_runs() {
-            if !self.contains_range(run.into_range()) {
+        for value in self.iter() {
+            if !other.contains(value) {
                 return false;
             }
         }
@@ -1016,7 +998,17 @@ mod test {
 
     #[test]
     fn set() {
-
+        let mut a = BitsetContainer::new();
+        a.set(9);
+        a.set(80);
+        a.set(100);
+        a.set(3879);
+        
+        assert!(a.get(9));
+        assert!(a.get(80));
+        assert!(a.get(100));
+        assert!(a.get(3879));
+        assert_eq!(a.cardinality(), 4);
     }
 
     #[test]
@@ -1024,15 +1016,23 @@ mod test {
         let mut a = BitsetContainer::new();
         a.set_range(0..10);
 
-        println!("{:#064b}", a.bitset[0]);
-
         assert_eq!(a.cardinality(), 10);
         assert!(a.contains_range(0..10));
     }
 
     #[test]
     fn set_list() {
+        let mut a = BitsetContainer::new();
+        a.set_list(&INPUT_A);
 
+        assert_eq!(a.cardinality(), INPUT_A.len());
+        
+        let iter = a.iter()
+            .zip(INPUT_A.iter());
+
+        for (found, expected) in iter {
+            assert_eq!(found, *expected);
+        }
     }
 
     #[test]
@@ -1060,25 +1060,39 @@ mod test {
         a.set_range(0..10);
         a.unset_range(4..6);
 
-        println!("{:#064b}", a.bitset[0]);
-
         assert!(!a.contains_range(4..6));
         assert_eq!(a.cardinality(), 8);
     }
 
     #[test]
     fn clear_list() {
+        let mut a = BitsetContainer::new();
+        a.set_list(&INPUT_A);
+        a.clear_list(&INPUT_A[..6]);
 
+        assert_eq!(a.cardinality(), INPUT_A.len() - 6);
+        
+        let iter = a.iter()
+            .zip(INPUT_A[6..].iter());
+
+        for (found, expected) in iter {
+            assert_eq!(found, *expected);
+        }
     }
 
     #[test]
     fn add() {
-
-    }
-
-    #[test]
-    fn add_list() {
-
+        let mut a = BitsetContainer::new();
+        a.add(9);
+        a.add(80);
+        a.add(100);
+        a.add(3879);
+        
+        assert!(a.contains(9));
+        assert!(a.contains(80));
+        assert!(a.contains(100));
+        assert!(a.contains(3879));
+        assert_eq!(a.cardinality(), 4);
     }
 
     #[test]
@@ -1110,7 +1124,18 @@ mod test {
 
     #[test]
     fn flip_list() {
+        let mut a = BitsetContainer::new();
+        a.set_list(&INPUT_A);
+        a.flip_list(&INPUT_A[..6]);
+
+        assert_eq!(a.cardinality(), INPUT_A.len() - 6);
         
+        let iter = a.iter()
+            .zip(INPUT_A[6..].iter());
+
+        for (found, expected) in iter {
+            assert_eq!(found, *expected);
+        }
     }
 
     #[test]
@@ -1133,9 +1158,8 @@ mod test {
 
     #[test]
     fn is_full() {
-        let max = (BITSET_SIZE_IN_WORDS * 64 - 1) as u16;
         let mut a = BitsetContainer::new();
-        a.set_range(0..max);
+        a.set_all();
 
         assert!(a.is_full());
         assert!(!a.is_empty());
@@ -1187,12 +1211,24 @@ mod test {
 
     #[test]
     fn rank() {
+        let mut a = BitsetContainer::new();
+        a.add_range(0..10);
 
+        let rank = a.rank(5);
+        assert_eq!(rank, 6);
     }
 
     #[test]
     fn select() {
+        let range = 0..30;
+        let mut a = BitsetContainer::new();
+        a.add_range(range);
 
+        let mut start_rank = 5;
+        let selected = a.select(20, &mut start_rank);
+        
+        assert!(selected.is_some());
+        assert_eq!(selected.unwrap(), 15);
     }
 
     #[test]
@@ -1218,7 +1254,30 @@ mod test {
 
     #[test]
     fn round_trip_serialize() {
+        let mut a = BitsetContainer::new();
+        a.set_list(&INPUT_A);
 
+        // Setup
+        let num_bytes = BitsetContainer::serialized_size();
+        let mut buffer = Vec::<u8>::with_capacity(num_bytes);
+
+        // Serialize the bitset and validate
+        let num_written = a.serialize(&mut buffer);
+        assert!(num_written.is_ok());
+        assert_eq!(num_written.unwrap(), num_bytes);
+
+        // Deserialize the bitset and validate
+        let mut cursor = std::io::Cursor::new(buffer);
+        let deserialized = BitsetContainer::deserialize(&mut cursor);
+        assert!(deserialized.is_ok());
+
+        let deserialized = deserialized.unwrap();
+        let iter = deserialized.iter()
+            .zip(INPUT_A.iter());
+
+        for (found, expected) in iter {
+            assert_eq!(found, *expected);
+        }
     }
 
     #[test]
