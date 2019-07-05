@@ -1,7 +1,7 @@
 use std::io::{self, Read, Write};
 use std::iter::Iterator;
 use std::mem;
-use std::ops::{Deref, DerefMut, RangeBounds};
+use std::ops::{Deref, DerefMut, RangeBounds, Range};
 
 use crate::IntoBound;
 use crate::container::*;
@@ -39,8 +39,6 @@ impl BitsetContainer {
         }
     }
 
-    // TODO: See if this is still necessary
-
     /// Set the bit at `index`
     pub fn set(&mut self, index: u16) -> bool {
         let word_index = usize::from(index / 64);
@@ -56,10 +54,11 @@ impl BitsetContainer {
     }
 
     /// Set all the bits within the range denoted by [min-max]
-    pub fn set_range<R: RangeBounds<u16>>(&mut self, range: R) {
+    pub fn set_range(&mut self, range: Range<u16>) {
         let (min, max) = range.into_bound();
 
         if min == max {
+            self.set(min);
             return;
         }
 
@@ -124,11 +123,12 @@ impl BitsetContainer {
         change > 0
     }
 
-    /// Unset all the bits between [min-max)
-    pub fn unset_range<R: RangeBounds<u16>>(&mut self, range: R) {
+    /// Unset all the bits between [min-max]
+    pub fn unset_range(&mut self, range: Range<u16>) {
         let (min, max) = range.into_bound();
 
         if min == max {
+            self.unset(min);
             return;
         }
 
@@ -179,9 +179,9 @@ impl BitsetContainer {
         self.set(value)
     }
 
-    /// Add all values in [min-max) to the bitset
+    /// Add all values in [min-max] to the bitset
     #[inline]
-    pub fn add_range<R: RangeBounds<u16>>(&mut self, range: R) {
+    pub fn add_range(&mut self, range: Range<u16>) {
         self.set_range(range)
     }
 
@@ -202,7 +202,7 @@ impl BitsetContainer {
     }
 
     /// Check if all bits within a range are true
-    pub fn get_range<R: RangeBounds<u16>>(&self, range: R) -> bool { // TODO: lift this up to the public api
+    pub fn get_range(&self, range: Range<u16>) -> bool { // TODO: lift this up to the public api
         let (min, max) = range.into_bound();
 
         if min == max {
@@ -245,8 +245,8 @@ impl BitsetContainer {
         self.cardinality.invalidate();
     }
 
-    /// Flip all bits in the range [min-max)
-    pub fn flip_range<R: RangeBounds<u16>>(&mut self, range: R) {
+    /// Flip all bits in the range [min-max]
+    pub fn flip_range(&mut self, range: Range<u16>) {
         let (min, max) = range.into_bound();
 
         if min == max {
@@ -288,9 +288,9 @@ impl BitsetContainer {
         self.get(value)
     }
 
-    /// Check if the bitset contains all bits in the range [min-max)
+    /// Check if the bitset contains all bits in the range [min-max]
     #[inline]
-    pub fn contains_range<R: RangeBounds<u16>>(&self, range: R) -> bool {
+    pub fn contains_range(&self, range: Range<u16>) -> bool {
         self.get_range(range)
     }
 
@@ -305,9 +305,10 @@ impl BitsetContainer {
         self.cardinality.get(|| bitset_ops::cardinality(&self))
     }
 
-    /// Get the cardinality of a range in the bitset
-    pub fn cardinality_range<R: RangeBounds<u16>>(&self, range: R) -> usize {
-        let (min, max) = range.into_bound();
+    /// Get the cardinality of the range [min-max]
+    pub fn cardinality_range(&self, range: Range<u16>) -> usize {
+        let min = range.start;
+        let max = range.end;
 
         if min == max {
             return if self.get(min) { 1 } else { 0 };

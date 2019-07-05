@@ -22,6 +22,7 @@
 
 // TODO: Reduce unsafe code usage without impacting performance much
 // TODO: Run through and change any operations on intermediate containers to be inplace to reduce memory churn
+// TODO: Ensure soundness in the face of panics where necessary
 
 mod container;
 mod roaring;
