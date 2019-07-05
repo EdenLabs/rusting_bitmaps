@@ -1,23 +1,11 @@
 use crate::container::run::Rle16;
 
-// TODO: Move these into the trait impls, there's no point in keeping them here
-
-/// Check if the container is full
-/// 
-/// # Safety
-/// Requires that there be at least one element in the slice
-pub unsafe fn is_full(runs: &[Rle16]) -> bool {
-    let rle = *runs.as_ptr();
-    let len = runs.len();
-
-    len == 1 && rle.value == 0 && rle.length == std::u16::MAX
-}
-
 /// Calculate the union of two rle slices and append the result to `out`
 /// 
 /// # Returns
 /// The number of runs appended to `out`
 pub fn or(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
+    /*
     // Append if one of the slices has no elements
     if a.is_empty() {
         out.extend_from_slice(b);
@@ -94,10 +82,12 @@ pub fn or(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
             i_b += 1;
         }
     }
+    */
 }
 
 /// Calculate the difference (`A \ B`) between two rle slices and append the result in `out`
 pub fn and_not(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
+    /*
     if a.is_empty() {
         return;
     }
@@ -164,10 +154,12 @@ pub fn and_not(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
             }
         }
     }
+    */
 }
 
 /// Calculate the symmetric difference (`(A \ B) ∪ (B \ A)`) between two rle slices and append the result in `out`
 pub fn xor(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
+    /*
     if a.is_empty() {
         out.extend_from_slice(b);
         return;
@@ -214,6 +206,7 @@ pub fn xor(a: &[Rle16], b: &[Rle16], out: &mut Vec<Rle16>) {
             i_b += 1;
         }
     }
+    */
 }
 
 /// Appends a run to `runs` or merges it with `previous_run`
@@ -238,55 +231,6 @@ pub fn append(runs: &mut Vec<Rle16>, run: Rle16, previous_run: &mut Rle16) {
             let len = runs.len();
             runs[len - 1] = *previous_run;
         }
-    }
-}
-
-/// # Safety
-/// Assumes that `runs` has at least one element
-pub fn append_exclusive(runs: &mut Vec<Rle16>, start: u16, length: u16) {
-    if runs.is_empty() {
-        runs.push(Rle16::new(start, length));
-        return;
-    }
-
-    let len = runs.len();
-    let last_run = &mut runs[len - 1];
-    let old_end = last_run.value + last_run.length + 1;
-
-    if start > old_end {
-        runs.push(Rle16::new(start, length));
-        return;
-    }
-
-    if old_end == start {
-        last_run.length += length + 1;
-        return;
-    }
-
-    let new_end = start + length + 1;
-    if start == last_run.value {
-        if new_end < old_end {
-            *last_run = Rle16::new(new_end, old_end - new_end - 1);
-            return;
-        }
-        else if new_end > old_end {
-            *last_run = Rle16::new(old_end, new_end - old_end - 1);
-            return;
-        }
-        else {
-            runs.pop();
-            return;
-        }
-    }
-
-    last_run.length = start - last_run.value - 1;
-    if new_end < old_end {
-        let run = Rle16::new(new_end, old_end - new_end - 1);
-        runs.push(run);
-    }
-    else if new_end > old_end {
-        let run = Rle16::new(old_end, new_end - old_end - 1);
-        runs.push(run);
     }
 }
 

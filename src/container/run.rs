@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::ops::{Deref, DerefMut};
 use std::io;
 use std::iter;
@@ -112,8 +113,7 @@ impl RunContainer {
     /// Add a value to the run container
     pub fn add(&mut self, value: u16) {
         match self.binary_search(value) {
-            SearchResult::ExactMatch(_index) => {
-            },
+            SearchResult::ExactMatch(_index) => { },
             SearchResult::PossibleMatch(index) => {
                 let v = self.runs[index];
                 let offset = value - v.value;
@@ -122,12 +122,12 @@ impl RunContainer {
                     return;
                 }
 
-                if offset + 1 == v.length {
+                if offset == v.length + 1 {
                     if index + 1 < self.runs.len() {
                         // Check if necessary to fuse, if so fuse the runs
                         let v1 = self.runs[index + 1];
                         if v1.value == value + 1 {
-                            self.runs[index].length = v1.value + v1.length - v.value;
+                            self.runs[index].length = v1.end() - v.value;
                             self.runs.remove(index + 1);
                             return;
                         }
@@ -147,8 +147,7 @@ impl RunContainer {
                     }
                 }
 
-                let new_run = Rle16::new(value, 0);
-                self.runs.insert(index + 1, new_run);
+                self.runs.insert(index + 1, Rle16::new(value, 0));
             },
             SearchResult::NoMatch => {
                 // Check if the run needs extended, if so extend it
@@ -161,16 +160,15 @@ impl RunContainer {
                     }
                 }
 
-                let new_run = Rle16::new(value, 0);
-                self.runs.push(new_run);
+                self.runs.push(Rle16::new(value, 0));
             }
         }
     }
     
-    /// Add all values in the range [min-max) to the run container
+    /// Add all values in the range [min-max] to the run container
     pub fn add_range(&mut self, range: Range<u16>) {
-        let max = range.start;
-        let min = range.end - 1;
+        let min = range.start;
+        let max = range.end;
 
         let runs_min = self.rle_count_less(min);
         let runs_max = self.rle_count_greater(max);
@@ -179,7 +177,7 @@ impl RunContainer {
         if common == 0 {
             self.runs.insert(
                 runs_min,
-                Rle16::new(min, max - min)
+                Rle16::new(min, max - min - 1)
             );
         }
         else {
@@ -236,61 +234,65 @@ impl RunContainer {
     
     /// Remove all values in the range [min-max) from the run container
     pub fn remove_range(&mut self, range: Range<u16>) {
-        fn result_to_compressed_index(value: SearchResult) -> isize {
-            match value {
-                SearchResult::ExactMatch(index) => {
-                    index as isize
-                },
-                SearchResult::PossibleMatch(index) => {
-                    -(index as isize + 1)
-                },
-                SearchResult::NoMatch => {
-                    -1
-                }
-            }
-        }
-
         let min = range.start;
         let max = range.end - 1;
 
-        let mut first = result_to_compressed_index(self.find_run(min));
-        let mut last = result_to_compressed_index(self.find_run(max));
+        let mut si0 = None;
+        let mut si1 = None;
 
-        if first >= 0 {
-            let v_first = self.runs[first as usize];
-            if min > v_first.value && max < v_first.end() {
-                // Split into two runs
+        // Update the left-most run
+        match self.find_run(min) {
+            SearchResult::ExactMatch(mut index) => {
+                let run = self.runs[index as usize];
+                if min > run.value && max < run.end() {
+                    // Split into two runs
 
-                // Right interval
-                self.runs.insert(first as usize + 1, Rle16::new(max + 1, v_first.end() - (max + 1)));
+                    // Right interval
+                    self.runs.insert(index as usize + 1, Rle16::new(max + 1, run.end() - (max + 1)));
 
-                // Left interval
-                self.runs[first as usize].length = (min - 1) - v_first.value;
-                return;
+                    // Left interval
+                    self.runs[index as usize].length = (min - 1) - run.value;
+                    return;
+                }
+
+                if min > run.value {
+                    self.runs[index as usize].length = (min - 1) - run.value;
+                    index += 1;
+                }
+
+                si0 = Some(index);
+            },
+            SearchResult::PossibleMatch(index) => {
+                si0 = Some(index);
+            },
+            _ => ()
+        }
+
+        // Update the right-most run
+        match self.find_run(max) {
+            SearchResult::ExactMatch(mut index) => {
+                let run_max = self.runs[index as usize].end();
+                if run_max > max {
+                    self.runs[index as usize] = Rle16::new(max + 1, run_max - (max + 1));
+                    index = index.checked_sub(1)
+                        .unwrap_or(0);
+                }
+
+                si1 = Some(index);
+            },
+            SearchResult::PossibleMatch(index) => {
+                si1 = Some(index);                
+            },
+            _ => ()
+        }
+
+        if let (Some(si0), Some(si1)) = (si0, si1) {
+            let start = si0 + 1;
+            let end = start + (si1 + 1);
+
+            if end < self.runs.len() {
+                self.runs.splice(start..end, iter::empty());
             }
-
-            if min > v_first.value {
-                self.runs[first as usize].length = (min - 1) - v_first.value;
-                first += 1;
-            }
-        }
-        else {
-            first = -first - 1;
-        }
-
-        if last >= 0 {
-            let run_max = self.runs[last as usize].end();
-            if run_max > max {
-                self.runs[last as usize] = Rle16::new(max + 1, run_max - (max + 1));
-                last -= 1;
-            }
-        }
-        else {
-            last = (-last - 1) - 1;
-        }
-
-        if first <= last {
-            self.runs.splice((self.runs.len() - (last as usize + 1))..(-(last - first + 1) as usize), iter::empty());
         }
     }
     
@@ -380,9 +382,9 @@ impl RunContainer {
 
     /// Compute the cardinality of this run container
     fn compute_cardinality(&self) -> usize {
-        let mut card = 0;
+        let mut card = self.len(); // Accounts for runs with a 0 length
         for rle in self.iter_runs() {
-            card += (rle.length + 1) as usize;
+            card += rle.length as usize;
         }
         
         card
@@ -406,9 +408,10 @@ impl RunContainer {
             return false;
         }
 
-        unsafe {
-            run_ops::is_full(&self.runs)
-        }
+        let run = self.runs[0];
+        let len = self.runs.len();
+
+        len == 1 && run.value == 0 && run.length == std::u16::MAX
     }
 
     /// Get the minimum value of this container
@@ -543,7 +546,7 @@ impl RunContainer {
     fn find_run(&self, key: u16) -> SearchResult {
         let mut low = 0;
         let mut high = self.runs.len() - 1;
-        while low < high {
+        while low <= high {
             let middle = (low + high) >> 1;
             let min = self.runs[middle].value;
             let max = self.runs[middle].end();
@@ -572,12 +575,13 @@ impl RunContainer {
             return 0;
         }
 
+        let value = usize::from(value);
         let mut low = 0;
         let mut high = self.runs.len() - 1;
         while low <= high {
             let middle = (low + high) >> 1;
-            let min_value = self.runs[middle].value;
-            let max_value = min_value + self.runs[middle].length;
+            let min_value = usize::from(self.runs[middle].value);
+            let max_value = min_value + usize::from(self.runs[middle].length);
 
             if max_value + 1 < value {
                 low = middle + 1;
@@ -599,21 +603,22 @@ impl RunContainer {
             return 0;
         }
 
+        let value = usize::from(value);
         let mut low = 0;
         let mut high = self.runs.len() - 1;
         while low <= high {
             let middle = (low + high) >> 1;
-            let min_value = self.runs[middle].value;
-            let max_value = min_value + self.runs[middle].length;
+            let min_value = usize::from(self.runs[middle].value);
+            let max_value = min_value + usize::from(self.runs[middle].length);
 
-            if max_value + 1 < value {
+            if max_value < value {
                 low = middle + 1;
             }
-            else if value < min_value {
+            else if value + 1 < min_value {
                 high = middle - 1;
             }
             else {
-                return middle;
+                return self.runs.len() - (middle + 1);
             }
         }
 
@@ -1602,26 +1607,26 @@ impl SetXor<ArrayContainer> for RunContainer {
             let val = other[pos_arr];
 
             if run.value < val {
-                run_ops::append_exclusive(&mut result.runs, run.value, run.length);
+                append_exclusive(&mut result.runs, run.value, run.length);
 
                 pos_run += 1;
             }
             else {
-                run_ops::append_exclusive(&mut result.runs, val, 0);
+                append_exclusive(&mut result.runs, val, 0);
 
                 pos_arr += 1;
             }
         }
 
         while pos_arr < other.len() {
-            run_ops::append_exclusive(&mut result.runs, other[pos_arr], 0);
+            append_exclusive(&mut result.runs, other[pos_arr], 0);
 
             pos_arr += 1;
         }
 
         while pos_run < self.num_runs() {
             let run = self.runs[pos_run];
-            run_ops::append_exclusive(&mut result.runs, run.value, run.length);
+            append_exclusive(&mut result.runs, run.value, run.length);
 
             pos_run += 1;
         }
@@ -1743,8 +1748,11 @@ impl Subset<BitsetContainer> for RunContainer {
 
 impl SetNot for RunContainer {
     fn not(&self, range: Range<u16>) -> Container {
-        let mut result = self.clone();
+        if range.is_empty() {
+            return Container::Run(self.clone());
+        }
 
+        let mut result = RunContainer::with_capacity(self.num_runs() + 1);
         let mut k = 0;
         while k < self.num_runs() && self.runs[k].value < range.start {
             result.runs[k] = self.runs[k];
@@ -1752,12 +1760,15 @@ impl SetNot for RunContainer {
             k += 1;
         }
 
-        run_ops::append_exclusive(&mut result.runs, range.start, range.end - range.start - 1);
+        let min = range.start;
+        let max = range.end;
+
+        append_exclusive(&mut result.runs, min, max - min);
 
         while k < self.num_runs() {
             let rle = self.runs[k];
 
-            run_ops::append_exclusive(&mut result.runs, rle.value, rle.length);
+            append_exclusive(&mut result.runs, rle.value, rle.length);
 
             k += 1;
         }
@@ -1803,14 +1814,14 @@ impl SetNot for RunContainer {
             buffered = self.runs[k];
         }
 
-        run_ops::append_exclusive(&mut self.runs, range.start, range.end - range.start - 1);
+        append_exclusive(&mut self.runs, range.start, range.end - range.start - 1);
 
         while k < self.num_runs() {
             if k + 1 < self.num_runs() {
                 next = self.runs[k + 1];
             }
 
-            run_ops::append_exclusive(&mut self.runs, buffered.value, buffered.length);
+            append_exclusive(&mut self.runs, buffered.value, buffered.length);
 
             buffered = next;
             k += 1;
@@ -1863,6 +1874,55 @@ impl<'a> Iterator for Iter<'a> {
                 None
             }
         }
+    }
+}
+
+fn append_exclusive(runs: &mut Vec<Rle16>, start: u16, length: u16) {
+    let is_empty = runs.is_empty();
+    let old_end = runs.last_mut()
+        .and_then(|x| Some(x.end().saturating_add(1)));
+
+    let last_run = runs.last_mut();
+
+    if is_empty || (old_end.is_some() && start > old_end.unwrap()) {
+        runs.push(Rle16::new(start, length));
+        return;
+    }
+
+    let last_run = last_run.unwrap();
+    let old_end = old_end.unwrap();
+
+    if old_end == start {
+        last_run.length += length + 1;
+        return;
+    }
+
+    let new_end = start + length + 1;
+    if start == last_run.value {
+        if new_end < old_end {
+            *last_run = Rle16::new(new_end, old_end - new_end - 1);
+            return;
+        }
+        else if new_end > old_end {
+            *last_run = Rle16::new(old_end, new_end - old_end - 1);
+            return;
+        }
+        else {
+            runs.pop();
+            return;
+        }
+    }
+
+    // Checked version of `start - last_run.value - 1`
+    last_run.length = start
+        .saturating_sub(last_run.value)
+        .saturating_sub(1);
+
+    if new_end < old_end {
+        runs.push(Rle16::new(new_end, old_end - new_end - 1));
+    }
+    else if new_end > old_end {
+        runs.push(Rle16::new(old_end, new_end - old_end - 1));
     }
 }
 
@@ -1924,12 +1984,11 @@ mod test {
     fn remove_range() {
         let mut a = RunContainer::new();
         a.add_range(0..20);
-
-        a.remove_range(10..20);
+        a.remove_range(0..10);
 
         assert_eq!(a.cardinality(), 10);
 
-        for (found, expected) in a.iter().zip(0..10) {
+        for (found, expected) in a.iter().zip(10..20) {
             assert_eq!(found, expected);
         }
     }
@@ -1969,8 +2028,8 @@ mod test {
 
     #[test]
     fn is_full() {
-        let a = RunContainer::new();
-        let a = a.not(0..std::u16::MAX);
+        let a = RunContainer::new()
+            .not(0..std::u16::MAX);
 
         assert!(!a.is_empty());
         assert!(a.is_full());

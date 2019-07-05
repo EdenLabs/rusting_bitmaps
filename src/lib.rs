@@ -11,7 +11,7 @@
 //#![deny(missing_docs)]
 #![deny(bare_trait_objects)]
 #![allow(clippy::collapsible_if)] // No, just no. These were written that way to simplify reading
-#![allow(clippy::range_plus_one)] // Another "programmer knows better". The api relies on bounded range structs currently
+#![allow(clippy::range_plus_one)] // Another "programmer knows better" situation
 
 //! Rusting Bitmaps is a loose port of CRoaring with a few differences
 //!
