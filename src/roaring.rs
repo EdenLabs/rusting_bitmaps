@@ -1522,15 +1522,7 @@ impl<'a> Iterator for Iter<'a> {
 
 #[cfg(test)]
 mod test {
-    #[test]
-    fn new() {
-        unimplemented!()
-    }
-
-    #[test]
-    fn with_capacity() {
-        unimplemented!()
-    }
+    use crate::RoaringBitmap;
 
     #[test]
     fn from_range() {
@@ -1549,12 +1541,21 @@ mod test {
 
     #[test]
     fn add() {
-        unimplemented!()
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add(10);
+        bitmap.add(255678);
+
+        assert_eq!(bitmap.cardinality(), 2);
+        assert!(bitmap.contains(10));
+        assert!(bitmap.contains(255678));
     }
 
     #[test]
     fn add_range() {
-        unimplemented!()
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_range(0..std::u32::MAX);
+
+        assert_eq!(bitmap.cardinality(), std::u32::MAX as usize);
     }
 
     #[test]
@@ -1700,5 +1701,33 @@ mod test {
     #[test]
     fn xor_cardinality() {
         unimplemented!()
+    }
+
+    #[test]
+    fn external_data() {
+        use std::fs::File;
+        
+        const FILE_PATHS: [&'static str; 9] = [
+            "res/test_data/no_runs.bin",
+            "res/test_data/with_runs.bin",
+            "res/test_data/crash_prone_0.bin",
+            "res/test_data/crash_prone_1.bin",
+            "res/test_data/crash_prone_2.bin",
+            "res/test_data/crash_prone_3.bin",
+            "res/test_data/crash_prone_4.bin",
+            "res/test_data/crash_prone_5.bin",
+            "res/test_data/crash_prone_6.bin"
+        ];
+
+        fn run_test(path: &'static str) {
+            let mut file = File::open(path).unwrap();
+            let bitmap = RoaringBitmap::deserialize(&mut file);
+
+            assert!(bitmap.is_ok());
+        }
+
+        for path in FILE_PATHS.iter() {
+            run_test(path);
+        }
     }
 }
