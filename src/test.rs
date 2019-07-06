@@ -42,24 +42,9 @@ pub fn run_test<T, U, F>(in_a: &[u16], in_b: &[u16], expected: &[u16], f: F)
     let pass = result.iter()
         .zip(expected.iter());
     
-    let (failed, found, expected) = {
-        let mut out_found = 0;
-        let mut out_expected = 0;
-
-        let mut failed = false;
-        for (found, expected) in pass {
-            if found != *expected {
-                failed = true;
-                out_found = found;
-                out_expected = *expected;
-                break;
-            }
-        }
-
-        (failed, out_found, out_expected)
-    };
-
-    assert!(!failed, "Sets are not equivalent. Found {}, expected {}", found, expected);
+    for (found, expected) in pass {
+        assert_eq!(found, *expected, "Sets are not equivalent. Found {}, expected {}", found, *expected);
+    }
 }
 
 pub const INPUT_A: [u16; 97] = [

@@ -1519,3 +1519,186 @@ impl<'a> Iterator for Iter<'a> {
         })
     }
 }
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn new() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn with_capacity() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn from_range() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn from_slice() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn copy_from() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn add() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn add_range() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn add_slice() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn remove() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn remove_range() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn remove_slice() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn contains() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn contains_range() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn cardinality() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn select() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn rank() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn min() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn max() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn subset_of() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn jaccard_index() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn iter() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn round_trip_serialize() {
+        unimplemented!()
+    } 
+
+    #[test]
+    fn or() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn and() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn and_not() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn xor() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn not() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn inplace_or() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn inplace_and() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn inplace_and_not() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn inplace_xor() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn inplace_not() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn or_cardinality() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn and_cardinality() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn and_not_cardinality() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn xor_cardinality() {
+        unimplemented!()
+    }
+}
