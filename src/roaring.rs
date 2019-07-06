@@ -1524,6 +1524,22 @@ impl<'a> Iterator for Iter<'a> {
 mod test {
     use crate::RoaringBitmap;
 
+    enum BitmapType {
+        Input0,
+        Input1,
+        ResultOr,
+        ResultAnd,
+        ResultAndNot,
+        ResultXor,
+        Subset0,
+        Subset1,
+        SubsetOf,
+    }
+
+    fn generate_bitmap() {
+
+    }
+
     #[test]
     fn from_range() {
         unimplemented!()
