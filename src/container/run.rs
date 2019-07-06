@@ -1,4 +1,3 @@
-use std::convert::TryInto;
 use std::ops::{Deref, DerefMut};
 use std::io;
 use std::iter;
@@ -12,7 +11,6 @@ use tinybit::Endian;
 
 use crate::container::*;
 use crate::container::array_ops;
-use crate::container::run_ops;
 
 /// A RLE word storing the value and the length of that run
 /// 
@@ -1100,16 +1098,12 @@ impl SetOr<BitsetContainer> for RunContainer {
 
 impl SetAnd<Self> for RunContainer {
     fn and(&self, other: &Self) -> Container {
-        let if0 = self.is_full();
-        let if1 = other.is_full();
-        if if0 || if1 {
-            if if0 {
-                return Container::Run(other.clone());
-            }
-            
-            if if1 {
-                return Container::Run(self.clone());
-            }
+        if self.is_full() {
+            return Container::Run(other.clone());
+        }
+
+        if other.is_full() {
+            return Container::Run(self.clone());
         }
 
         let req_cap = self.num_runs() + other.num_runs();
@@ -1120,8 +1114,8 @@ impl SetAnd<Self> for RunContainer {
 
         let mut start0 = self.runs[i0].value;
         let mut start1 = other.runs[i1].value;
-        let mut end0 = self.runs[i0].end();
-        let mut end1 = other.runs[i1].end();
+        let mut end0 = self.runs[i0].end() + 1;
+        let mut end1 = other.runs[i1].end() + 1;
 
         while i0 < self.num_runs() && i1 < other.num_runs() {
             // Runs don't overlap, advance either or
@@ -1130,7 +1124,7 @@ impl SetAnd<Self> for RunContainer {
 
                 if i0 < self.num_runs() {
                     start0 = self.runs[i0].value;
-                    end0 = self.runs[i0].end();
+                    end0 = self.runs[i0].end() + 1;
                 }
             }
             else if end1 <= start0 {
@@ -1138,7 +1132,7 @@ impl SetAnd<Self> for RunContainer {
 
                 if i1 < other.num_runs() {
                     start1 = other.runs[i1].value;
-                    end1 = other.runs[i1].end();
+                    end1 = other.runs[i1].end() + 1;
                 }
             }
             // Runs overlap, try to merge if possible
@@ -1153,12 +1147,12 @@ impl SetAnd<Self> for RunContainer {
 
                     if i0 < self.num_runs() {
                         start0 = self.runs[i0].value;
-                        end0 = self.runs[i0].end();
+                        end0 = self.runs[i0].end() + 1;
                     }
 
                     if i1 < other.num_runs() {
                         start1 = other.runs[i1].value;
-                        end1 = other.runs[i1].end();
+                        end1 = other.runs[i1].end() + 1;
                     }
                 }
                 else if end0 < end1 {
@@ -1167,7 +1161,7 @@ impl SetAnd<Self> for RunContainer {
                     i0 += 1;
                     if i0 < self.num_runs() {
                         start0 = self.runs[i0].value;
-                        end0 = self.runs[i0].end();
+                        end0 = self.runs[i0].end() + 1;
                     }
                 }
                 else {
@@ -1176,7 +1170,7 @@ impl SetAnd<Self> for RunContainer {
                     i1 += 1;
                     if i1 < other.num_runs() {
                         start1 = other.runs[i1].value;
-                        end1 = other.runs[i1].end();
+                        end1 = other.runs[i1].end() + 1;
                     }
                 }
 
@@ -1189,16 +1183,12 @@ impl SetAnd<Self> for RunContainer {
     }
 
     fn and_cardinality(&self, other: &Self) -> usize {
-        let if0 = self.is_full();
-        let if1 = other.is_full();
-        if if0 || if1 {
-            if if0 {
-                return other.cardinality();
-            }
-            
-            if if1 {
-                return self.cardinality();
-            }
+        if self.is_full() {
+            return other.cardinality();
+        }
+        
+        if other.is_full() {
+            return self.cardinality();
         }
 
         let mut card = 0;
@@ -1208,8 +1198,8 @@ impl SetAnd<Self> for RunContainer {
 
         let mut start0 = self.runs[i0].value;
         let mut start1 = other.runs[i1].value;
-        let mut end0 = self.runs[i0].end();
-        let mut end1 = other.runs[i1].end();
+        let mut end0 = self.runs[i0].end() + 1;
+        let mut end1 = other.runs[i1].end() + 1;
 
         while i0 < self.num_runs() && i1 < other.num_runs() {
             // Runs don't overlap, advance either or
@@ -1218,7 +1208,7 @@ impl SetAnd<Self> for RunContainer {
 
                 if i0 < self.num_runs() {
                     start0 = self.runs[i0].value;
-                    end0 = self.runs[i0].end();
+                    end0 = self.runs[i0].end() + 1;
                 }
             }
             else if end1 <= start0 {
@@ -1226,7 +1216,7 @@ impl SetAnd<Self> for RunContainer {
 
                 if i1 < other.num_runs() {
                     start1 = other.runs[i1].value;
-                    end1 = other.runs[i1].end();
+                    end1 = other.runs[i1].end() + 1;
                 }
             }
             // Runs overlap, try to merge if possible
@@ -1241,12 +1231,12 @@ impl SetAnd<Self> for RunContainer {
 
                     if i0 < self.num_runs() {
                         start0 = self.runs[i0].value;
-                        end0 = self.runs[i0].end();
+                        end0 = self.runs[i0].end() + 1;
                     }
 
                     if i1 < other.num_runs() {
                         start1 = other.runs[i1].value;
-                        end1 = other.runs[i1].end();
+                        end1 = other.runs[i1].end() + 1;
                     }
                 }
                 else if end0 < end1 {
@@ -1255,7 +1245,7 @@ impl SetAnd<Self> for RunContainer {
                     i0 += 1;
                     if i0 < self.num_runs() {
                         start0 = self.runs[i0].value;
-                        end0 = self.runs[i0].end();
+                        end0 = self.runs[i0].end() + 1;
                     }
                 }
                 else {
@@ -1264,7 +1254,7 @@ impl SetAnd<Self> for RunContainer {
                     i1 += 1;
                     if i1 < other.num_runs() {
                         start1 = other.runs[i1].value;
-                        end1 = other.runs[i1].end();
+                        end1 = other.runs[i1].end() + 1;
                     }
                 }
 
@@ -1664,10 +1654,10 @@ impl SetAndNot<BitsetContainer> for RunContainer {
         let cardinality = self.cardinality();
         
         // Result is an array
-        if cardinality < DEFAULT_MAX_SIZE {
+        if cardinality <= DEFAULT_MAX_SIZE {
             let mut array = ArrayContainer::with_capacity(cardinality);
-            for rle in self.runs.iter() {
-                for value in rle.value..rle.end() {
+            for run in self.runs.iter() {
+                for value in run.value..(run.end() + 1) {
                     if !other.get(value) {
                         array.push(value);
                     }
@@ -1683,7 +1673,7 @@ impl SetAndNot<BitsetContainer> for RunContainer {
             let mut last_pos = 0;
             for rle in self.runs.iter() {
                 let start = rle.value;
-                let end = rle.end();
+                let end = rle.end() + 1;
 
                 bitset.unset_range(last_pos..start);
                 bitset.flip_range(start..end);
@@ -1691,7 +1681,7 @@ impl SetAndNot<BitsetContainer> for RunContainer {
                 last_pos = end;
             }
 
-            bitset.unset_range(last_pos..(!0));
+            bitset.unset_range(last_pos..std::u16::MAX);
 
             // Result is not a bitset, convert to array
             if bitset.cardinality() <= DEFAULT_MAX_SIZE {
@@ -1711,8 +1701,50 @@ impl SetAndNot<BitsetContainer> for RunContainer {
 
 impl SetXor<Self> for RunContainer {
     fn xor(&self, other: &Self) -> Container {
-        let mut result = RunContainer::new();
-        run_ops::xor(&self, &other, &mut result.runs);
+        if self.is_empty() {
+            return Container::Run(other.clone());
+        }
+
+        if other.is_empty() {
+            return Container::Run(self.clone());
+        }
+
+        let mut result = RunContainer::with_capacity(
+            self.runs.len() + other.runs.len()
+        );
+
+        let mut i_a = 0;
+        let mut i_b = 0;
+        let mut v_a;
+        let mut v_b;
+
+        while i_a < self.runs.len() && i_b < other.runs.len() {
+            v_a = self.runs[i_a];
+            v_b = other.runs[i_b];
+
+            if v_a.value <= v_b.value {
+                append_exclusive(&mut result.runs, v_a.value, v_a.length);
+                i_a += 1;
+            }
+            else {
+                append_exclusive(&mut result.runs, v_b.value, v_b.length);
+                i_b += 1;
+            }
+        }
+
+        while i_a < self.runs.len() {
+            v_a = self.runs[i_a];
+
+            append_exclusive(&mut result.runs, v_a.value, v_a.length);
+            i_a += 1;
+        }
+
+        while i_b < other.runs.len() {
+            v_b = other.runs[i_b];
+
+            append_exclusive(&mut result.runs, v_b.value, v_b.length);
+            i_b += 1;
+        }
 
         Container::Run(result)
     }
@@ -2226,12 +2258,24 @@ mod test {
 
     #[test]
     fn rank() {
-        unimplemented!()
+        let mut a = RunContainer::new();
+        a.add_range(0..10);
+
+        let rank = a.rank(5);
+        assert_eq!(rank, 6);
     }
 
     #[test]
     fn select() {
-        unimplemented!()
+        let range = 0..30;
+        let mut a = RunContainer::new();
+        a.add_range(range);
+
+        let mut start_rank = 5;
+        let selected = a.select(20, &mut start_rank);
+        
+        assert!(selected.is_some());
+        assert_eq!(selected.unwrap(), 15);
     }
 
     #[test]
