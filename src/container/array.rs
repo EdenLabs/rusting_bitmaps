@@ -1,7 +1,7 @@
 use std::io::{self, Read, Write};
 use std::mem;
 use std::ptr;
-use std::ops::{Deref, DerefMut, Range};
+use std::ops::{Deref, DerefMut};
 use std::slice::{self, Iter};
 
 use crate::container::*;
@@ -129,9 +129,11 @@ impl ArrayContainer {
     }
 
     /// Add all values within the specified range
-    pub fn add_range(&mut self, range: Range<u16>) {
+    pub fn add_range(&mut self, range: Range<u32>) {
+        debug_assert!(is_valid_range(range.clone()));
+
         if range.is_empty() {
-            self.add(range.start);
+            self.add(range.start as u16);
         }
         else {
             // Resize to fit all new elements
@@ -177,9 +179,11 @@ impl ArrayContainer {
     }
 
     /// Check if the array contains all values within [min-max)
-    pub fn contains_range(&self, range: Range<u16>) -> bool {
-        let rs = range.start;
-        let re = range.end - 1;
+    pub fn contains_range(&self, range: Range<u32>) -> bool {
+        debug_assert!(is_valid_range(range.clone()));
+
+        let rs = range.start as u16;
+        let re = (range.end - 1) as u16;
 
         let min = array_ops::advance_until(&self.array, 0, rs);
         let max = array_ops::advance_until(&self.array, 0, re);
@@ -937,7 +941,9 @@ impl Subset<RunContainer> for ArrayContainer {
 }
 
 impl SetNot for ArrayContainer {
-    fn not(&self, range: Range<u16>) -> Container {
+    fn not(&self, range: Range<u32>) -> Container {
+        debug_assert!(is_valid_range(range.clone()));
+
         let mut bitset = BitsetContainer::new();
         bitset.set_all();
         bitset.clear_list(&self.array[(range.start as usize)..(range.end as usize)]);
@@ -945,7 +951,9 @@ impl SetNot for ArrayContainer {
         Container::Bitset(bitset)
     }
 
-    fn inplace_not(self, range: Range<u16>) -> Container {
+    fn inplace_not(self, range: Range<u32>) -> Container {
+        debug_assert!(is_valid_range(range.clone()));
+
         SetNot::not(&self, range)
     }
 }
@@ -996,14 +1004,14 @@ mod test {
 
     #[test]
     fn load_range() {
-        let range = 50..200;
+        let range = 0..(1 << 16);
         let mut array = ArrayContainer::with_capacity(range.len());
         array.add_range(range.clone());
 
         assert_eq!(array.cardinality(), range.len());
 
         for (found, expected) in array.iter().zip(range) {
-            assert_eq!(*found, expected);
+            assert_eq!(*found, expected as u16);
         }
     }
 
@@ -1019,7 +1027,7 @@ mod test {
         assert_eq!(array.cardinality(), 8);
         
         let pass = array.iter()
-            .zip(range);
+            .zip(0..10);
 
         for (found, expected) in pass {
             assert_eq!(*found, expected);
@@ -1037,7 +1045,7 @@ mod test {
         assert_eq!(array.cardinality(), 45);
 
         let pass = array.iter()
-            .zip(range);
+            .zip(0..60);
 
         for (found, expected) in pass {
             assert_eq!(*found, expected);
@@ -1214,7 +1222,7 @@ mod test {
     #[test]
     fn array_not() {
         let a = make_container::<ArrayContainer>(&INPUT_A);
-        let not_a = a.not(0..(a.cardinality() as u16));
+        let not_a = a.not(0..(a.cardinality() as u32));
 
         let mut failed = false;
         for value in a.iter() {

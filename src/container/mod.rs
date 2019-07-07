@@ -63,9 +63,9 @@ trait Subset<T> {
 
 /// The inverse set operation
 trait SetNot {
-    fn not(&self, range: Range<u16>) -> Container;
+    fn not(&self, range: Range<u32>) -> Container;
 
-    fn inplace_not(self, range: Range<u16>) -> Container;
+    fn inplace_not(self, range: Range<u32>) -> Container;
 }
 
 /// A struct for managing a lazily evaluated cardinality
@@ -224,7 +224,7 @@ pub enum Container {
 
 impl Container {
     /// Create a container with all values in the specified range
-    pub fn from_range(range: Range<u16>) -> Option<Self> {
+    pub fn from_range(range: Range<u32>) -> Self {
         debug_assert!(!range.is_empty());
 
         let size = range.len();
@@ -234,14 +234,14 @@ impl Container {
             let mut container = ArrayContainer::with_capacity(size);
             container.add_range(range);
             
-            Some(Container::Array(container))
+            Container::Array(container)
         }
         // Result is a bitset
         else {
             let mut container = BitsetContainer::new();
             container.set_range(range);
 
-            Some(Container::Bitset(container))
+            Container::Bitset(container)
         }
     }
 
@@ -289,7 +289,7 @@ impl Container {
         };
     }
 
-    pub fn add_range(&mut self, range: Range<u16>) {
+    pub fn add_range(&mut self, range: Range<u32>) {
         match self {
             Container::Array(c) => c.add_range(range),
             Container::Bitset(c) => c.add_range(range),
@@ -320,7 +320,7 @@ impl Container {
     /// 
     /// # Returns
     /// Returns false if no more elements are in the container, returns true otherwise
-    pub fn remove_range(&mut self, range: Range<u16>) -> bool {
+    pub fn remove_range(&mut self, range: Range<u32>) -> bool {
         match self {
             Container::Array(c) => {
                 let vals_greater = array_ops::count_greater(&c[..], range.end as u16);// TODO: Make sure these don't truncate
@@ -361,9 +361,9 @@ impl Container {
                 }
 
                 let min = c.min()
-                    .unwrap_or(0);
+                    .unwrap_or(0) as u32;
                 let max = c.max()
-                    .unwrap_or(0);
+                    .unwrap_or(0) as u32;
 
                 if range.start <= min && range.end >= max {
                     return false;
@@ -394,7 +394,7 @@ impl Container {
     }
 
     /// Check if the container contains a range of values
-    pub fn contains_range(&self, range: Range<u16>) -> bool {
+    pub fn contains_range(&self, range: Range<u32>) -> bool {
         match self {
             Container::Array(c) => c.contains_range(range),
             Container::Bitset(c) => c.contains_range(range),
@@ -489,7 +489,7 @@ impl Container {
     op!(xor, Self);
 
     /// Compute the negation of this container within the specified range
-    pub fn not(&self, range: Range<u16>) -> Self {
+    pub fn not(&self, range: Range<u32>) -> Self {
         match self {
             Container::Array(c) => c.not(range),
             Container::Bitset(c) => c.not(range),
@@ -585,4 +585,11 @@ impl<'a> Iterator for Iter<'a> {
             ContainerIter::Run(c) => c.next()
         }
     }
+}
+
+fn is_valid_range(range: Range<u32>) -> bool {
+    let valid_len = range.len() <= (1 << 16);
+    let valid_bounds = range.start <= (1 << 16) && range.end <= (1 << 16);
+
+    valid_len && valid_bounds
 }

@@ -53,17 +53,17 @@ impl BitsetContainer {
         change > 0
     }
 
-    /// Set all the bits within the range denoted by [min-max]
-    pub fn set_range(&mut self, range: Range<u16>) {
+    /// Set all the bits within the range denoted by [min-max)
+    pub fn set_range(&mut self, range: Range<u32>) {
         let (min, max) = range.into_bound();
 
         if min == max {
-            self.set(min);
+            self.set(min as u16);
             return;
         }
 
-        let first_word = usize::from(min / 64);
-        let last_word = usize::from((max - 1) / 64);
+        let first_word = (min / 64) as usize;
+        let last_word = ((max - 1) / 64) as usize;
 
         if first_word == last_word {
             let w0 = std::u64::MAX << (min % 64);
@@ -123,17 +123,17 @@ impl BitsetContainer {
         change > 0
     }
 
-    /// Unset all the bits between [min-max]
-    pub fn unset_range(&mut self, range: Range<u16>) {
+    /// Unset all the bits between [min-max)
+    pub fn unset_range(&mut self, range: Range<u32>) {
         let (min, max) = range.into_bound();
 
         if min == max {
-            self.unset(min);
+            self.unset(min as u16);
             return;
         }
 
-        let first_word = usize::from(min / 64);
-        let last_word = usize::from((max - 1) / 64);
+        let first_word = (min / 64) as usize;
+        let last_word = ((max - 1) / 64) as usize;
 
         if first_word == last_word {
             let w0 = std::u64::MAX << (min % 64);
@@ -179,9 +179,9 @@ impl BitsetContainer {
         self.set(value)
     }
 
-    /// Add all values in [min-max] to the bitset
+    /// Add all values in [min-max) to the bitset
     #[inline]
-    pub fn add_range(&mut self, range: Range<u16>) {
+    pub fn add_range(&mut self, range: Range<u32>) {
         self.set_range(range)
     }
 
@@ -202,11 +202,11 @@ impl BitsetContainer {
     }
 
     /// Check if all bits within a range are true
-    pub fn get_range(&self, range: Range<u16>) -> bool { // TODO: lift this up to the public api
+    pub fn get_range(&self, range: Range<u32>) -> bool { // TODO: lift this up to the public api
         let (min, max) = range.into_bound();
 
         if min == max {
-            return self.get(min);
+            return self.get(min as u16);
         }
 
         let first_word = (min >> 6) as usize;
@@ -245,12 +245,12 @@ impl BitsetContainer {
         self.cardinality.invalidate();
     }
 
-    /// Flip all bits in the range [min-max]
-    pub fn flip_range(&mut self, range: Range<u16>) {
+    /// Flip all bits in the range [min-max)
+    pub fn flip_range(&mut self, range: Range<u32>) {
         let (min, max) = range.into_bound();
 
         if min == max {
-            return self.flip(min);
+            return self.flip(min as u16);
         }
 
         let min = u32::from(min);
@@ -288,9 +288,9 @@ impl BitsetContainer {
         self.get(value)
     }
 
-    /// Check if the bitset contains all bits in the range [min-max]
+    /// Check if the bitset contains all bits in the range [min-max)
     #[inline]
-    pub fn contains_range(&self, range: Range<u16>) -> bool {
+    pub fn contains_range(&self, range: Range<u32>) -> bool {
         self.get_range(range)
     }
 
@@ -305,13 +305,13 @@ impl BitsetContainer {
         self.cardinality.get(|| bitset_ops::cardinality(&self))
     }
 
-    /// Get the cardinality of the range [min-max]
-    pub fn cardinality_range(&self, range: Range<u16>) -> usize {
+    /// Get the cardinality of the range [min-max)
+    pub fn cardinality_range(&self, range: Range<u32>) -> usize {
         let min = range.start;
         let max = range.end;
 
         if min == max {
-            return if self.get(min) { 1 } else { 0 };
+            return self.get(min as u16) as usize;
         }
 
         let start = min as usize;
@@ -579,8 +579,8 @@ impl<'a> From<&'a RunContainer> for BitsetContainer {
     fn from(container: &'a RunContainer) -> Self {
         let mut bitset = BitsetContainer::new();
         for run in container.iter_runs() {
-            let min = run.value;
-            let max = run.length - 1;
+            let min = u32::from(run.value);
+            let max = u32::from(run.length - 1);
 
             bitset.set_range(min..max);
         }
@@ -754,14 +754,14 @@ impl SetAnd<RunContainer> for BitsetContainer {
 
         let mut start = 0;
         for run in other.iter_runs() {
-            let end = run.value;
+            let end = u32::from(run.value);
             self.unset_range(start..end);
 
-            start = end + run.length + 1;
+            start = end + u32::from(run.length) + 1;
 
         }
 
-        self.unset_range(start..(!0));
+        self.unset_range(start..(1 << 16));
         //self.into_efficient_container()
         Container::Bitset(self)
     }
@@ -914,13 +914,13 @@ impl Subset<RunContainer> for BitsetContainer {
 }
 
 impl SetNot for BitsetContainer {
-    fn not(&self, range: Range<u16>) -> Container {
+    fn not(&self, range: Range<u32>) -> Container {
         let mut bitset = self.clone();
         bitset.flip_range(range);
         bitset.into_efficient_container()
     }
 
-    fn inplace_not(mut self, range: Range<u16>) -> Container {
+    fn inplace_not(mut self, range: Range<u32>) -> Container {
         self.flip_range(range);
         self.into_efficient_container()
     }
@@ -1012,9 +1012,9 @@ mod test {
     #[test]
     fn set_range() {
         let mut a = BitsetContainer::new();
-        a.set_range(0..10);
+        a.set_range(0..(1 << 16));
 
-        assert_eq!(a.cardinality(), 10);
+        assert_eq!(a.cardinality(), (1 << 16));
         assert!(a.contains_range(0..10));
     }
 
@@ -1182,7 +1182,7 @@ mod test {
         assert_eq!(a.cardinality(), range.len());
 
         let iter = a.iter()
-            .zip(range);
+            .zip(50..100);
 
         for (found, expected) in iter {
             assert_eq!(found, expected);
@@ -1340,7 +1340,7 @@ mod test {
     #[test]
     fn bitset_not() {
         let a = make_container::<BitsetContainer>(&INPUT_A);
-        let not_a = a.not(0..(((BITSET_SIZE_IN_WORDS * 64) - 1) as u16));
+        let not_a = a.not(0..(((BITSET_SIZE_IN_WORDS * 64) - 1) as u32));
 
         for value in a.iter() {
             assert!(!not_a.contains(value), "{} found in set", value);

@@ -48,8 +48,8 @@ impl Rle16 {
     }
     
     #[inline]
-    pub fn into_range(self) -> Range<u16> {
-        self.value..(self.value + self.length + 1)
+    pub fn into_range(self) -> Range<u32> {
+        u32::from(self.value)..u32::from(self.value + self.length + 1)
     }
 }
 
@@ -163,8 +163,8 @@ impl RunContainer {
         }
     }
     
-    /// Add all values in the range [min-max] to the run container
-    pub fn add_range(&mut self, range: Range<u16>) {
+    /// Add all values in the range [min-max) to the run container
+    pub fn add_range(&mut self, range: Range<u32>) {
         let min = range.start;
         let max = range.end;
 
@@ -175,14 +175,14 @@ impl RunContainer {
         if common == 0 {
             self.runs.insert(
                 runs_min,
-                Rle16::new(min, max - min - 1)
+                Rle16::new(min as u16, (max - min - 1) as u16)
             );
         }
         else {
             let common_min = self.runs[runs_min].value;
             let common_max = self.runs[runs_min + common - 1].end();
-            let result_min = common_min.min(min);
-            let result_max = common_max.max(max);
+            let result_min = common_min.min(min as u16);
+            let result_max = common_max.max(max as u16);
 
             self.runs[runs_min] = Rle16::new(result_min, result_max - result_min);
             self.runs.splice((runs_min + 1)..runs_max, iter::empty());
@@ -231,9 +231,9 @@ impl RunContainer {
     }
     
     /// Remove all values in the range [min-max) from the run container
-    pub fn remove_range(&mut self, range: Range<u16>) {
-        let min = range.start;
-        let max = range.end - 1;
+    pub fn remove_range(&mut self, range: Range<u32>) {
+        let min = range.start as u16;
+        let max = (range.end - 1) as u16;
 
         let mut si0 = None;
         let mut si1 = None;
@@ -312,12 +312,12 @@ impl RunContainer {
     }
     
     /// Check if the container contains all the values in [min-max)
-    pub fn contains_range(&self, range: Range<u16>) -> bool {
+    pub fn contains_range(&self, range: Range<u32>) -> bool {
         let mut count = 0;
         let index;
 
-        let min = range.start;
-        let max = range.end - 1;
+        let min = range.start as u16;
+        let max = (range.end - 1) as u16;
 
         match self.binary_search(min) {
             SearchResult::ExactMatch(i) => {
@@ -568,18 +568,17 @@ impl RunContainer {
     }
 
     /// Get the number of runs before `value` 
-    fn rle_count_less(&self, value: u16) -> usize {
+    fn rle_count_less(&self, value: u32) -> usize {
         if self.runs.is_empty() {
             return 0;
         }
 
-        let value = usize::from(value);
         let mut low = 0;
         let mut high = self.runs.len() - 1;
         while low <= high {
             let middle = (low + high) >> 1;
-            let min_value = usize::from(self.runs[middle].value);
-            let max_value = min_value + usize::from(self.runs[middle].length);
+            let min_value = u32::from(self.runs[middle].value);
+            let max_value = min_value + u32::from(self.runs[middle].length);
 
             if max_value + 1 < value {
                 low = middle + 1;
@@ -596,18 +595,17 @@ impl RunContainer {
     }
 
     /// Get the number of runs after `value`
-    fn rle_count_greater(&self, value: u16) -> usize {
+    fn rle_count_greater(&self, value: u32) -> usize {
         if self.runs.is_empty() {
             return 0;
         }
 
-        let value = usize::from(value);
         let mut low = 0;
         let mut high = self.runs.len() - 1;
         while low <= high {
             let middle = (low + high) >> 1;
-            let min_value = usize::from(self.runs[middle].value);
-            let max_value = min_value + usize::from(self.runs[middle].length);
+            let min_value = u32::from(self.runs[middle].value);
+            let max_value = min_value + u32::from(self.runs[middle].length);
 
             if max_value < value {
                 low = middle + 1;
@@ -1073,8 +1071,8 @@ impl SetOr<BitsetContainer> for RunContainer {
         let mut result = other.clone();
 
         for rle in self.iter_runs() {
-            let min = rle.value;
-            let max = rle.end();
+            let min = u32::from(rle.value);
+            let max = u32::from(rle.end());
 
             result.set_range(min..max);
         }
@@ -1396,10 +1394,10 @@ impl SetAnd<BitsetContainer> for RunContainer {
             // Unset all bits in between the runs
             let mut start = 0;
             for run in self.runs.iter() {
-                let end = run.value;
+                let end = u32::from(run.value);
                 bitset.unset_range(start..end);
 
-                start = end + run.length + 1;
+                start = end + u32::from(run.length) + 1;
             }
 
             bitset.unset_range(start..(!0));
@@ -1521,7 +1519,6 @@ impl SetAndNot<ArrayContainer> for RunContainer {
         let cardinality = self.cardinality();
 
         if cardinality <= ARBITRARY_THRESHOLD {
-            println!("arbitrary");
             if other.cardinality() == 0 {
                 return Container::Run(self.clone());
             }
@@ -1589,7 +1586,6 @@ impl SetAndNot<ArrayContainer> for RunContainer {
         }
 
         if cardinality <= DEFAULT_MAX_SIZE {
-            println!("Array");
             let mut array = ArrayContainer::with_capacity(cardinality);
             
             let mut index = 0;
@@ -1672,8 +1668,8 @@ impl SetAndNot<BitsetContainer> for RunContainer {
 
             let mut last_pos = 0;
             for rle in self.runs.iter() {
-                let start = rle.value;
-                let end = rle.end() + 1;
+                let start = u32::from(rle.value);
+                let end = u32::from(rle.end()) + 1;
 
                 bitset.unset_range(last_pos..start);
                 bitset.flip_range(start..end);
@@ -1681,7 +1677,7 @@ impl SetAndNot<BitsetContainer> for RunContainer {
                 last_pos = end;
             }
 
-            bitset.unset_range(last_pos..std::u16::MAX);
+            bitset.unset_range(last_pos..(1 << 16));
 
             // Result is not a bitset, convert to array
             if bitset.cardinality() <= DEFAULT_MAX_SIZE {
@@ -1803,7 +1799,7 @@ impl SetXor<BitsetContainer> for RunContainer {
     fn xor(&self, other: &BitsetContainer) -> Container {
         let mut result = other.clone();
         for rle in self.runs.iter() {
-            result.flip_range(rle.value..(rle.end() + 1));
+            result.flip_range(u32::from(rle.value)..(u32::from(rle.end()) + 1));
         }
 
         if result.cardinality() <= DEFAULT_MAX_SIZE {
@@ -1907,21 +1903,21 @@ impl Subset<BitsetContainer> for RunContainer {
 }
 
 impl SetNot for RunContainer {
-    fn not(&self, range: Range<u16>) -> Container {
+    fn not(&self, range: Range<u32>) -> Container {
         if range.is_empty() {
             return Container::Run(self.clone());
         }
 
         let mut result = RunContainer::with_capacity(self.num_runs() + 1);
         let mut k = 0;
-        while k < self.num_runs() && self.runs[k].value < range.start {
+        while k < self.num_runs() && u32::from(self.runs[k].value) < range.start {
             result.runs[k] = self.runs[k];
 
             k += 1;
         }
 
-        let min = range.start;
-        let max = range.end;
+        let min = range.start as u16;
+        let max = (range.end - 1) as u16;
 
         append_exclusive(&mut result.runs, min, max - min);
 
@@ -1936,24 +1932,24 @@ impl SetNot for RunContainer {
         result.into_efficient_container()
     }
 
-    fn inplace_not(mut self, range: Range<u16>) -> Container {
+    fn inplace_not(mut self, range: Range<u32>) -> Container {
         // Check to see if the result will fit in the currently allocated container
         // if not fallback to the allocating version
         if self.runs.capacity() == self.runs.len() {
             let last_before_range = {
                 if range.start > 0 { 
-                    self.contains(range.start - 1) 
+                    self.contains((range.start - 1) as u16) 
                 }
                 else { 
                     false
                 }
             };
 
-            let first_in_range = self.contains(range.start);
+            let first_in_range = self.contains(range.start as u16);
 
             if last_before_range == first_in_range {
-                let last_in_range = self.contains(range.end - 1);
-                let first_after_range = self.contains(range.end);
+                let last_in_range = self.contains((range.end - 1) as u16);
+                let first_after_range = self.contains(range.end as u16);
 
                 // Contents won't fit in the current allocation
                 if last_in_range == first_after_range {
@@ -1964,7 +1960,7 @@ impl SetNot for RunContainer {
 
         // Perform the not in place with the current allocation
         let mut k = 0;
-        while k < self.num_runs() && self.runs[k].value < range.start {
+        while k < self.num_runs() && u32::from(self.runs[k].value) < range.start {
             k += 1;
         }
 
@@ -1974,7 +1970,7 @@ impl SetNot for RunContainer {
             buffered = self.runs[k];
         }
 
-        append_exclusive(&mut self.runs, range.start, range.end - range.start - 1);
+        append_exclusive(&mut self.runs, range.start as u16, (range.end - range.start - 1) as u16);
 
         while k < self.num_runs() {
             if k + 1 < self.num_runs() {
@@ -2160,13 +2156,14 @@ mod test {
 
     #[test]
     fn add_range() {
+        let range = 0..(1 << 16);
         let mut a = RunContainer::new();
-        a.add_range(0..20);
+        a.add_range(range.clone());
 
-        assert_eq!(a.cardinality(), 20);
+        assert_eq!(a.cardinality(), range.len());
 
-        for (found, expected) in a.iter().zip(0..20) {
-            assert_eq!(found, expected);
+        for (found, expected) in a.iter().zip(range) {
+            assert_eq!(found, expected as u16);
         }
     }
 
@@ -2230,7 +2227,7 @@ mod test {
     #[test]
     fn is_full() {
         let a = RunContainer::new()
-            .not(0..std::u16::MAX);
+            .not(0..(1 << 16));
 
         assert!(!a.is_empty());
         assert!(a.is_full());
@@ -2353,7 +2350,7 @@ mod test {
     #[test]
     fn run_not() {
         let a = make_container::<RunContainer>(&INPUT_A);
-        let not_a = a.not(0..std::u16::MAX);
+        let not_a = a.not(0..(1 << 16));
 
         assert_eq!(
             not_a.cardinality(), 

@@ -86,16 +86,16 @@ impl RoaringBitmap {
         let mut value = min;
         while value < max {
             let key = value >> 16;
-            let container_min = value & 0xFFFF;
-            let container_max = (max - (key << 16)).min(std::u16::MAX as u64);
+            let container_min = (value & 0xFFFF) as u32;
+            let container_max = ((max - (key << 16)).min(1 << 16)) as u32;
+            
+            println!("value: {:?}, min: {:?}, max: {:?}", value, container_min, container_max);
+            let container = Container::from_range(container_min..container_max);
 
-            println!("min: {:?}, max: {:?}", container_min, container_max);
-
-            let container = Container::from_range((container_min as u16)..(container_max as u16));
             bitmap.containers.push(container);
             bitmap.keys.push(key as u16);
 
-            value += container_max + 1;
+            value += container_max as u64;
         }
 
         bitmap
@@ -185,8 +185,8 @@ impl RoaringBitmap {
         let mut src: isize = prefix_len + common_len - 1; // isize as this could potentially be -1
         let mut dst: isize = (self.keys.len() as isize) - suffix_len - 1;
         for key in (min_key..max_key).rev() {
-            let container_min = if min_key == key { min as u16 } else { 0 };
-            let container_max = if max_key == key { max as u16 } else { 0 };
+            let container_min = if min_key == key { min } else { 0 };
+            let container_max = if max_key == key { max } else { 0 };
 
             if src >= 0 && self.keys[src as usize] == key {
                let container = &mut self.containers[src as usize];
@@ -260,8 +260,8 @@ impl RoaringBitmap {
         let mut dst = src;
 
         while src < self.keys.len() && self.keys[src] <= max_key {
-            let container_min = if min_key == self.keys[src] { min as u16 } else { 0 };
-            let container_max = if max_key == self.keys[src] { max as u16 } else { 0xFFFF };
+            let container_min = if min_key == self.keys[src] { min } else { 0 };
+            let container_max = if max_key == self.keys[src] { max } else { 0xFFFF };
 
             let has_elements = self.containers[src]
                 .remove_range(container_min..container_max);
@@ -340,8 +340,8 @@ impl RoaringBitmap {
         }
 
         // Do a ranged contains operation
-        let key_min = (min >> 16) as u16;
-        let key_max = (max >> 16) as u16;
+        let key_min = min >> 16;
+        let key_max = max >> 16;
         let key_span = (key_max - key_min) as usize;
 
         // Key range exceeds those stored in this bitmap, can't possibly contain the set
@@ -349,8 +349,8 @@ impl RoaringBitmap {
             return false;
         }
 
-        let ci_min = self.get_index(key_min);
-        let ci_max = self.get_index(key_max);
+        let ci_min = self.get_index(key_min as u16);
+        let ci_max = self.get_index(key_max as u16);
 
         // One or both containers don't exist in this bitmap
         if ci_min.is_none() || ci_max.is_none() {
@@ -365,23 +365,23 @@ impl RoaringBitmap {
             return false;
         }
 
-        let val_min = min as u16;
-        let val_max = max as u16;
         let container = &self.containers[ci_min];
+        let value_min = min & 0xFFFF;
+        let value_max = max >> 16;
 
         // Min and max are the same, do contains on the single container
         if key_min == key_max {
-            return container.contains_range(val_min..val_max);
+            return container.contains_range(value_min..value_max);
         }
 
         // Check if the min container contains [val_min-container_max]
-        if !container.contains_range(val_min..std::u16::MAX) {
+        if !container.contains_range(value_min..(1 << 16)) {
             return false;
         }
 
         // Check if the max container contains [container_min-val_max]
         let container = &self.containers[ci_max];
-        if !container.contains_range(0..val_max) {
+        if !container.contains_range(0..value_max) {
             return false;
         }
 
@@ -794,49 +794,49 @@ impl RoaringBitmap {
         let (min, max) = range.into_bound();
         let mut result = Self::new();
 
-        let mut start_high = (min >> 16) as u16;
-        let start_low = min as u16;
+        let mut start_high = min >> 16;
+        let start_low = min & 0xFFFF;
 
-        let mut end_high = (max >> 16) as u16;
-        let end_low = max as u16;
+        let mut end_high = max >> 16;
+        let end_low = max & 0xFFFF;
 
         // Append all preceding elements that are not to be flipped
-        let end = array_ops::advance_until(&self.keys, 0, start_high);
+        let end = array_ops::advance_until(&self.keys, 0, start_high as u16);
         result.containers.extend_from_slice(&self.containers[0..end]);
         result.keys.extend_from_slice(&self.keys[0..end]);
 
         // Range occupies the same container, just flip that
         if start_high == end_high {
-            result.append_flipped(self, start_high, start_low..end_low);
+            result.append_flipped(self, start_high as u16, start_low..end_low);
         }
         // Else flip a cross container range
         else {
             // Handle a partial start container
             if start_low > 0 {
-                result.append_flipped(self, start_high, start_low..std::u16::MAX);
+                result.append_flipped(self, start_high as u16, start_low..(1 << 16));
 
                 start_high += 1;
             }
 
-            if end_low != std::u16::MAX {
+            if end_low != (1 << 16) {
                 end_high -= 1;
             }
 
             // Handle all containers in the middle of the range skipping the last container
             for bound in start_high..end_high {
-                result.append_flipped(self, bound, 0..std::u16::MAX);
+                result.append_flipped(self, bound as u16, 0..(1 << 16));
             }
 
             // Handle a partial final container
-            if end_low != std::u16::MAX {
+            if end_low != (1 << 16) {
                 end_high += 1;
 
-                result.append_flipped(self, end_high, 0..end_low);
+                result.append_flipped(self, end_high as u16, 0..end_low);
             }
         }
 
         // Append any remaining containers
-        if let Some(mut i_last) = self.get_index(end_high) {
+        if let Some(mut i_last) = self.get_index(end_high as u16) {
             i_last += 1; // Increment to get the next container after the last flipped one
 
             if i_last < self.containers.len() {
@@ -850,7 +850,7 @@ impl RoaringBitmap {
 
     /// Insert the negation of the container within `range` with the given key.
     /// Creates a new full container if no container is found
-    fn append_flipped(&mut self, other: &Self, key: u16, range: Range<u16>) {
+    fn append_flipped(&mut self, other: &Self, key: u16, range: Range<u32>) {
         if let Some(i) = other.get_index(key) {
             let unflipped = &other.containers[i];
             let flipped = unflipped.not(range);
@@ -1105,8 +1105,8 @@ impl RoaringBitmap {
         let (min, max) = range.into_bound();
         let high_start = (min >> 16) as u16;
         let mut high_end = (max >> 16) as u16;
-        let low_start = min as u16;
-        let low_end = max as u16;
+        let low_start = min & 0xFFFF;
+        let low_end = max & 0xFFFF;
 
         // Keys are the same, just do it in place
         if high_start == high_end {
@@ -1118,22 +1118,22 @@ impl RoaringBitmap {
             // First container is a partial one, flip in place
             if low_start > 0 {
                 if let Some(i) = self.get_index(high_start) {
-                    self.containers[i].not(low_start..std::u16::MAX);
+                    self.containers[i].not(low_start..(1 << 16));
                 }
             }
 
-            if low_end != std::u16::MAX {
+            if low_end != (1 << 16) {
                 high_end -= 1;
             }
 
             for bound in high_start..high_end {
                 if let Some(i) = self.get_index(bound) {
-                    self.containers[i].not(0..std::u16::MAX);
+                    self.containers[i].not(0..(1 << 16));
                 }
             }
 
             // End is a partial container, flip in place
-            if low_end != std::u16::MAX {
+            if low_end != (1 << 16) {
                 high_end += 1;
 
                 if let Some(i) = self.get_index(high_end) {
@@ -1697,7 +1697,7 @@ mod test {
 
     #[test]
     fn from_range() {
-        let bitmap = RoaringBitmap::from_range(0..(65535 * 2)/*std::u32::MAX*/);
+        let bitmap = RoaringBitmap::from_range(0..std::u32::MAX);
 
         assert_eq!(bitmap.cardinality(), std::u32::MAX as usize);
     }
