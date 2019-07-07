@@ -6,3 +6,6 @@ edition = "2018"
 
 [dependencies]
 tinybit = { git = "https://github.com/techgeek1/tinybit" }
+
+[dev-dependencies]
+rand = "0.7.0"

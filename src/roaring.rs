@@ -73,6 +73,8 @@ impl RoaringBitmap {
     /// Create a new roaring bitmap with the specified range and step
     pub fn from_range<R: RangeBounds<u32>>(range: R) -> Self {
         let (min, max) = range.into_bound();
+        let min = u64::from(min);
+        let max = u64::from(max);
 
         // No elements, just return an empty bitmap
         if max - min == 0 {
@@ -84,15 +86,16 @@ impl RoaringBitmap {
         let mut value = min;
         while value < max {
             let key = value >> 16;
-            let container_min = value as u16;
-            let container_max = (max - (key << 16)).min(1 << 16) as u16;
+            let container_min = value & 0xFFFF;
+            let container_max = (max - (key << 16)).min(std::u16::MAX as u64);
 
-            if let Some(container) = Container::from_range(container_min..container_max) {
-                bitmap.containers.push(container);
-                bitmap.keys.push(key as u16);
-            }
+            println!("min: {:?}, max: {:?}", container_min, container_max);
 
-            value += u32::from(container_max - container_min);
+            let container = Container::from_range((container_min as u16)..(container_max as u16));
+            bitmap.containers.push(container);
+            bitmap.keys.push(key as u16);
+
+            value += container_max + 1;
         }
 
         bitmap
@@ -191,7 +194,8 @@ impl RoaringBitmap {
 
                src -= 1;
             }
-            else if let Some(container) = Container::from_range(container_min..container_max) {
+            else {
+                let container = Container::from_range(container_min..container_max);
                 self.containers.insert(dst as usize, container);
                 self.keys.insert(dst as usize, key);
             }
@@ -856,7 +860,8 @@ impl RoaringBitmap {
                 self.keys.push(key);
             }
         }
-        else if let Some(c) = Container::from_range(range) {
+        else {
+            let c = Container::from_range(range);
             self.containers.push(c);
             self.keys.push(key);
         }
@@ -1524,35 +1529,207 @@ impl<'a> Iterator for Iter<'a> {
 mod test {
     use crate::RoaringBitmap;
 
-    enum BitmapType {
-        Input0,
-        Input1,
-        ResultOr,
-        ResultAnd,
-        ResultAndNot,
-        ResultXor,
-        Subset0,
-        Subset1,
-        SubsetOf,
+    use rand::prelude::*;
+
+    enum BitmapResult {
+        Or,
+        And,
+        AndNot,
+        Xor
     }
 
-    fn generate_bitmap() {
+    /// Generate a uniformly distributed sorted list of random values
+    fn generate_input(block_size: usize, values_per_block: usize) -> Vec<u32> {
+        assert!(block_size > 2);
+        assert!(values_per_block < block_size / 2);
 
+        let num_values = ((std::u32::MAX as usize) / block_size) * values_per_block;
+        let mut result = Vec::with_capacity(num_values);
+
+        let mut rng = rand::thread_rng();
+        let mut min = 0_u64;
+        let mut max = block_size as u64;
+        let mut block: Vec<u32> = Vec::with_capacity(values_per_block);
+        while max < (std::u32::MAX as u64) {
+            // Generate the block
+            block.clear();
+
+            while block.len() < values_per_block {
+                block.push(rng.gen_range(min as u32, max as u32));
+            }
+
+            block.dedup();
+            block.sort();
+            result.append(&mut block);
+
+            // Increment
+            min = max;
+            max += block_size as u64;
+        }
+
+        result
+    }
+
+    /// Compute the result of an operation on two input sets using a known correct algorithm
+    /// 
+    /// # Remarks
+    /// Assumes the inputs are sorted
+    fn compute_result(a: &[u32], b: &[u32], result: BitmapResult) -> Vec<u32> {
+        match result {
+            BitmapResult::Or => {
+                // Compute A + B - Duplicates and maintain sorting
+                let mut result = Vec::with_capacity(a.len() + b.len());
+                result.extend_from_slice(a);
+                result.extend_from_slice(b);
+                result.dedup();
+                result.sort();
+
+                result
+            },
+            BitmapResult::And => {
+                let mut result = Vec::with_capacity(a.len().max(b.len()));
+                
+                let mut i0 = 0;
+                let mut i1 = 0;
+                while i0 < a.len() && i1 < b.len() {
+                    // Element only in A
+                    if a[i0] < b[i1] {
+                        i0 += 1;
+                    }
+                    // Element only in B
+                    else if b[i1] < a[i0] {
+                        i1 += 1;
+                    }
+                    // Element shared
+                    else {
+                        result.push(a[i0]);
+                        i0 += 1;
+                        i1 += 1;
+                    }
+                }
+
+                result
+            },
+            BitmapResult::AndNot => {
+                let mut result = Vec::with_capacity(a.len());
+
+                let mut i0 = 0;
+                let mut i1 = 0;
+                while i0 < a.len() && i1 < b.len() {
+                    // Element only in A
+                    if a[i0] < b[i1] {
+                        result.push(a[i0]);
+                        i0 += 1;
+                    }
+                    // Element only in B
+                    else if b[i1] < a[i0] {
+                        i1 += 1;
+                    }
+                    // Element shared
+                    else {
+                        i0 += 1;
+                        i1 += 1;
+                    }
+                }
+
+                if i0 < a.len() {
+                    result.extend_from_slice(&a[i0..]);
+                }
+
+                result
+            },
+            BitmapResult::Xor => {
+                let mut result = Vec::with_capacity(a.len() + b.len());
+
+                let mut i0 = 0;
+                let mut i1 = 0;
+                while i0 < a.len() && i1 < b.len() {
+                    // Element only in A
+                    if a[i0] < b[i1] {
+                        result.push(a[i0]);
+                        i0 += 1;
+                    }
+                    // Element only in B
+                    else if b[i1] < a[i0] {
+                        result.push(a[i1]);
+                        i1 += 1;
+                    }
+                    // Element shared
+                    else {
+                        i0 += 1;
+                        i1 += 1;
+                    }
+                }
+
+                if i0 < a.len() {
+                    result.extend_from_slice(&a[i0..]);
+                }
+
+                if i1 < b.len() {
+                    result.extend_from_slice(&b[i1..])
+                }
+
+                result
+            }
+        }
+    }
+
+    fn test_set_op<F>(res: BitmapResult, f: F)
+        where F: Fn(RoaringBitmap, RoaringBitmap) -> RoaringBitmap
+    {
+        let input_a = generate_input(1_000_000, 1000);
+        let input_b = generate_input(1_000_000, 1000);
+        let input_res = compute_result(&input_a, &input_b, res);
+
+        let bitmap_a = RoaringBitmap::from_slice(&input_a);
+        let bitmap_b = RoaringBitmap::from_slice(&input_b);
+        let bitmap_res = (f)(bitmap_a, bitmap_b);
+
+        assert_eq!(bitmap_res.len(), input_res.len());
+        
+        let iter = bitmap_res.iter()
+            .zip(input_res.iter());
+
+        for (found, expected) in iter {
+            assert_eq!(found, *expected);
+        }
     }
 
     #[test]
     fn from_range() {
-        unimplemented!()
+        let bitmap = RoaringBitmap::from_range(0..(65535 * 2)/*std::u32::MAX*/);
+
+        assert_eq!(bitmap.cardinality(), std::u32::MAX as usize);
     }
 
     #[test]
     fn from_slice() {
-        unimplemented!()
+        let input = generate_input(50000, 8);
+        let bitmap = RoaringBitmap::from_slice(&input);
+
+        assert_eq!(bitmap.len(), input.len());
+
+        for (found, expected) in bitmap.iter().zip(input.iter()) {
+            assert_eq!(found, *expected);
+        }
     }
 
     #[test]
     fn copy_from() {
-        unimplemented!()
+        let input = generate_input(50000, 8);
+        let bitmap_a = RoaringBitmap::from_slice(&input);
+
+        let mut bitmap_b = RoaringBitmap::new();
+        bitmap_b.copy_from(&bitmap_a);
+
+        assert_eq!(bitmap_a.len(), bitmap_b.len());
+
+        let iter = bitmap_a.iter()
+            .zip(bitmap_b.iter());
+
+        for (a, b) in iter {
+            assert_eq!(a, b);
+        }
     }
 
     #[test]
@@ -1576,7 +1753,15 @@ mod test {
 
     #[test]
     fn add_slice() {
-        unimplemented!()
+        let input = generate_input(50000, 8);
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_slice(&input);
+
+        assert_eq!(bitmap.len(), input.len());
+
+        for (found, expected) in bitmap.iter().zip(input.iter()) {
+            assert_eq!(found, *expected);
+        }
     }
 
     #[test]
@@ -1651,22 +1836,22 @@ mod test {
 
     #[test]
     fn or() {
-        unimplemented!()
+        test_set_op(BitmapResult::Or, |a, b| a.or(&b));
     }
 
     #[test]
     fn and() {
-        unimplemented!()
+        test_set_op(BitmapResult::And, |a, b| a.and(&b));
     }
 
     #[test]
     fn and_not() {
-        unimplemented!()
+        test_set_op(BitmapResult::AndNot, |a, b| a.and_not(&b));
     }
 
     #[test]
     fn xor() {
-        unimplemented!()
+        test_set_op(BitmapResult::Xor, |a, b| a.xor(&b));
     }
 
     #[test]
@@ -1676,22 +1861,22 @@ mod test {
 
     #[test]
     fn inplace_or() {
-        unimplemented!()
+        test_set_op(BitmapResult::Or, |mut a, b| { a.inplace_or(&b); a });
     }
 
     #[test]
     fn inplace_and() {
-        unimplemented!()
+        test_set_op(BitmapResult::And, |mut a, b| { a.inplace_and(&b); a });
     }
 
     #[test]
     fn inplace_and_not() {
-        unimplemented!()
+        test_set_op(BitmapResult::AndNot, |mut a, b| { a.inplace_and_not(&b); a });
     }
 
     #[test]
     fn inplace_xor() {
-        unimplemented!()
+        test_set_op(BitmapResult::Xor, |mut a, b| { a.inplace_xor(&b); a });
     }
 
     #[test]
