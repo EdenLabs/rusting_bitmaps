@@ -166,38 +166,48 @@ impl RoaringBitmap {
         let (min, max) = range.into_bound();
 
         // Determine keys
-        let min_key = (min >> 16) as u16;
-        let max_key = ((max - 1) >> 16) as u16;
-        let span = (max_key - min_key) as isize;
+        let min_key = min >> 16;
+        let max_key = max >> 16;
+        let span = (max_key - min_key + 1) as isize;
         
         // Determine lengths
-        let prefix_len = array_ops::count_less(&self.keys, min_key) as isize;
-        let suffix_len = array_ops::count_greater(&self.keys, max_key) as isize;
+        let prefix_len = array_ops::count_less(&self.keys, min_key as u16) as isize;
+        let suffix_len = array_ops::count_greater(&self.keys, max_key as u16) as isize;
         let common_len = (self.keys.len() as isize) - prefix_len - suffix_len;
 
         // Reserve extra space for the new containers
+        let mut len = self.keys.len();
         if span > common_len {
             let required = (span - common_len) as usize;
             self.containers.reserve(required);
             self.keys.reserve(required);
+
+            len += required;
         }
 
         let mut src: isize = prefix_len + common_len - 1; // isize as this could potentially be -1
-        let mut dst: isize = (self.keys.len() as isize) - suffix_len - 1;
-        for key in (min_key..max_key).rev() {
-            let container_min = if min_key == key { min } else { 0 };
-            let container_max = if max_key == key { max } else { 0 };
+        let mut dst: isize = (len as isize) - suffix_len - 1;
+        for key in (min_key..=max_key).rev() {
+            let container_min = if min_key == key { min & 0xFFFF } else { 0 };
+            let container_max = if max_key == key { max & 0xFFFF } else { 0xFFFF };
 
-            if src >= 0 && self.keys[src as usize] == key {
+            if src >= 0 && self.keys[src as usize] == key as u16 {
                let container = &mut self.containers[src as usize];
-               container.add_range(container_min..container_max);
+               container.add_range(container_min..(container_max + 1));
 
                src -= 1;
             }
             else {
-                let container = Container::from_range(container_min..container_max);
-                self.containers.insert(dst as usize, container);
-                self.keys.insert(dst as usize, key);
+                // TODO: Figure out a way to remove this branch
+                let container = Container::from_range(container_min..(container_max + 1));
+                if dst > self.keys.len() as isize {
+                    self.containers.push(container);
+                    self.keys.push(key as u16);
+                }
+                else {
+                    self.containers.insert(dst as usize, container);
+                    self.keys.insert(dst as usize, key as u16);
+                }
             }
 
             dst -= 1;
@@ -211,27 +221,24 @@ impl RoaringBitmap {
             return;
         }
 
-        unsafe {
-            let mut value = *slice.get_unchecked(0);
-            let mut prev = value;
-            let mut i = 1;
-            let mut c_index = self.add_fetch_container(value);
+        let mut value = slice[0];
+        let mut prev = value;
+        let mut i = 1;
+        let mut c_index = self.add_fetch_container(value);
 
-            while i < slice.len() {
-                value = *slice.get_unchecked(i);
-                // Check if the upper 16 bits match the previous value, if so the value goes
-                // into the same container and we can just append to that one
-                if (prev ^ value) >> 16 == 0 {
-                    self.containers.get_unchecked_mut(c_index)
-                        .add(value as u16);
-                }
-                else {
-                    c_index = self.add_fetch_container(value);
-                }
-
-                prev = value;
-                i += 1;
+        while i < slice.len() {
+            value = slice[i];
+            // Check if the upper 16 bits match the previous value, if so the value goes
+            // into the same container and we can just append to that one
+            if (prev ^ value) >> 16 == 0 {
+                self.containers[c_index].add(value as u16);
             }
+            else {
+                c_index = self.add_fetch_container(value);
+            }
+
+            prev = value;
+            i += 1;
         }
     }
     
@@ -1564,7 +1571,7 @@ mod test {
 
             // Increment
             min = max;
-            max += block_size as u64;
+            max += (block_size + 1) as u64;
         }
 
         result
@@ -1748,12 +1755,12 @@ mod test {
         let mut bitmap = RoaringBitmap::new();
         bitmap.add_range(0..std::u32::MAX);
 
-        assert_eq!(bitmap.cardinality(), std::u32::MAX as usize);
+        assert_eq!(bitmap.cardinality(), (std::u32::MAX as usize) + 1);
     }
 
     #[test]
     fn add_slice() {
-        let input = generate_input(50000, 8);
+        let input = generate_input(50_000, 8);
         let mut bitmap = RoaringBitmap::new();
         bitmap.add_slice(&input);
 

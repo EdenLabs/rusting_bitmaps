@@ -72,6 +72,10 @@ pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 /// # Remarks
 /// Assumes that the array is sorted and all elements are unique
 pub fn count_less(slice: &[u16], key: u16) -> usize {
+    if slice.len() == 0 {
+        return 0;
+    }
+
     match slice.binary_search(&key) {
         Ok(index) => index,
         Err(index) => index + 1
@@ -83,9 +87,13 @@ pub fn count_less(slice: &[u16], key: u16) -> usize {
 /// # Remarks
 /// Assumes that the array is sorted and all elements are unique
 pub fn count_greater(slice: &[u16], key: u16) -> usize {
+    if slice.len() == 0 {
+        return 0;
+    }
+
     match slice.binary_search(&key) {
-        Ok(index) => slice.len() - index,
-        Err(index) => slice.len() - (index + 1)
+        Ok(index) => slice.len() - (index + 1),
+        Err(index) => slice.len() - index.saturating_sub(1)
     }
 }
 
