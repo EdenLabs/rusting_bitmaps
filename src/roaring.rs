@@ -2,6 +2,7 @@
 
 use std::io::{self, Read, Write, Seek, SeekFrom};
 use std::ops::{RangeBounds, Range};
+use std::fmt;
 
 use tinybit::Endian;
 
@@ -189,17 +190,17 @@ impl RoaringBitmap {
         let mut dst: isize = (len as isize) - suffix_len - 1;
         for key in (min_key..=max_key).rev() {
             let container_min = if min_key == key { min & 0xFFFF } else { 0 };
-            let container_max = if max_key == key { max & 0xFFFF } else { 0xFFFF };
+            let container_max = if max_key == key { max & 0xFFFF } else { (1 << 16) };
 
             if src >= 0 && self.keys[src as usize] == key as u16 {
                let container = &mut self.containers[src as usize];
-               container.add_range(container_min..(container_max + 1));
+               container.add_range(container_min..container_max);
 
                src -= 1;
             }
             else {
                 // TODO: Figure out a way to remove this branch
-                let container = Container::from_range(container_min..(container_max + 1));
+                let container = Container::from_range(container_min..container_max);
                 if dst > self.keys.len() as isize {
                     self.containers.push(container);
                     self.keys.push(key as u16);
@@ -249,7 +250,7 @@ impl RoaringBitmap {
         if let Some(i) = self.get_index(x_high) {
             self.containers[i].remove(value as u16);
             
-            if self.containers[i].cardinality() == 0 {
+            if self.containers[i].is_empty() {
                 self.containers.pop();
                 self.keys.pop();
             }
@@ -311,7 +312,7 @@ impl RoaringBitmap {
 
                     container.remove(*value as u16);
 
-                    if container.cardinality() == 0 {
+                    if container.is_empty() {
                         self.containers.pop();
                         c_index = None;
                     }
@@ -518,10 +519,6 @@ impl RoaringBitmap {
 
     /// Check if this bitmap is a subset of other
     pub fn subset_of(&self, other: &Self) -> bool {
-        // Convention used is as follows
-        // 0 = self
-        // 1 = other
-
         let len0 = self.containers.len();   // lengths
         let len1 = other.containers.len();
 
@@ -574,16 +571,16 @@ impl RoaringBitmap {
 
     /// Or this bitmap with `other` (union)
     pub fn or(&self, other: &Self) -> Self {
-                let len0 = self.cardinality();
-        let len1 = other.cardinality();
-
-        if len0 == 0 {
+        if self.is_empty() {
             return other.clone();
         }
 
-        if len1 == 0 {
+        if other.is_empty() {
             return self.clone();
         }
+
+        let len0 = self.keys.len();
+        let len1 = other.keys.len();
 
         let mut result = Self::with_capacity(len0 + len1);
         let mut i0 = 0;
@@ -639,8 +636,8 @@ impl RoaringBitmap {
     
     /// And this bitmap with `other` (intersect)
     pub fn and(&self, other: &Self) -> Self {
-        let len0 = self.cardinality();
-        let len1 = other.cardinality();
+        let len0 = self.keys.len();
+        let len1 = other.keys.len();
 
         let capacity = len0.min(len1);
         let mut result = Self::with_capacity(capacity);
@@ -678,17 +675,17 @@ impl RoaringBitmap {
 
     /// And not this bitmap with `other` (difference)
     pub fn and_not(&self, other: &Self) -> Self {
-        let len0 = self.cardinality();
-        let len1 = other.cardinality();
-        
-        if len0 == 0 {
+        if self.is_empty() {
             return RoaringBitmap::new();
         }
 
-        if len1 == 0 {
+        if other.is_empty() {
             return self.clone();
         }
 
+        let len0 = self.keys.len();
+        let len1 = other.keys.len();
+        
         let mut result = RoaringBitmap::with_capacity(len0);
         let mut i0 = 0;
         let mut i1 = 0;
@@ -733,16 +730,16 @@ impl RoaringBitmap {
 
     /// Xor this bitmap with `other` ()
     pub fn xor(&self, other: &Self) -> Self {
-        let len0 = self.cardinality();
-        let len1 = other.cardinality();
-
-        if len0 == 0 {
+        if self.is_empty() {
             return other.clone();
         }
 
-        if len1 == 0 {
+        if other.is_empty() {
             return self.clone();
         }
+
+        let len0 = self.keys.len();
+        let len1 = other.keys.len();
 
         let mut result = Self::with_capacity(len0 + len1);
         let mut i0 = 0;
@@ -862,7 +859,7 @@ impl RoaringBitmap {
             let unflipped = &other.containers[i];
             let flipped = unflipped.not(range);
 
-            if flipped.cardinality() > 0 {
+            if !flipped.is_empty() {
                 self.containers.push(flipped);
                 self.keys.push(key);
             }
@@ -878,19 +875,19 @@ impl RoaringBitmap {
     /// 
     /// [`or`]: RoaringBitmap::or
     pub fn inplace_or(&mut self, other: &Self) {
-        let len0 = self.cardinality();
-        let len1 = other.cardinality();
-
         // Other is the empty set, self is unchanged
-        if len1 == 0 {
+        if other.is_empty() {
             return;
         }
 
         // Self is the empty set, copy all of other
-        if len0 == 0 {
+        if self.is_empty() {
             self.copy_from(other);
             return;
         }
+
+        let len0 = self.keys.len();
+        let len1 = other.keys.len();
 
         // Handle shared containers in place
         let mut i0 = 0;
@@ -934,8 +931,8 @@ impl RoaringBitmap {
     /// 
     /// [`and`]: RoaringBitmap::and
     pub fn inplace_and(&mut self, other: &Self) {
-        let mut len0 = self.cardinality();
-        let len1 = other.cardinality();
+        let mut len0 = self.keys.len();
+        let len1 = other.keys.len();
         
         let mut i0 = 0;
         let mut i1 = 0;
@@ -991,13 +988,13 @@ impl RoaringBitmap {
     /// 
     /// [`and_not`]: RoaringBitmap::and_not
     pub fn inplace_and_not(&mut self, other: &Self) {
-        let mut len0 = self.cardinality();
-        let len1 = other.cardinality();
-        
         // If either is the empty set then there are no chanegs to be made
-        if len0 == 0 || len1 == 0 {
+        if self.is_empty() || other.is_empty() {
             return;
         }
+        
+        let mut len0 = self.keys.len();
+        let len1 = other.keys.len();
         
         let mut i0 = 0;
         let mut i1 = 0;
@@ -1043,20 +1040,20 @@ impl RoaringBitmap {
     /// 
     /// [`xor`]: RoaringBitmap::xor
     pub fn inplace_xor(&mut self, other: &Self) {
-        let mut len0 = self.cardinality();
-        let len1 = other.cardinality();
-
         // No items in other, self is unchanged
-        if len1 == 0 {
+        if other.is_empty() {
             return;
         }
 
         // Self is empty, we contain everything in other
-        if len0 == 0 {
+        if self.is_empty() {
             self.clear();
             self.copy_from(other);
             return;
         }
+
+        let mut len0 = self.keys.len();
+        let len1 = other.keys.len();
 
         let mut i0 = 0;
         let mut i1 = 0;
@@ -1251,6 +1248,7 @@ impl RoaringBitmap {
 // Serialization
 
 /// An error that occured while deserializing a bitmap
+#[derive(Debug)]
 pub enum DeserializeError {
     /// An invalid cookie was detected. This is likely not a bitmap. Contains the found value
     InvalidCookie(u32),
@@ -1260,6 +1258,16 @@ pub enum DeserializeError {
 
     /// An IO error occured during deserialization, Contains the underlying error
     IoError(io::Error)
+}
+
+impl fmt::Display for DeserializeError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            DeserializeError::InvalidCookie(cookie) => write!(f, "Invalid cookie: {}", cookie),
+            DeserializeError::InvalidContainerCount(count) => write!(f, "Invalid container count: {}", count),
+            DeserializeError::IoError(err) => write!(f, "{}", err)
+        }
+    }
 }
 
 impl RoaringBitmap {
@@ -1277,7 +1285,7 @@ impl RoaringBitmap {
             count += c.serialized_size();
         }
         
-        count + 1
+        count
     }
     
     /// Serialize the bitmap to a stream. The serialized bitmap is little endian encoded.
@@ -1286,7 +1294,7 @@ impl RoaringBitmap {
     /// The number of bytes written to the buffer
     #[cfg(target_endian = "little")]
     pub fn serialize<W: Write>(&self, buf: &mut W) -> io::Result<usize> {
-        let mut header_offset;
+        let mut start_offset;
         let mut bytes_written = 0;
 
         // Write the header
@@ -1308,10 +1316,10 @@ impl RoaringBitmap {
             bytes_written += buf.write(&bitmap)?;
 
             if (len as u32) < Self::NO_OFFSET_THRESHOLD {
-                header_offset = 8 * len + s;
+                start_offset = 4 + 4 * len + s;
             }
             else {
-                header_offset = 12 * len + s;
+                start_offset = 4 + 8 * len + s;
             }
         }
         else {
@@ -1319,7 +1327,7 @@ impl RoaringBitmap {
             bytes_written += (self.containers.len() as u32).write_le(buf)?;
 
             let len = self.containers.len();
-            header_offset = 12 * len + 4 * len;
+            start_offset = 4 + 4 + 4 * len + 4 * len;
         }
 
         let pass = self.keys.iter()
@@ -1328,14 +1336,14 @@ impl RoaringBitmap {
         // Write the keys and cardinality
         for (key, c) in pass {
             bytes_written += key.write_le(buf)?;
-            bytes_written += (c.cardinality() as u16).write_le(buf)?;
+            bytes_written += ((c.cardinality() - 1) as u16).write_le(buf)?;
         }
 
         // Write the container offsets if there's no run containers or we're above the no offset threshold
         if !has_run || (self.containers.len() as u32) >= Self::NO_OFFSET_THRESHOLD {
             for c in self.containers.iter() {
-                bytes_written += header_offset.write_le(buf)?;
-                header_offset += c.serialized_size();
+                bytes_written += (start_offset as u32).write_le(buf)?;
+                start_offset += c.serialized_size();
             }
         }
 
@@ -1387,7 +1395,12 @@ impl RoaringBitmap {
         let has_run = (cookie & 0xFFFF) == Self::SERIAL_COOKIE;
         if has_run {
             let s = ((size + 7) / 8) as usize;
-            bitmap.reserve_exact(s);
+
+            // Reserve the space for the data to be deserialized into
+            unsafe {
+                bitmap.reserve_exact(s);
+                bitmap.set_len(s);
+            }
 
             buf.read(&mut bitmap)
                 .map_err(DeserializeError::IoError)?;
@@ -1421,8 +1434,10 @@ impl RoaringBitmap {
 
         // Load in the containers
         for i in 0..(size as usize) {
-            let card = cards[i] as usize;
+            let card = (cards[i] as usize) + 1;
             let (is_bitset, is_run) = {
+                println!("has_run: {:?}, i: {:?}, index: {:?}", has_run, i, i / 8);
+
                 if has_run && bitmap[i / 8] & (1 << (i % 8)) != 0 {
                     (false, true)
                 }
@@ -1471,7 +1486,7 @@ impl RoaringBitmap {
             }
         }
         else {
-            16 * len
+            4 + 4 + 8 * len
         }
     }
 
@@ -1565,14 +1580,15 @@ mod test {
                 block.push(rng.gen_range(min as u32, max as u32));
             }
 
-            block.dedup();
-            block.sort();
             result.append(&mut block);
 
             // Increment
             min = max;
-            max += (block_size + 1) as u64;
+            max = min + (block_size + 1) as u64;
         }
+
+        result.sort();
+        result.dedup();
 
         result
     }
@@ -1588,8 +1604,8 @@ mod test {
                 let mut result = Vec::with_capacity(a.len() + b.len());
                 result.extend_from_slice(a);
                 result.extend_from_slice(b);
-                result.dedup();
                 result.sort();
+                result.dedup();
 
                 result
             },
@@ -1684,8 +1700,8 @@ mod test {
     fn test_set_op<F>(res: BitmapResult, f: F)
         where F: Fn(RoaringBitmap, RoaringBitmap) -> RoaringBitmap
     {
-        let input_a = generate_input(1_000_000, 1000);
-        let input_b = generate_input(1_000_000, 1000);
+        let input_a = generate_input(1_000_000, 20);
+        let input_b = generate_input(1_000_000, 20);
         let input_res = compute_result(&input_a, &input_b, res);
 
         let bitmap_a = RoaringBitmap::from_slice(&input_a);
@@ -1753,9 +1769,9 @@ mod test {
     #[test]
     fn add_range() {
         let mut bitmap = RoaringBitmap::new();
-        bitmap.add_range(0..std::u32::MAX);
+        bitmap.add_range(0..1_000_000);
 
-        assert_eq!(bitmap.cardinality(), (std::u32::MAX as usize) + 1);
+        assert_eq!(bitmap.cardinality(), 1_000_000);
     }
 
     #[test]
@@ -1773,32 +1789,87 @@ mod test {
 
     #[test]
     fn remove() {
-        unimplemented!()
+        let input = generate_input(50_000, 8);
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_slice(&input);
+        
+        // Remove the first 100 elements from the bitmap
+        for i in 0..100 {
+            bitmap.remove(input[i]);
+        }
+
+        assert_eq!(bitmap.len(), input.len() - 100);
+
+        for (found, expected) in bitmap.iter().zip(input[100..].iter()) {
+            assert_eq!(found, *expected);
+        }
     }
 
     #[test]
     fn remove_range() {
-        unimplemented!()
+        let input = generate_input(50_000, 8);
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_slice(&input);
+        
+        // Remove the first all elements up to 10 million
+        bitmap.remove_range(0..10_000_000);
+
+        // Figure out how many elements were removed
+        let num_removed = {
+            match input.binary_search(&10_000_000) {
+                Ok(index) => input.len() - index,
+                Err(index) => input.len() - index + 1
+            }
+        };
+
+        assert_eq!(bitmap.len(), input.len() - num_removed);
+
+        for (found, expected) in bitmap.iter().zip(input[num_removed..].iter()) {
+            assert_eq!(found, *expected);
+        }
     }
 
     #[test]
     fn remove_slice() {
-        unimplemented!()
+        let input = generate_input(50_000, 8);
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_slice(&input);
+        
+        // Remove the first 100 elements from the bitmap
+        bitmap.remove_slice(&input[..100]);
+
+        assert_eq!(bitmap.len(), input.len() - 100);
+
+        for (found, expected) in bitmap.iter().zip(input[100..].iter()) {
+            assert_eq!(found, *expected);
+        }
     }
 
     #[test]
     fn contains() {
-        unimplemented!()
+        let input = generate_input(50_000, 8);
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_slice(&input);
+
+        for value in &input[..100] {
+            assert!(bitmap.contains(*value));
+        }
     }
 
     #[test]
     fn contains_range() {
-        unimplemented!()
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_range(0..10_000);
+
+        assert!(bitmap.contains_range(1000..6000));
     }
 
     #[test]
     fn cardinality() {
-        unimplemented!()
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_range(0..5_000);
+
+        assert_eq!(bitmap.cardinality(), 5000);
     }
 
     #[test]
@@ -1813,17 +1884,35 @@ mod test {
 
     #[test]
     fn min() {
-        unimplemented!()
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_range(0..5_000);
+
+        let min = bitmap.min();
+        assert!(min.is_some());
+        assert_eq!(min.unwrap(), 0);
     }
 
     #[test]
     fn max() {
-        unimplemented!()
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_range(0..=5_000);
+
+        let max = bitmap.max();
+        assert!(max.is_some());
+        assert_eq!(max.unwrap(), 5_000);
     }
 
     #[test]
     fn subset_of() {
-        unimplemented!()
+        let input = generate_input(50_000, 8);
+        let mut a = RoaringBitmap::new();
+        let mut b = RoaringBitmap::new();
+
+        a.add_slice(&input);
+        b.add_slice(&input[0..(input.len() / 2)]);
+
+        assert!(b.subset_of(&a));
+        assert!(!a.subset_of(&b));
     }
 
     #[test]
@@ -1832,13 +1921,32 @@ mod test {
     }
 
     #[test]
-    fn iter() {
-        unimplemented!()
-    }
-
-    #[test]
     fn round_trip_serialize() {
-        unimplemented!()
+        let input = generate_input(50_000, 8);
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_slice(&input);
+
+        // Serialize and verify
+        let num_bytes = bitmap.serialized_size();
+        let mut output = Vec::<u8>::with_capacity(num_bytes);
+        let num_written = bitmap.serialize(&mut output);
+
+        assert!(num_written.is_ok());
+        assert_eq!(num_written.unwrap(), num_bytes);
+        
+        // Deserialize
+        let mut cursor = std::io::Cursor::new(&output);
+        let deserialized = RoaringBitmap::deserialize(&mut cursor);
+
+        assert!(deserialized.is_ok());
+        
+        let deserialized = deserialized.unwrap();
+        let iter = deserialized.iter()
+            .zip(bitmap.iter());
+
+        for (found, expected) in iter {
+            assert_eq!(found, expected);
+        }
     } 
 
     #[test]
@@ -1915,27 +2023,38 @@ mod test {
     fn external_data() {
         use std::fs::File;
         
-        const FILE_PATHS: [&'static str; 9] = [
-            "res/test_data/no_runs.bin",
-            "res/test_data/with_runs.bin",
-            "res/test_data/crash_prone_0.bin",
-            "res/test_data/crash_prone_1.bin",
-            "res/test_data/crash_prone_2.bin",
-            "res/test_data/crash_prone_3.bin",
-            "res/test_data/crash_prone_4.bin",
-            "res/test_data/crash_prone_5.bin",
-            "res/test_data/crash_prone_6.bin"
+        const FILE_PATHS: [(&'static str, bool); 9] = [
+            ("res/test_data/no_runs.bin", true),
+            ("res/test_data/with_runs.bin", true),
+            ("res/test_data/crash_prone_0.bin", false),
+            ("res/test_data/crash_prone_1.bin", false),
+            ("res/test_data/crash_prone_2.bin", false),
+            ("res/test_data/crash_prone_3.bin", false),
+            ("res/test_data/crash_prone_4.bin", false),
+            ("res/test_data/crash_prone_5.bin", false),
+            ("res/test_data/crash_prone_6.bin", false)
         ];
 
-        fn run_test(path: &'static str) {
-            let mut file = File::open(path).unwrap();
-            let bitmap = RoaringBitmap::deserialize(&mut file);
+        fn run_test(test: (&'static str, bool)) {
+            match File::open(test.0) {
+                Ok(mut file) => {
+                    let bitmap = RoaringBitmap::deserialize(&mut file);
 
-            assert!(bitmap.is_ok());
+                    if test.1 {
+                        assert!(bitmap.is_ok(), "Failed on '{}' with '{}'", test.0, bitmap.unwrap_err());
+                    }
+                    else {
+                        assert!(bitmap.is_err(), "Failed on '{}'", test.0);
+                    }
+                },
+                Err(error) => {
+                    assert!(false, "Failed on '{}' with '{}'", test.0, error);
+                }
+            }
         }
 
-        for path in FILE_PATHS.iter() {
-            run_test(path);
+        for test in FILE_PATHS.iter() {
+            run_test(*test);
         }
     }
 }

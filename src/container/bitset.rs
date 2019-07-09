@@ -510,7 +510,7 @@ impl BitsetContainer {
     pub fn serialize<W: Write>(&self, buf: &mut W) -> io::Result<usize> {
         unsafe {
             let ptr = self.bitset.as_ptr() as *const u8;
-            let num_bytes = mem::size_of::<u64>() * self.bitset.len();
+            let num_bytes = BITSET_SIZE_IN_WORDS * mem::size_of::<u64>();
             let byte_slice = slice::from_raw_parts(ptr, num_bytes);
 
             buf.write(byte_slice)
@@ -523,7 +523,7 @@ impl BitsetContainer {
         unsafe {
             let mut result = BitsetContainer::new();
             let ptr = result.as_mut_ptr() as *mut u8;
-            let num_bytes = mem::size_of::<u64>() * BITSET_SIZE_IN_WORDS;
+            let num_bytes = BITSET_SIZE_IN_WORDS * mem::size_of::<u64>();
             let bytes_slice = slice::from_raw_parts_mut(ptr, num_bytes);
 
             let num_read = buf.read(bytes_slice)?;

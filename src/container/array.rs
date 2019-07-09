@@ -290,7 +290,7 @@ impl ArrayContainer {
 impl ArrayContainer {
     /// Get the size in bytes of a container with `cardinality`
     pub fn serialized_size(cardinality: usize) -> usize {
-        cardinality * mem::size_of::<u16>() + 2
+        cardinality * mem::size_of::<u16>()
     }
 
     /// Serialize the array into `buf` according to the roaring format spec
@@ -310,6 +310,7 @@ impl ArrayContainer {
     pub fn deserialize<R: Read>(cardinality: usize, buf: &mut R) -> io::Result<Self> {
         unsafe {
             let mut result = ArrayContainer::with_capacity(cardinality);
+            
             let ptr = result.as_mut_ptr() as *mut u8;
             let num_bytes = mem::size_of::<u16>() * cardinality;
             let bytes_slice = slice::from_raw_parts_mut(ptr, num_bytes);

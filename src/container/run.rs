@@ -633,13 +633,12 @@ impl RunContainer {
     pub fn serialize<W: Write>(&self, buf: &mut W) -> io::Result<usize> {
         let mut num_written = 0;
 
-        let num_runs = self.num_runs();
-        let runs = (num_runs as u16).to_le_bytes();
-        num_written += buf.write(&runs)?;
+        num_written += (self.num_runs() as u16)
+            .write_le(buf)?;
 
         unsafe {
-            let num_bytes = num_runs * mem::size_of::<Rle16>();
             let ptr = self.as_ptr() as *const u8;
+            let num_bytes = self.num_runs() * mem::size_of::<Rle16>();
             let slice = slice::from_raw_parts(ptr, num_bytes);
             num_written += buf.write(slice)?;
         }
