@@ -475,7 +475,6 @@ impl RoaringBitmap {
             }
             else if x_high == *key {
                 cardinality += container.rank(x as u16);
-
                 break;
             }
             else {
@@ -1888,12 +1887,31 @@ mod test {
 
     #[test]
     fn select() {
-        unimplemented!()
+        let input = generate_input(1_000_000, 20);
+        let bitmap = RoaringBitmap::from_slice(&input);
+
+        let exp_value = input[100];
+        let rank = 100;
+        
+        // Oddly they're not self consistent. Rank and Select should be the exact inverse
+        // of each other but select is about 1 ahead mirroring their implementation
+        let value = bitmap.select(rank);
+
+        assert!(value.is_some());
+        assert_eq!(value.unwrap(), exp_value);
     }
 
     #[test]
     fn rank() {
-        unimplemented!()
+        let input = generate_input(1_000_000, 20);
+        let bitmap = RoaringBitmap::from_slice(&input);
+
+        let value = input[99];
+        let exp_rank = 100;
+
+        let rank = bitmap.rank(value);
+
+        assert_eq!(rank, exp_rank);
     }
 
     #[test]

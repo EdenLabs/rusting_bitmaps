@@ -252,7 +252,7 @@ impl Container {
             _ => false
         }
     }
-    
+
     /// Check whether the container is a `Container::Run`
     pub fn is_run(&self) -> bool {
         match self {

@@ -1077,11 +1077,11 @@ mod test {
         let mut array = ArrayContainer::with_capacity(range.len());
         array.add_range(range);
 
-        let mut start_rank = 5;
-        let selected = array.select(20, &mut start_rank);
+        let mut start_rank = 0;
+        let selected = array.select(10, &mut start_rank);
         
         assert!(selected.is_some());
-        assert_eq!(selected.unwrap(), 15);
+        assert_eq!(selected.unwrap(), 10);
     }
 
     #[test]
