@@ -1718,6 +1718,20 @@ mod test {
         }
     }
 
+    fn test_set_card_op<F>(res: BitmapResult, f: F)
+        where F: Fn(RoaringBitmap, RoaringBitmap) -> usize
+    {
+        let input_a = generate_input(1_000_000, 20);
+        let input_b = generate_input(1_000_000, 20);
+        let input_res = compute_result(&input_a, &input_b, res);
+
+        let bitmap_a = RoaringBitmap::from_slice(&input_a);
+        let bitmap_b = RoaringBitmap::from_slice(&input_b);
+        let card = (f)(bitmap_a, bitmap_b);
+
+        assert_eq!(card, input_res.len());
+    }
+
     #[test]
     fn from_range() {
         let bitmap = RoaringBitmap::from_range(0..std::u32::MAX);
@@ -1971,7 +1985,11 @@ mod test {
 
     #[test]
     fn not() {
-        unimplemented!()
+        let input = generate_input(1_000_000, 20);
+        let bitmap = RoaringBitmap::from_slice(&input);
+        let not_bitmap = bitmap.not(..);
+
+        assert_eq!(not_bitmap.cardinality(), ((std::u32::MAX as usize) + 1) - bitmap.cardinality());
     }
 
     #[test]
@@ -1996,27 +2014,32 @@ mod test {
 
     #[test]
     fn inplace_not() {
-        unimplemented!()
+        let input = generate_input(1_000_000, 20);
+        let mut bitmap = RoaringBitmap::from_slice(&input);
+        let orig_card = bitmap.cardinality();
+        bitmap.inplace_not(..);
+
+        assert_eq!(bitmap.cardinality(), ((std::u32::MAX as usize) + 1) - orig_card);
     }
 
     #[test]
     fn or_cardinality() {
-        unimplemented!()
+        test_set_card_op(BitmapResult::Or, |a, b| a.or_cardinality(&b));
     }
 
     #[test]
     fn and_cardinality() {
-        unimplemented!()
+        test_set_card_op(BitmapResult::And, |a, b| a.and_cardinality(&b));
     }
 
     #[test]
     fn and_not_cardinality() {
-        unimplemented!()
+        test_set_card_op(BitmapResult::AndNot, |a, b| a.and_not_cardinality(&b));
     }
 
     #[test]
     fn xor_cardinality() {
-        unimplemented!()
+        test_set_card_op(BitmapResult::Xor, |a, b| a.xor_cardinality(&b));
     }
 
     #[test]
