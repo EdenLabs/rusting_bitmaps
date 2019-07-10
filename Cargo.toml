@@ -8,4 +8,5 @@ edition = "2018"
 tinybit = { git = "https://github.com/techgeek1/tinybit" }
 
 [dev-dependencies]
-rand = "0.7.0"
+rand = { version = "0.7.0", features = ["small_rng"] }
+num-traits = "0.2.8"

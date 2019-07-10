@@ -58,66 +58,58 @@ mod test {
         container
     }
 
-    fn run_test<F>(data: &[u16], f: F) 
+    fn run_test<F>(op: OpType, f: F) 
         where F: Fn(&[u64], &[u64], &mut [u64]) 
     {
-        let a = make_container(&INPUT_A);
-        let b = make_container(&INPUT_B);
-        let mut result = BitsetContainer::new();
+        let data_a = generate_data(0..1024, 1, 1);
+        let data_b = generate_data(0..1024, 1, 1);
+        let a = { let mut v = Vec::with_capacity(data_a.len()); v.extend_from_slice(&data_a); v };
+        let b = { let mut v = Vec::with_capacity(data_b.len()); v.extend_from_slice(&data_b); v };
+        let e = compute_result(&data_a, &data_b, op);
 
-        (f)(&a, &b, &mut result);
+        let mut result = vec![0; a.len()];
 
-        let len0 = result.cardinality();
-        let len1 = data.len();
+        unsafe {
+            result.reserve(a.len() + b.len());
+            (f)(&a, &b, &mut result);
+        }
+
+        let len0 = result.len();
+        let len1 = e.len();
         assert_eq!(
             len0, 
             len1, 
-            "\n\nUnequal cardinality. found {}, expected {}\n\n", 
+            "Unequal cardinality. found {}, expected {}", 
             len0, 
             len1
         );
 
         let pass = result.iter()
-            .zip(data.iter());
-        
-        let (failed, found, expected) = {
-            let mut out_found = 0;
-            let mut out_expected = 0;
+            .zip(e.iter());
 
-            let mut failed = false;
-            for (found, expected) in pass {
-                if found != *expected {
-                    failed = true;
-                    out_found = found;
-                    out_expected = *expected;
-                    break;
-                }
-            }
-
-            (failed, out_found, out_expected)
-        };
-
-        assert!(!failed, "Sets are not equivalent. Found {}, expected {}", found, expected);
+        for (found, expected) in pass {
+            assert_eq!(*found, *expected);
+        }
     }
 
     #[test]
     fn or() {
-        run_test(&RESULT_OR, super::or);
+        run_test(OpType::Or, super::or);
     }
 
     #[test]
     fn and() {
-        run_test(&RESULT_AND, super::and);
+        run_test(OpType::And, super::and);
     }
 
     #[test]
     fn and_not() {
-        run_test(&RESULT_AND_NOT, super::and_not);
+        run_test(OpType::AndNot, super::and_not);
     }
 
     #[test]
     fn xor() {
-        run_test(&RESULT_XOR, super::xor);
+        run_test(OpType::Xor, super::xor);
     }
 
 }

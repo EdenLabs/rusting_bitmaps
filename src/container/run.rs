@@ -2127,15 +2127,23 @@ mod test {
     use crate::container::*;
     use crate::test::*;
 
-    impl TestUtils for RunContainer {
-        fn create() -> Self {
-            Self::new()
+    impl TestShim<u16> for RunContainer {
+        fn from_data(data: &[u16]) -> Self {
+            let mut result = Self::new();
+
+            for value in data.iter() {
+                result.add(*value);
+            }
+
+            result
         }
 
-        fn fill(&mut self, data: &[u16]) {
-            for value in data.iter() {
-                self.add(*value);
-            }
+        fn iter<'a>(&'a self) -> Box<dyn Iterator<Item=u16> + 'a> {
+            Box::new(self.iter())
+        }
+
+        fn card(&self) -> usize {
+            self.cardinality()
         }
     }
 
@@ -2209,10 +2217,11 @@ mod test {
 
     #[test]
     fn cardinality() {
-        let a = make_container::<RunContainer>(&INPUT_A);
+        let data = generate_data(0..65535, 100, 10);
+        let a = RunContainer::from_data(&data);
         let card = a.cardinality();
 
-        assert_eq!(card, INPUT_A.len());
+        assert_eq!(card, data.len());
     }
 
     #[test]
@@ -2276,7 +2285,8 @@ mod test {
 
     #[test]
     fn round_trip_serialize() {
-        let a = make_container::<RunContainer>(&INPUT_A);
+        let data = generate_data(0..65535, 100, 10);
+        let a = RunContainer::from_data(&data);
         let num_bytes = RunContainer::serialized_size(a.num_runs());
         let mut buffer = Vec::<u8>::with_capacity(num_bytes);
         
@@ -2299,56 +2309,63 @@ mod test {
 
     #[test]
     fn run_run_or() {
-        run_test::<RunContainer, RunContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_OR,
+        op_test::<RunContainer, RunContainer, u16, _, Container>(
+            OpType::Or, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.or(&b)
         );
     }
 
     #[test]
     fn run_run_and() {
-        run_test::<RunContainer, RunContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_AND,
+        op_test::<RunContainer, RunContainer, u16, _, Container>(
+            OpType::And, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.and(&b)
         );
     }
 
     #[test]
     fn run_run_and_cardinality() {
-        let a = make_container::<RunContainer>(&INPUT_A);
-        let b = make_container::<RunContainer>(&INPUT_B);
-        let card = a.and_cardinality(&b);
-
-        assert_eq!(card, RESULT_AND.len());
+        op_card_test::<RunContainer, RunContainer, u16, _>(
+            OpType::And, 
+            0..65535, 
+            10, 
+            1, 
+            |a, b| a.and_cardinality(&b)
+        );
     }
 
     #[test]
     fn run_run_and_not() {
-        run_test::<RunContainer, RunContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_AND_NOT,
+        op_test::<RunContainer, RunContainer, u16, _, Container>(
+            OpType::AndNot, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.and_not(&b)
         );
     }
 
     #[test]
     fn run_run_xor() {
-        run_test::<RunContainer, RunContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_XOR,
+        op_test::<RunContainer, RunContainer, u16, _, Container>(
+            OpType::Xor, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.xor(&b)
         );
     }
 
     #[test]
     fn run_not() {
-        let a = make_container::<RunContainer>(&INPUT_A);
+        let data = generate_data(0..65535, 100, 10);
+        let a = RunContainer::from_data(&data);
         let not_a = a.not(0..(1 << 16));
 
         assert_eq!(
@@ -2364,246 +2381,258 @@ mod test {
 
     #[test]
     fn run_run_inplace_or() {
-        run_test::<RunContainer, RunContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_OR,
+        op_test::<RunContainer, RunContainer, u16, _, Container>(
+            OpType::Or, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.inplace_or(&b)
         );
     }
 
     #[test]
     fn run_run_inplace_and() {
-        run_test::<RunContainer, RunContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_AND,
-            |a, b| a.and(&b)
+        op_test::<RunContainer, RunContainer, u16, _, Container>(
+            OpType::And, 
+            0..65535, 
+            10, 
+            1, 
+            |a, b| a.inplace_and(&b)
         );
     }
 
     #[test]
     fn run_run_inplace_and_not() {
-        run_test::<RunContainer, RunContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_AND_NOT,
-            |a, b| a.and_not(&b)
+        op_test::<RunContainer, RunContainer, u16, _, Container>(
+            OpType::AndNot, 
+            0..65535, 
+            10, 
+            1, 
+            |a, b| a.inplace_and_not(&b)
         );
     }
 
     #[test]
     fn run_run_inplace_xor() {
-        run_test::<RunContainer, RunContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_XOR,
+        op_test::<RunContainer, RunContainer, u16, _, Container>(
+            OpType::Xor, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.xor(&b)
         );
     }
 
     #[test]
     fn run_run_subset_of() {
-        let a = make_container::<RunContainer>(&SUBSET_A);
-        let b = make_container::<RunContainer>(&SUBSET_B);
-        
-        assert!(a.subset_of(&b));
-        assert!(!b.subset_of(&a));
+        op_subset_test::<RunContainer, RunContainer, u16>(0..65535, 100, 10);
     }
 
     #[test]
     fn run_array_or() {
-        run_test::<RunContainer, ArrayContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_OR,
+        op_test::<RunContainer, ArrayContainer, u16, _, Container>(
+            OpType::Or, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.or(&b)
         );
     }
 
     #[test]
     fn run_array_and() {
-        run_test::<RunContainer, ArrayContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_AND,
+        op_test::<RunContainer, ArrayContainer, u16, _, Container>(
+            OpType::And, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.and(&b)
         );
     }
 
     #[test]
     fn run_array_and_cardinality() {
-        let a = make_container::<RunContainer>(&INPUT_A);
-        let b = make_container::<ArrayContainer>(&INPUT_B);
-        let card = a.and_cardinality(&b);
-
-        assert_eq!(card, RESULT_AND.len());
+        op_card_test::<RunContainer, ArrayContainer, u16, _>(
+            OpType::And, 
+            0..65535, 
+            10, 
+            1, 
+            |a, b| a.and_cardinality(&b)
+        );
     }
 
     #[test]
     fn run_array_and_not() {
-        run_test::<RunContainer, ArrayContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_AND_NOT,
+        op_test::<RunContainer, ArrayContainer, u16, _, Container>(
+            OpType::AndNot, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.and_not(&b)
         );
     }
 
     #[test]
     fn run_array_xor() {
-        run_test::<RunContainer, ArrayContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_XOR,
+        op_test::<RunContainer, ArrayContainer, u16, _, Container>(
+            OpType::Xor, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.xor(&b)
         );
     }
 
     #[test]
     fn run_array_inplace_or() {
-        run_test::<RunContainer, ArrayContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_OR,
+        op_test::<RunContainer, ArrayContainer, u16, _, Container>(
+            OpType::Or, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.inplace_or(&b)
         );
     }
 
     #[test]
     fn run_array_inplace_and() {
-        run_test::<RunContainer, ArrayContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_AND,
+        op_test::<RunContainer, ArrayContainer, u16, _, Container>(
+            OpType::And, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.inplace_and(&b)
         );
     }
 
     #[test]
     fn run_array_inplace_and_not() {
-        run_test::<RunContainer, ArrayContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_AND_NOT,
+        op_test::<RunContainer, ArrayContainer, u16, _, Container>(
+            OpType::AndNot, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.inplace_and_not(&b)
         );
     }
 
     #[test]
     fn run_array_inplace_xor() {
-        run_test::<RunContainer, ArrayContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_XOR,
+        op_test::<RunContainer, ArrayContainer, u16, _, Container>(
+            OpType::Xor, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.inplace_xor(&b)
         );
     }
 
     #[test]
     fn run_array_subset_of() {
-        let a = make_container::<RunContainer>(&SUBSET_A);
-        let b = make_container::<ArrayContainer>(&SUBSET_B);
-        
-        assert!(a.subset_of(&b));
-        assert!(!b.subset_of(&a));
+        op_subset_test::<RunContainer, ArrayContainer, u16>(0..65535, 100, 10);
     }
 
     #[test]
     fn run_bitset_or() {
-        run_test::<RunContainer, BitsetContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_OR,
+        op_test::<RunContainer, BitsetContainer, u16, _, Container>(
+            OpType::Or, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.or(&b)
         );
     }
 
     #[test]
     fn run_bitset_and() {
-        run_test::<RunContainer, BitsetContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_AND,
+        op_test::<RunContainer, BitsetContainer, u16, _, Container>(
+            OpType::And, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.and(&b)
         );
     }
 
     #[test]
     fn run_bitset_and_cardinality() {
-        let a = make_container::<RunContainer>(&INPUT_A);
-        let b = make_container::<BitsetContainer>(&INPUT_B);
-        let card = a.and_cardinality(&b);
-
-        assert_eq!(card, RESULT_AND.len());
+        op_card_test::<RunContainer, BitsetContainer, u16, _>(
+            OpType::And, 
+            0..65535, 
+            10, 
+            1, 
+            |a, b| a.and_cardinality(&b)
+        );
     }
 
     #[test]
     fn run_bitset_and_not() {
-        run_test::<RunContainer, BitsetContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_AND_NOT,
+        op_test::<RunContainer, BitsetContainer, u16, _, Container>(
+            OpType::AndNot, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.and_not(&b)
         );
     }
 
     #[test]
     fn run_bitset_xor() {
-        run_test::<RunContainer, BitsetContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_XOR,
+        op_test::<RunContainer, BitsetContainer, u16, _, Container>(
+            OpType::Xor, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.xor(&b)
         );
     }
 
     #[test]
     fn run_bitset_inplace_or() {
-        run_test::<RunContainer, BitsetContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_OR,
+        op_test::<RunContainer, BitsetContainer, u16, _, Container>(
+            OpType::Or, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.inplace_or(&b)
         );
     }
 
     #[test]
     fn run_bitset_inplace_and() {
-        run_test::<RunContainer, BitsetContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_AND,
+        op_test::<RunContainer, BitsetContainer, u16, _, Container>(
+            OpType::And, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.inplace_and(&b)
         );
     }
 
     #[test]
     fn run_bitset_inplace_and_not() {
-        run_test::<RunContainer, BitsetContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_AND_NOT,
+        op_test::<RunContainer, BitsetContainer, u16, _, Container>(
+            OpType::AndNot, 
+            0..65535, 
+            10, 
+            1, 
             |a, b| a.inplace_and_not(&b)
         );
     }
 
     #[test]
     fn run_bitset_inplace_xor() {
-        run_test::<RunContainer, BitsetContainer, _>(
-            &INPUT_A,
-            &INPUT_B,
-            &RESULT_XOR,
-            |a, b| a.xor(&b)
+        op_test::<RunContainer, BitsetContainer, u16, _, Container>(
+            OpType::Xor, 
+            0..65535, 
+            10, 
+            1, 
+            |a, b| a.inplace_xor(&b)
         );
     }
 
     #[test]
     fn run_bitset_subset_of() {
-        let a = make_container::<RunContainer>(&SUBSET_A);
-        let b = make_container::<BitsetContainer>(&SUBSET_B);
-        
-        assert!(a.subset_of(&b));
-        assert!(!b.subset_of(&a));
+        op_subset_test::<RunContainer, BitsetContainer, u16>(0..65535, 100, 10);
     }
 }

@@ -166,11 +166,15 @@ mod test {
         container
     }
 
-    fn run_test<F>(data: &[u16], f: F) 
+    fn run_test<F>(op: OpType, f: F) 
         where F: Fn(&[u16], &[u16], *mut u16) -> usize 
     {
-        let a = make_container(&INPUT_A);
-        let b = make_container(&INPUT_B);
+        let data_a = generate_data(0..65535, 100, 30);
+        let data_b = generate_data(0..65535, 100, 30);
+        let a = { let mut v = Vec::with_capacity(data_a.len()); v.extend_from_slice(&data_a); v };
+        let b = { let mut v = Vec::with_capacity(data_b.len()); v.extend_from_slice(&data_b); v };
+        let e = compute_result(&data_a, &data_b, op);
+
         let mut result = Vec::new();
 
         unsafe {
@@ -180,81 +184,64 @@ mod test {
         }
 
         let len0 = result.len();
-        let len1 = data.len();
+        let len1 = e.len();
         assert_eq!(
             len0, 
             len1, 
-            "\n\nUnequal cardinality. found {}, expected {}\nResult: {:#?}\nExpected: {:#?}\n\n", 
+            "Unequal cardinality. found {}, expected {}", 
             len0, 
-            len1,
-            &result,
-            data
+            len1
         );
 
         let pass = result.iter()
-            .zip(data.iter());
-        
-        let (failed, found, expected) = {
-            let mut out_found = 0;
-            let mut out_expected = 0;
+            .zip(e.iter());
 
-            let mut failed = false;
-            for (found, expected) in pass {
-                if found != expected {
-                    failed = true;
-                    out_found = *found;
-                    out_expected = *expected;
-                    break;
-                }
-            }
-
-            (failed, out_found, out_expected)
-        };
-
-        assert!(!failed, "Sets are not equivalent. Found {}, expected {}", found, expected);
+        for (found, expected) in pass {
+            assert_eq!(*found, *expected);
+        }
     }
 
     #[test]
     fn or_scalar() {
-        run_test(&RESULT_OR, |a, b, out| unsafe { scalar::or(a, b, out) } );
+        run_test(OpType::Or, |a, b, out| unsafe { scalar::or(a, b, out) } );
     }
 
     #[test]
     fn and_scalar() {
-        run_test(&RESULT_AND, |a, b, out| unsafe { scalar::and(a, b, out) } );
+        run_test(OpType::And, |a, b, out| unsafe { scalar::and(a, b, out) } );
     }
 
     #[test]
     fn and_not_scalar() {
-        run_test(&RESULT_AND_NOT, |a, b, out| unsafe { scalar::and_not(a, b, out) } );
+        run_test(OpType::AndNot, |a, b, out| unsafe { scalar::and_not(a, b, out) } );
     }
 
     #[test]
     fn xor_scalar() {
-        run_test(&RESULT_XOR, |a, b, out| unsafe { scalar::xor(a, b, out) } );
+        run_test(OpType::Xor, |a, b, out| unsafe { scalar::xor(a, b, out) } );
     }
 
     #[test]
     #[cfg(target_feature = "sse4.2")]
     fn or_vector() {
-        run_test(&RESULT_OR, |a, b, out| unsafe { vector::or(a, b, out) } );
+        run_test(OpType::Or, |a, b, out| unsafe { vector::or(a, b, out) } );
     }
 
     #[test]
     #[cfg(target_feature = "sse4.2")]
     fn and_vector() {
-        run_test(&RESULT_AND, |a, b, out| unsafe { vector::and(a, b, out) } );
+        run_test(OpType::And, |a, b, out| unsafe { vector::and(a, b, out) } );
     }
 
     #[test]
     #[cfg(target_feature = "sse4.2")]
     fn and_not_vector() {
-        run_test(&RESULT_AND_NOT, |a, b, out| unsafe { vector::and_not(a, b, out) } );
+        run_test(OpType::AndNot, |a, b, out| unsafe { vector::and_not(a, b, out) } );
     }
 
     #[test]
     #[cfg(target_feature = "sse4.2")]
     fn xor_vector() {
-        run_test(&RESULT_XOR, |a, b, out| unsafe { vector::xor(a, b, out) } );
+        run_test(OpType::Xor, |a, b, out| unsafe { vector::xor(a, b, out) } );
     }
 }

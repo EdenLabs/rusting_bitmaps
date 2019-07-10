@@ -1543,186 +1543,20 @@ impl<'a> Iterator for Iter<'a> {
 #[cfg(test)]
 mod test {
     use crate::RoaringBitmap;
+    use crate::test::*;
 
-    use rand::prelude::*;
-
-    enum BitmapResult {
-        Or,
-        And,
-        AndNot,
-        Xor
-    }
-
-    /// Generate a uniformly distributed sorted list of random values
-    fn generate_input(block_size: usize, values_per_block: usize) -> Vec<u32> {
-        assert!(block_size > 2);
-        assert!(values_per_block < block_size / 2);
-
-        let num_values = ((std::u32::MAX as usize) / block_size) * values_per_block;
-        let mut result = Vec::with_capacity(num_values);
-
-        let mut rng = rand::thread_rng();
-        let mut min = 0_u64;
-        let mut max = block_size as u64;
-        let mut block: Vec<u32> = Vec::with_capacity(values_per_block);
-        while max < (std::u32::MAX as u64) {
-            // Generate the block
-            block.clear();
-
-            while block.len() < values_per_block {
-                block.push(rng.gen_range(min as u32, max as u32));
-            }
-
-            result.append(&mut block);
-
-            // Increment
-            min = max;
-            max = min + (block_size + 1) as u64;
+    impl TestShim<u32> for RoaringBitmap {
+        fn from_data(data: &[u32]) -> Self {
+            Self::from_slice(data)
         }
 
-        result.sort();
-        result.dedup();
-
-        result
-    }
-
-    /// Compute the result of an operation on two input sets using a known correct algorithm
-    /// 
-    /// # Remarks
-    /// Assumes the inputs are sorted
-    fn compute_result(a: &[u32], b: &[u32], result: BitmapResult) -> Vec<u32> {
-        match result {
-            BitmapResult::Or => {
-                // Compute A + B - Duplicates and maintain sorting
-                let mut result = Vec::with_capacity(a.len() + b.len());
-                result.extend_from_slice(a);
-                result.extend_from_slice(b);
-                result.sort();
-                result.dedup();
-
-                result
-            },
-            BitmapResult::And => {
-                let mut result = Vec::with_capacity(a.len().max(b.len()));
-                
-                let mut i0 = 0;
-                let mut i1 = 0;
-                while i0 < a.len() && i1 < b.len() {
-                    // Element only in A
-                    if a[i0] < b[i1] {
-                        i0 += 1;
-                    }
-                    // Element only in B
-                    else if b[i1] < a[i0] {
-                        i1 += 1;
-                    }
-                    // Element shared
-                    else {
-                        result.push(a[i0]);
-                        i0 += 1;
-                        i1 += 1;
-                    }
-                }
-
-                result
-            },
-            BitmapResult::AndNot => {
-                let mut result = Vec::with_capacity(a.len());
-
-                let mut i0 = 0;
-                let mut i1 = 0;
-                while i0 < a.len() && i1 < b.len() {
-                    // Element only in A
-                    if a[i0] < b[i1] {
-                        result.push(a[i0]);
-                        i0 += 1;
-                    }
-                    // Element only in B
-                    else if b[i1] < a[i0] {
-                        i1 += 1;
-                    }
-                    // Element shared
-                    else {
-                        i0 += 1;
-                        i1 += 1;
-                    }
-                }
-
-                if i0 < a.len() {
-                    result.extend_from_slice(&a[i0..]);
-                }
-
-                result
-            },
-            BitmapResult::Xor => {
-                let mut result = Vec::with_capacity(a.len() + b.len());
-
-                let mut i0 = 0;
-                let mut i1 = 0;
-                while i0 < a.len() && i1 < b.len() {
-                    // Element only in A
-                    if a[i0] < b[i1] {
-                        result.push(a[i0]);
-                        i0 += 1;
-                    }
-                    // Element only in B
-                    else if b[i1] < a[i0] {
-                        result.push(a[i1]);
-                        i1 += 1;
-                    }
-                    // Element shared
-                    else {
-                        i0 += 1;
-                        i1 += 1;
-                    }
-                }
-
-                if i0 < a.len() {
-                    result.extend_from_slice(&a[i0..]);
-                }
-
-                if i1 < b.len() {
-                    result.extend_from_slice(&b[i1..])
-                }
-
-                result
-            }
+        fn iter<'a>(&'a self) -> Box<dyn Iterator<Item=u32> + 'a> {
+            Box::new(self.iter())
         }
-    }
 
-    fn test_set_op<F>(res: BitmapResult, f: F)
-        where F: Fn(RoaringBitmap, RoaringBitmap) -> RoaringBitmap
-    {
-        let input_a = generate_input(1_000_000, 20);
-        let input_b = generate_input(1_000_000, 20);
-        let input_res = compute_result(&input_a, &input_b, res);
-
-        let bitmap_a = RoaringBitmap::from_slice(&input_a);
-        let bitmap_b = RoaringBitmap::from_slice(&input_b);
-        let bitmap_res = (f)(bitmap_a, bitmap_b);
-
-        assert_eq!(bitmap_res.len(), input_res.len());
-        
-        let iter = bitmap_res.iter()
-            .zip(input_res.iter());
-
-        for (found, expected) in iter {
-            assert_eq!(found, *expected);
+        fn card(&self) -> usize {
+            self.cardinality()
         }
-    }
-
-    fn test_set_card_op<F>(res: BitmapResult, f: F)
-        where F: Fn(RoaringBitmap, RoaringBitmap) -> usize
-    {
-        let input_a = generate_input(1_000_000, 20);
-        let input_b = generate_input(1_000_000, 20);
-        let input_res = compute_result(&input_a, &input_b, res);
-
-        let bitmap_a = RoaringBitmap::from_slice(&input_a);
-        let bitmap_b = RoaringBitmap::from_slice(&input_b);
-        let card = (f)(bitmap_a, bitmap_b);
-
-        assert_eq!(card, input_res.len());
     }
 
     #[test]
@@ -1734,7 +1568,7 @@ mod test {
 
     #[test]
     fn from_slice() {
-        let input = generate_input(50000, 8);
+        let input = generate_data(0..20_000_000, 2000, 100);
         let bitmap = RoaringBitmap::from_slice(&input);
 
         assert_eq!(bitmap.len(), input.len());
@@ -1746,7 +1580,7 @@ mod test {
 
     #[test]
     fn copy_from() {
-        let input = generate_input(50000, 8);
+        let input = generate_data(0..20_000_000, 2000, 100);
         let bitmap_a = RoaringBitmap::from_slice(&input);
 
         let mut bitmap_b = RoaringBitmap::new();
@@ -1783,7 +1617,7 @@ mod test {
 
     #[test]
     fn add_slice() {
-        let input = generate_input(50_000, 8);
+        let input = generate_data(0..20_000_000, 2000, 100);
         let mut bitmap = RoaringBitmap::new();
         bitmap.add_slice(&input);
 
@@ -1796,7 +1630,7 @@ mod test {
 
     #[test]
     fn remove() {
-        let input = generate_input(50_000, 8);
+        let input = generate_data(0..20_000_000, 2000, 100);
         let mut bitmap = RoaringBitmap::new();
         bitmap.add_slice(&input);
         
@@ -1814,7 +1648,7 @@ mod test {
 
     #[test]
     fn remove_range() {
-        let input = generate_input(50_000, 8);
+        let input = generate_data(0..20_000_000, 2000, 100);
         let mut bitmap = RoaringBitmap::new();
         bitmap.add_slice(&input);
         
@@ -1838,7 +1672,7 @@ mod test {
 
     #[test]
     fn remove_slice() {
-        let input = generate_input(50_000, 8);
+        let input = generate_data(0..20_000_000, 2000, 100);
         let mut bitmap = RoaringBitmap::new();
         bitmap.add_slice(&input);
         
@@ -1854,7 +1688,7 @@ mod test {
 
     #[test]
     fn contains() {
-        let input = generate_input(50_000, 8);
+        let input = generate_data(0..20_000_000, 2000, 100);
         let mut bitmap = RoaringBitmap::new();
         bitmap.add_slice(&input);
 
@@ -1881,7 +1715,7 @@ mod test {
 
     #[test]
     fn select() {
-        let input = generate_input(1_000_000, 20);
+        let input = generate_data(0..20_000_000, 2000, 100);
         let bitmap = RoaringBitmap::from_slice(&input);
 
         let exp_value = input[100];
@@ -1897,7 +1731,7 @@ mod test {
 
     #[test]
     fn rank() {
-        let input = generate_input(1_000_000, 20);
+        let input = generate_data(0..20_000_000, 2000, 100);
         let bitmap = RoaringBitmap::from_slice(&input);
 
         let value = input[99];
@@ -1930,7 +1764,7 @@ mod test {
 
     #[test]
     fn subset_of() {
-        let input = generate_input(50_000, 8);
+        let input = generate_data(0..20_000_000, 2000, 100);
         let mut a = RoaringBitmap::new();
         let mut b = RoaringBitmap::new();
 
@@ -1948,7 +1782,7 @@ mod test {
 
     #[test]
     fn round_trip_serialize() {
-        let input = generate_input(50_000, 8);
+        let input = generate_data(0..20_000_000, 2000, 100);
         let mut bitmap = RoaringBitmap::new();
         bitmap.add_slice(&input);
 
@@ -1977,27 +1811,35 @@ mod test {
 
     #[test]
     fn or() {
-        test_set_op(BitmapResult::Or, |a, b| a.or(&b));
+        op_test::<RoaringBitmap, RoaringBitmap, u32, _, RoaringBitmap>(
+            OpType::Or, 0..20_000_000, 2000, 100, |a, b| a.or(&b)
+        );
     }
 
     #[test]
     fn and() {
-        test_set_op(BitmapResult::And, |a, b| a.and(&b));
+        op_test::<RoaringBitmap, RoaringBitmap, u32, _, RoaringBitmap>(
+            OpType::And, 0..20_000_000, 2000, 100, |a, b| a.and(&b)
+        );
     }
 
     #[test]
     fn and_not() {
-        test_set_op(BitmapResult::AndNot, |a, b| a.and_not(&b));
+        op_test::<RoaringBitmap, RoaringBitmap, u32, _, RoaringBitmap>(
+            OpType::AndNot, 0..20_000_000, 2000, 100, |a, b| a.and_not(&b)
+        );
     }
 
     #[test]
     fn xor() {
-        test_set_op(BitmapResult::Xor, |a, b| a.xor(&b));
+        op_test::<RoaringBitmap, RoaringBitmap, u32, _, RoaringBitmap>(
+            OpType::Xor, 0..20_000_000, 2000, 100, |a, b| a.xor(&b)
+        );
     }
 
     #[test]
     fn not() {
-        let input = generate_input(1_000_000, 20);
+        let input = generate_data(0..20_000_000, 2000, 100);
         let bitmap = RoaringBitmap::from_slice(&input);
         let not_bitmap = bitmap.not(..);
 
@@ -2006,27 +1848,35 @@ mod test {
 
     #[test]
     fn inplace_or() {
-        test_set_op(BitmapResult::Or, |mut a, b| { a.inplace_or(&b); a });
+        op_test::<RoaringBitmap, RoaringBitmap, u32, _, RoaringBitmap>(
+            OpType::Or, 0..20_000_000, 2000, 100, |mut a, b| { a.inplace_or(&b); a }
+        );
     }
 
     #[test]
     fn inplace_and() {
-        test_set_op(BitmapResult::And, |mut a, b| { a.inplace_and(&b); a });
+        op_test::<RoaringBitmap, RoaringBitmap, u32, _, RoaringBitmap>(
+            OpType::And, 0..20_000_000, 2000, 100, |mut a, b| { a.inplace_and(&b); a }
+        );
     }
 
     #[test]
     fn inplace_and_not() {
-        test_set_op(BitmapResult::AndNot, |mut a, b| { a.inplace_and_not(&b); a });
+        op_test::<RoaringBitmap, RoaringBitmap, u32, _, RoaringBitmap>(
+            OpType::AndNot, 0..20_000_000, 2000, 100, |mut a, b| { a.inplace_and_not(&b); a }
+        );
     }
 
     #[test]
     fn inplace_xor() {
-        test_set_op(BitmapResult::Xor, |mut a, b| { a.inplace_xor(&b); a });
+        op_test::<RoaringBitmap, RoaringBitmap, u32, _, RoaringBitmap>(
+            OpType::Xor, 0..20_000_000, 2000, 100, |mut a, b| { a.inplace_xor(&b); a }
+        );
     }
 
     #[test]
     fn inplace_not() {
-        let input = generate_input(1_000_000, 20);
+        let input = generate_data(0..20_000_000, 2000, 100);
         let mut bitmap = RoaringBitmap::from_slice(&input);
         let orig_card = bitmap.cardinality();
         bitmap.inplace_not(..);
@@ -2036,22 +1886,30 @@ mod test {
 
     #[test]
     fn or_cardinality() {
-        test_set_card_op(BitmapResult::Or, |a, b| a.or_cardinality(&b));
+        op_card_test::<RoaringBitmap, RoaringBitmap, u32, _>(
+            OpType::Or, 0..20_000_000, 2000, 100, |a, b| a.or_cardinality(&b)
+        );
     }
 
     #[test]
     fn and_cardinality() {
-        test_set_card_op(BitmapResult::And, |a, b| a.and_cardinality(&b));
+        op_card_test::<RoaringBitmap, RoaringBitmap, u32, _>(
+            OpType::And, 0..20_000_000, 2000, 100, |a, b| a.and_cardinality(&b)
+        );
     }
 
     #[test]
     fn and_not_cardinality() {
-        test_set_card_op(BitmapResult::AndNot, |a, b| a.and_not_cardinality(&b));
+        op_card_test::<RoaringBitmap, RoaringBitmap, u32, _>(
+            OpType::AndNot, 0..20_000_000, 2000, 100, |a, b| a.and_not_cardinality(&b)
+        );
     }
 
     #[test]
     fn xor_cardinality() {
-        test_set_card_op(BitmapResult::Xor, |a, b| a.xor_cardinality(&b));
+        op_card_test::<RoaringBitmap, RoaringBitmap, u32, _>(
+            OpType::Xor, 0..20_000_000, 2000, 100, |a, b| a.xor_cardinality(&b)
+        );
     }
 
     #[test]

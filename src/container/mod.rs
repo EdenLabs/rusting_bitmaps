@@ -27,14 +27,14 @@ use std::slice;
 pub const DEFAULT_MAX_SIZE: usize = 4096;
 
 /// The set union operation
-trait SetOr<T> {
+pub(crate) trait SetOr<T> {
     fn or(&self, other: &T) -> Container;
 
     fn inplace_or(self, other: &T) -> Container;
 }
 
 /// The set intersection operation
-trait SetAnd<T> {
+pub(crate) trait SetAnd<T> {
     fn and(&self, other: &T) -> Container;
 
     fn and_cardinality(&self, other: &T) -> usize;
@@ -43,26 +43,26 @@ trait SetAnd<T> {
 }
 
 /// The set difference operation
-trait SetAndNot<T> {
+pub(crate) trait SetAndNot<T> {
     fn and_not(&self, other: &T) -> Container;
 
     fn inplace_and_not(self, other: &T) -> Container;
 }
 
 /// The set symmetric difference operation
-trait SetXor<T> {
+pub(crate) trait SetXor<T> {
     fn xor(&self, other: &T) -> Container;
 
     fn inplace_xor(self, other: &T) -> Container;
 }
 
 /// The set subset operation
-trait Subset<T> {
+pub(crate) trait Subset<T> {
     fn subset_of(&self, other: &T) -> bool;
 }
 
 /// The inverse set operation
-trait SetNot {
+pub(crate) trait SetNot {
     fn not(&self, range: Range<u32>) -> Container;
 
     fn inplace_not(self, range: Range<u32>) -> Container;
@@ -223,6 +223,11 @@ pub enum Container {
 // TODO: Sort these to match `RoaringBitmap` because it's triggering me
 
 impl Container {
+    /// Create an empty container
+    pub fn new() -> Self {
+        Container::Array(ArrayContainer::new())
+    }
+
     /// Create a container with all values in the specified range
     pub fn from_range(range: Range<u32>) -> Self {
         debug_assert!(!range.is_empty());
@@ -592,4 +597,30 @@ fn is_valid_range(range: Range<u32>) -> bool {
     let valid_bounds = range.start <= (1 << 16) && range.end <= (1 << 16);
 
     valid_len && valid_bounds
+}
+
+#[cfg(test)]
+mod test {
+    use crate::test::*;
+    use super::*;
+
+    impl TestShim<u16> for Container {
+        fn from_data(data: &[u16]) -> Self {
+            let mut result = Self::new();
+
+            for value in data.iter() {
+                result.add(*value);
+            }
+
+            result
+        }
+
+        fn iter<'a>(&'a self) -> Box<dyn Iterator<Item=u16> + 'a> {
+            Box::new(self.iter())
+        }
+
+        fn card(&self) -> usize {
+            self.cardinality()
+        }
+    }
 }

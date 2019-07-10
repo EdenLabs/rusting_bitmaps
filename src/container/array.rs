@@ -976,8 +976,8 @@ mod test {
             result
         }
 
-        fn iter(&self) -> Box<dyn Iterator<Item=u16>> {
-            self.iter()
+        fn iter<'a>(&'a self) -> Box<dyn Iterator<Item=u16> + 'a> {
+            Box::new(self.clone().array.into_iter())
         }
 
         fn card(&self) -> usize {
@@ -989,7 +989,7 @@ mod test {
     #[test]
     fn load() {
         // Load the container
-        let data = generate_data::<u16>(0..65535, 100, 5);
+        let data = generate_data(0..65535, 100, 5);
         let mut c = ArrayContainer::with_capacity(data.len());
         for value in data.iter() {
             c.add(*value);
@@ -1124,17 +1124,10 @@ mod test {
         let rank = array.rank(20);
         assert_eq!(rank, 21);
     }
-
-    #[test]
-    fn num_runs() {
-        let array = make_container::<ArrayContainer>(&RUNS);
-
-        assert_eq!(array.num_runs(), NUM_RUNS);
-    }
-
+    
     #[test]
     fn round_trip_serialize() {
-        let data = generate_data::<u16>(0..65535, 100, 5);
+        let data = generate_data(0..65535, 100, 5);
         let array = ArrayContainer::from_data(&data);
 
         let serialized_size = ArrayContainer::serialized_size(array.cardinality());
@@ -1228,16 +1221,13 @@ mod test {
 
     #[test]
     fn array_array_subset_of() {
-        let a = make_container::<ArrayContainer>(&SUBSET_A);
-        let b = make_container::<ArrayContainer>(&SUBSET_B);
-
-        assert!(a.subset_of(&b));
-        assert!(!b.subset_of(&a));
+        op_subset_test::<ArrayContainer, ArrayContainer, u16>(0..65535, 100, 10);
     }
 
     #[test]
     fn array_not() {
-        let a = make_container::<ArrayContainer>(&INPUT_A);
+        let data_a = generate_data(0..65535, 100, 10);
+        let a = ArrayContainer::from_data(&data_a);
         let not_a = a.not(0..(a.cardinality() as u32));
 
         let mut failed = false;
@@ -1302,7 +1292,7 @@ mod test {
             0..65535, 
             10, 
             1, 
-            |a, b| a.Or(&b)
+            |a, b| a.or(&b)
         );
     }
 
@@ -1352,11 +1342,7 @@ mod test {
 
     #[test]
     fn array_bitset_subset_of() {
-        let a = make_container::<ArrayContainer>(&SUBSET_A);
-        let b = make_container::<BitsetContainer>(&SUBSET_B);
-
-        assert!(a.subset_of(&b));
-        assert!(!b.subset_of(&a));
+        op_subset_test::<ArrayContainer, BitsetContainer, u16>(0..65535, 100, 10);
     }
 
     #[test]
@@ -1504,10 +1490,6 @@ mod test {
 
     #[test]
     fn array_run_subset_of() {
-        let a = make_container::<ArrayContainer>(&SUBSET_A);
-        let b = make_container::<RunContainer>(&SUBSET_B);
-
-        assert!(a.subset_of(&b));
-        assert!(!b.subset_of(&a));
+        op_subset_test::<ArrayContainer, RunContainer, u16>(0..65535, 100, 10);
     }
 }
