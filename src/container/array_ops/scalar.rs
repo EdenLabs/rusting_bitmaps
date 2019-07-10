@@ -222,7 +222,8 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 
     while ptr_a < ptr_a_end && ptr_b < ptr_b_end {
         if *ptr_a < *ptr_b {
-            *(out.add(count)) = *ptr_a;
+            ptr::copy_nonoverlapping(ptr_a, out.add(count), 1);
+
             count += 1;
 
             ptr_a = ptr_a.add(1);

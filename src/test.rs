@@ -1,134 +1,226 @@
 #![cfg(test)]
 
-use crate::container::Container;
+use std::cmp::{PartialEq, PartialOrd};
+use std::ops::{Range};
+
+use rand::prelude::*;
 
 /// An internal trait for automating test setup
-pub trait TestUtils {
-    fn create() -> Self;
+pub trait TestShim<T> {
+    fn from_data(data: &[T]) -> Self;
 
-    fn fill(&mut self, data: &[u16]);
+    fn iter(&self) -> Box<dyn Iterator<Type=T>>;
+
+    fn card(&self) -> usize;
 }
 
-/// Create an array container from the given data set
-pub fn make_container<T: TestUtils>(data: &[u16]) -> T {
-    let mut container = T::create();
-    container.fill(data);
+/// The type of operation to perform
+pub enum OpType {
+    /// Performs a union of the two input sets
+    Or,
 
-    container
+    /// Performs an intersection of the two input sets
+    And,
+
+    /// Peforms a difference between the two input sets
+    AndNot,
+
+    /// Performs a symmetric difference between the two input sets
+    Xor
 }
 
-/// Run a test using the provided executor function and compare it against the expected value
-pub fn run_test<T, U, F>(in_a: &[u16], in_b: &[u16], expected: &[u16], f: F) 
-    where T: TestUtils,
-          U: TestUtils,
-          F: Fn(T, U) -> Container 
+const SEED: u64 = 4532158965;
+
+/// Generates a series of random data in the range [min-max) with `span_card` elements
+/// generated for every `span` elements in `range`. Elements are then deduplicated and sorted
+pub fn generate_data<T, R>(range: Range<T>, span: u64, span_card: u64) -> Vec<T> 
+    where T: PartialOrd + PartialEq + Into<u64>
 {
-    let a = make_container::<T>(in_a);
-    let b = make_container::<U>(in_b);
-    let result = (f)(a, b);
+    assert!(span > span_card);
+
+    let (min, max) = { (u64::from(range.start), u64::from(range.end)) };
+    let rng = rand::SeedableRng::from_seed(SEED);
+
+    let est_cap = (range.len() / span) * span_card;
+    let mut result = Vec::with_capacity(est_cap);
+    let mut block = Vec::with_capacity(span_card);
+
+    let mut start: u64 = u64::from(min);
+    let mut end: u64 = span;
+    while end <= max {
+        while block.len() < span_card {
+            block.push(rng.gen_range(start, end));
+        }
+
+        result.append(block);
+
+        start = end;
+        end = start + span + 1;
+    }
+
+    result.sort();
+    result.dedup();
+
+    result
+}
+
+/// Compute the result of an operation on two input sets using a known correct algorithm
+/// 
+/// # Remarks
+/// Assumes the inputs are sorted
+pub fn compute_result<T>(a: &[T], b: &[T], result: OpType) -> Vec<T> 
+    where T: PartialOrd + PartialEq
+{
+    match result {
+        OpType::Or => {
+            // Compute A + B - Duplicates and maintain sorting
+            let mut result = Vec::with_capacity(a.len() + b.len());
+            result.extend_from_slice(a);
+            result.extend_from_slice(b);
+            result.sort();
+            result.dedup();
+
+            result
+        },
+        OpType::And => {
+            let mut result = Vec::with_capacity(a.len().max(b.len()));
+            
+            let mut i0 = 0;
+            let mut i1 = 0;
+            while i0 < a.len() && i1 < b.len() {
+                // Element only in A
+                if a[i0] < b[i1] {
+                    i0 += 1;
+                }
+                // Element only in B
+                else if b[i1] < a[i0] {
+                    i1 += 1;
+                }
+                // Element shared
+                else {
+                    result.push(a[i0]);
+                    i0 += 1;
+                    i1 += 1;
+                }
+            }
+
+            result
+        },
+        OpType::AndNot => {
+            let mut result = Vec::with_capacity(a.len());
+
+            let mut i0 = 0;
+            let mut i1 = 0;
+            while i0 < a.len() && i1 < b.len() {
+                // Element only in A
+                if a[i0] < b[i1] {
+                    result.push(a[i0]);
+                    i0 += 1;
+                }
+                // Element only in B
+                else if b[i1] < a[i0] {
+                    i1 += 1;
+                }
+                // Element shared
+                else {
+                    i0 += 1;
+                    i1 += 1;
+                }
+            }
+
+            if i0 < a.len() {
+                result.extend_from_slice(&a[i0..]);
+            }
+
+            result
+        },
+        OpType::Xor => {
+            let mut result = Vec::with_capacity(a.len() + b.len());
+
+            let mut i0 = 0;
+            let mut i1 = 0;
+            while i0 < a.len() && i1 < b.len() {
+                // Element only in A
+                if a[i0] < b[i1] {
+                    result.push(a[i0]);
+                    i0 += 1;
+                }
+                // Element only in B
+                else if b[i1] < a[i0] {
+                    result.push(a[i1]);
+                    i1 += 1;
+                }
+                // Element shared
+                else {
+                    i0 += 1;
+                    i1 += 1;
+                }
+            }
+
+            if i0 < a.len() {
+                result.extend_from_slice(&a[i0..]);
+            }
+
+            if i1 < b.len() {
+                result.extend_from_slice(&b[i1..])
+            }
+
+            result
+        }
+    }
+}
+
+pub fn op_test<C0, C1, T, F, R>(op: OpType, range: Range<T>, span: u64, span_card: u64, f: F)
+    where C0: TestShim<T>,
+          C1: TestShim<T>,
+          R: TestShim<T>,
+          T: PartialEq + PartialOrd,
+          F: FnOnce(C0, C1) -> R
+{
+    let data_a = generate_data(range, span, span_card);
+    let data_b = generate_data(range, span, span_card);
+    let data_res = compute_result(&data_a, &data_b, op);
+
+    let a = C0::from_data(&data_a);
+    let b = C1::from_data(&data_b);
+    let r = (f)(a, b);
 
     // Check that the cardinality matches the precomputed result
-    let len0 = expected.len();
-    let len1 = result.cardinality();
     assert_eq!(
-        len0, 
-        len1, 
-        "\nUnequal cardinality; expected {}, found {}.\n", 
-        len0, 
-        len1
+        r.card(), 
+        data_res.len(), 
+        "Unequal cardinality; found {}, expected {}", 
+        r.card(), 
+        data_res.len()
     );
 
     // Check that the output matches the precomputed result
-    let pass = result.iter()
-        .zip(expected.iter());
-    
-    for (found, expected) in pass {
+    for (found, expected) in r.iter().zip(data_res.iter()) {
         assert_eq!(found, *expected, "Sets are not equivalent. Found {}, expected {}", found, *expected);
     }
 }
 
-pub const INPUT_A: [u16; 97] = [
-    12129, 12375, 13182, 13954, 14628, 14706, 14738, 15585, 17122, 17750,
-    18396, 18421, 18846, 19076, 19754, 20145, 20366, 21452, 21867, 24421,
-    25247, 25803, 28281, 29337, 29480, 29631, 29734, 29738, 30828, 30926,
-    30989, 31801, 32270, 33388, 34083, 34282, 35418, 36121, 36283, 36886,
-    36988, 37066, 37714, 37727, 37896, 38530, 39197, 40559, 40730, 41299,
-    41320, 42620, 42631, 42706, 47759, 49015, 50432, 50892, 51755, 51777,
-    53679, 53863, 54458, 56153, 56828, 57023, 57122, 57255, 57413, 57785,
-    58366, 59382, 60813, 61117, 61136, 61752, 61896, 62058, 62213, 62264,
-    62302, 62376, 62428, 62673, 62693, 63305, 63308, 63610, 63676, 63783,
-    63902, 64232, 64596, 65046, 65320, 65474, 65532
-];
+pub fn op_card_test<C0, C1, T, F, R>(op: OpType, range: Range<T>, span: u64, span_card: u64, f: F)
+    where C0: TestShim<T>,
+          C1: TestShim<T>,
+          R: TestShim<T>,
+          T: PartialEq + PartialOrd,
+          F: FnOnce(C0, C1) -> R
+{
+    let data_a = generate_data(range, span, span_card);
+    let data_b = generate_data(range, span, span_card);
+    let data_res = compute_result(&data_a, &data_b, op);
 
-pub const INPUT_B: [u16; 100] = [
-    443, 557, 1008, 2945, 3316, 3915, 4666, 5386, 5707, 6007,
-    6680, 6959, 8048, 8476, 8527, 9316, 9619, 9847, 10340, 11302,
-    12129, 12375, 13182, 13954, 14628, 14706, 14738, 15585, 17122, 17750,
-    18396, 18421, 18846, 19076, 19754, 20145, 20366, 21452, 21867, 24421,
-    25247, 25803, 28281, 29337, 29480, 29631, 29734, 29738, 30926, 30989,
-    31801, 34083, 36886, 36988, 37066, 37714, 38530, 39197, 40559, 40730,
-    41299, 41320, 42620, 42631, 42706, 42800, 43682, 43718, 44121, 44326,
-    44615, 45761, 45824, 46940, 47759, 49015, 50432, 50892, 51755, 51777,
-    53679, 53863, 54458, 56153, 56828, 57255, 61752, 62213, 62264, 62376,
-    62428, 62673, 62693, 63305, 63610, 63783, 65046, 65320, 65474, 65532
-];
+    let a = C0::from_data(&data_a);
+    let b = C1::from_data(&data_b);
+    let r = (f)(a, b);
 
-pub const RESULT_OR: [u16; 126] = [
-    443, 557, 1008, 2945, 3316, 3915, 4666, 5386, 5707, 6007,
-    6680, 6959, 8048, 8476, 8527, 9316, 9619, 9847, 10340, 11302,
-    12129, 12375, 13182, 13954, 14628, 14706, 14738, 15585, 17122, 17750,
-    18396, 18421, 18846, 19076, 19754, 20145, 20366, 21452, 21867, 24421,
-    25247, 25803, 28281, 29337, 29480, 29631, 29734, 29738, 30828, 30926,
-    30989, 31801, 32270, 33388, 34083, 34282, 35418, 36121, 36283, 36886,
-    36988, 37066, 37714, 37727, 37896, 38530, 39197, 40559, 40730, 41299,
-    41320, 42620, 42631, 42706, 42800, 43682, 43718, 44121, 44326, 44615,
-    45761, 45824, 46940, 47759, 49015, 50432, 50892, 51755, 51777, 53679,
-    53863, 54458, 56153, 56828, 57023, 57122, 57255, 57413, 57785, 58366,
-    59382, 60813, 61117, 61136, 61752, 61896, 62058, 62213, 62264, 62302,
-    62376, 62428, 62673, 62693, 63305, 63308, 63610, 63676, 63783, 63902,
-    64232, 64596, 65046, 65320, 65474, 65532
-];
-
-pub const RESULT_AND: [u16; 71] = [
-    12129, 12375, 13182, 13954, 14628, 14706, 14738, 15585, 17122, 17750,
-    18396, 18421, 18846, 19076, 19754, 20145, 20366, 21452, 21867, 24421,
-    25247, 25803, 28281, 29337, 29480, 29631, 29734, 29738, 30926, 30989,
-    31801, 34083, 36886, 36988, 37066, 37714, 38530, 39197, 40559, 40730,
-    41299, 41320, 42620, 42631, 42706, 47759, 49015, 50432, 50892, 51755,
-    51777, 53679, 53863, 54458, 56153, 56828, 57255, 61752, 62213, 62264,
-    62376, 62428, 62673, 62693, 63305, 63610, 63783, 65046, 65320, 65474,
-    65532
-];
-
-pub const RESULT_AND_NOT: [u16; 26] = [
-    30828, 32270, 33388, 34282, 35418, 36121, 36283, 37727, 37896, 57023,
-    57122, 57413, 57785, 58366, 59382, 60813, 61117, 61136, 61896, 62058,
-    62302, 63308, 63676, 63902, 64232, 64596
-];
-
-pub const RESULT_XOR: [u16; 55] = [
-    443, 557, 1008, 2945, 3316, 3915, 4666, 5386, 5707, 6007,
-    6680, 6959, 8048, 8476, 8527, 9316, 9619, 9847, 10340, 11302,
-    30828, 32270, 33388, 34282, 35418, 36121, 36283, 37727, 37896, 42800,
-    43682, 43718, 44121, 44326, 44615, 45761, 45824, 46940, 57023, 57122,
-    57413, 57785, 58366, 59382, 60813, 61117, 61136, 61896, 62058, 62302,
-    63308, 63676, 63902, 64232, 64596
-];
-
-pub const SUBSET_A: [u16; 16] = [
-    45761, 45824, 46940, 47759, 49015, 50432, 50892, 51755, 51777,
-    53679, 53863, 54458, 56153, 56828, 57255, 61752
-];
-
-pub const SUBSET_B: [u16; 30] = [
-    44615, 45761, 45824, 46940, 47759, 49015, 50432, 50892, 51755, 51777,
-    53679, 53863, 54458, 56153, 56828, 57255, 61752, 62213, 62264, 62376,
-    62428, 62673, 62693, 63305, 63610, 63783, 65046, 65320, 65474, 65532
-];
-
-pub const RUNS: [u16; 20] = [
-    1, 2, 3, 4, 6, 7, 8, 9, 21, 22,
-    23, 62, 63, 64, 65, 66, 801, 802, 803, 804
-];
-
-pub const NUM_RUNS: usize = 5;
+    // Check that the cardinality matches the precomputed result
+    assert_eq!(
+        r.card(), 
+        data_res.len(), 
+        "Unequal cardinality; found {}, expected {}", 
+        r.card(), 
+        data_res.len()
+    );
+}

@@ -298,24 +298,22 @@ impl RoaringBitmap {
             return;
         }
 
-        unsafe {
-            let mut c_index = None;
-            for value in slice.iter() {
-                let key = (*value >> 16) as u16;
+        let mut c_index = None;
+        for value in slice.iter() {
+            let key = (*value >> 16) as u16;
 
-                if c_index.is_none() || key != self.keys[c_index.unwrap()] {
-                    c_index = self.get_index(key);
-                }
-                
-                if let Some(index) = c_index {
-                    let container = self.containers.get_unchecked_mut(index);
+            if c_index.is_none() || key != self.keys[c_index.unwrap()] {
+                c_index = self.get_index(key);
+            }
+            
+            if let Some(index) = c_index {
+                let container = &mut self.containers[index];
 
-                    container.remove(*value as u16);
+                container.remove(*value as u16);
 
-                    if container.is_empty() {
-                        self.containers.pop();
-                        c_index = None;
-                    }
+                if container.is_empty() {
+                    self.containers.pop();
+                    c_index = None;
                 }
             }
         }
@@ -491,13 +489,11 @@ impl RoaringBitmap {
             return None;
         }
 
-        unsafe {
-            let key = self.keys.get_unchecked(0);
-            let container = self.containers.get_unchecked(0);
-            let low = u32::from(container.min()?);
+        let key = self.keys[0];
+        let container = &self.containers[0];
+        let low = u32::from(container.min()?);
 
-            Some(low | (u32::from(*key) << 16))
-        }
+        Some(low | (u32::from(key) << 16))
     }
     
     /// Find the largest value in the bitmap. Returns None if empty
@@ -506,14 +502,12 @@ impl RoaringBitmap {
             return None;
         }
 
-        unsafe {
-            let last = self.keys.len() - 1;
-            let key = self.keys.get_unchecked(last);
-            let container = self.containers.get_unchecked(last);
-            let low = u32::from(container.max()?);
+        let last = self.keys.len() - 1;
+        let key = self.keys[last];
+        let container = &self.containers[last];
+        let low = u32::from(container.max()?);
 
-            Some(low | (u32::from(*key) << 16))
-        }
+        Some(low | (u32::from(key) << 16))
     }
 
     /// Check if this bitmap is a subset of other
