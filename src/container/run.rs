@@ -2433,7 +2433,7 @@ mod test {
         op_test::<RunContainer, ArrayContainer, u16, _, Container>(
             OpType::Or, 
             0..65535, 
-            10, 
+            50, 
             1, 
             |a, b| a.or(&b)
         );
@@ -2444,7 +2444,7 @@ mod test {
         op_test::<RunContainer, ArrayContainer, u16, _, Container>(
             OpType::And, 
             0..65535, 
-            10, 
+            50, 
             1, 
             |a, b| a.and(&b)
         );
@@ -2455,7 +2455,7 @@ mod test {
         op_card_test::<RunContainer, ArrayContainer, u16, _>(
             OpType::And, 
             0..65535, 
-            10, 
+            50, 
             1, 
             |a, b| a.and_cardinality(&b)
         );
@@ -2466,7 +2466,7 @@ mod test {
         op_test::<RunContainer, ArrayContainer, u16, _, Container>(
             OpType::AndNot, 
             0..65535, 
-            10, 
+            50, 
             1, 
             |a, b| a.and_not(&b)
         );
@@ -2477,7 +2477,7 @@ mod test {
         op_test::<RunContainer, ArrayContainer, u16, _, Container>(
             OpType::Xor, 
             0..65535, 
-            10, 
+            50, 
             1, 
             |a, b| a.xor(&b)
         );

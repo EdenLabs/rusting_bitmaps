@@ -580,7 +580,7 @@ impl<'a> From<&'a RunContainer> for BitsetContainer {
         let mut bitset = BitsetContainer::new();
         for run in container.iter_runs() {
             let min = u32::from(run.value);
-            let max = u32::from(run.length - 1);
+            let max = u32::from(run.length.saturating_sub(1));
 
             bitset.set_range(min..max);
         }
@@ -1345,7 +1345,7 @@ mod test {
 
     #[test]
     fn bitset_bitset_subset_of() {
-        op_subset_test::<BitsetContainer, BitsetContainer, u16>(0..65535, 100, 10);
+        op_subset_test::<BitsetContainer, BitsetContainer, u16>(0..65535, 100, 1);
     }
 
     #[test]
@@ -1364,7 +1364,7 @@ mod test {
         op_test::<BitsetContainer, BitsetContainer, u16, _, Container>(
             OpType::Or, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.inplace_or(&b)
         );
@@ -1375,7 +1375,7 @@ mod test {
         op_test::<BitsetContainer, BitsetContainer, u16, _, Container>(
             OpType::And, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.inplace_and(&b)
         );
@@ -1386,7 +1386,7 @@ mod test {
         op_test::<BitsetContainer, BitsetContainer, u16, _, Container>(
             OpType::AndNot, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.and_not(&b)
         );
@@ -1397,7 +1397,7 @@ mod test {
         op_test::<BitsetContainer, BitsetContainer, u16, _, Container>(
             OpType::Xor, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.inplace_xor(&b)
         );
@@ -1408,7 +1408,7 @@ mod test {
         op_test::<BitsetContainer, ArrayContainer, u16, _, Container>(
             OpType::Or, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.or(&b)
         );
@@ -1419,7 +1419,7 @@ mod test {
         op_test::<BitsetContainer, ArrayContainer, u16, _, Container>(
             OpType::And, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.and(&b)
         );
@@ -1430,7 +1430,7 @@ mod test {
         op_card_test::<BitsetContainer, ArrayContainer, u16, _>(
             OpType::And, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.and_cardinality(&b)
         );
@@ -1441,7 +1441,7 @@ mod test {
         op_test::<BitsetContainer, ArrayContainer, u16, _, Container>(
             OpType::AndNot, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.and_not(&b)
         );
@@ -1452,7 +1452,7 @@ mod test {
         op_test::<BitsetContainer, ArrayContainer, u16, _, Container>(
             OpType::Xor, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.xor(&b)
         );
@@ -1463,7 +1463,7 @@ mod test {
         op_test::<BitsetContainer, ArrayContainer, u16, _, Container>(
             OpType::Or, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.inplace_or(&b)
         );
@@ -1474,7 +1474,7 @@ mod test {
         op_test::<BitsetContainer, ArrayContainer, u16, _, Container>(
             OpType::And, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.inplace_and(&b)
         );
@@ -1485,7 +1485,7 @@ mod test {
         op_test::<BitsetContainer, ArrayContainer, u16, _, Container>(
             OpType::AndNot,
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.inplace_and_not(&b)
         );
@@ -1496,7 +1496,7 @@ mod test {
         op_test::<BitsetContainer, ArrayContainer, u16, _, Container>(
             OpType::Xor, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.inplace_xor(&b)
         );
@@ -1504,7 +1504,7 @@ mod test {
 
     #[test]
     fn bitset_array_subset_of() {
-        op_subset_test::<BitsetContainer, ArrayContainer, u16>(0..65535, 100, 10);
+        op_subset_test::<BitsetContainer, ArrayContainer, u16>(0..65535, 100, 1);
     }
 
     #[test]
@@ -1512,7 +1512,7 @@ mod test {
         op_test::<BitsetContainer, RunContainer, u16, _, Container>(
             OpType::Or, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.or(&b)
         );
@@ -1523,7 +1523,7 @@ mod test {
         op_test::<BitsetContainer, RunContainer, u16, _, Container>(
             OpType::And, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.and(&b)
         );
@@ -1534,7 +1534,7 @@ mod test {
         op_card_test::<BitsetContainer, RunContainer, u16, _>(
             OpType::And, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.and_cardinality(&b)
         );
@@ -1545,7 +1545,7 @@ mod test {
         op_test::<BitsetContainer, RunContainer, u16, _, Container>(
             OpType::AndNot, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.and_not(&b)
         );
@@ -1556,7 +1556,7 @@ mod test {
         op_test::<BitsetContainer, RunContainer, u16, _, Container>(
             OpType::Xor, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.xor(&b)
         );
@@ -1567,7 +1567,7 @@ mod test {
         op_test::<BitsetContainer, RunContainer, u16, _, Container>(
             OpType::Or, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.inplace_or(&b)
         );
@@ -1578,7 +1578,7 @@ mod test {
         op_test::<BitsetContainer, RunContainer, u16, _, Container>(
             OpType::And, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.inplace_and(&b)
         );
@@ -1589,7 +1589,7 @@ mod test {
         op_test::<BitsetContainer, RunContainer, u16, _, Container>(
             OpType::AndNot, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.inplace_and_not(&b)
         );
@@ -1600,7 +1600,7 @@ mod test {
         op_test::<BitsetContainer, RunContainer, u16, _, Container>(
             OpType::Xor, 
             0..65535, 
-            10, 
+            100, 
             1, 
             |a, b| a.inplace_xor(&b)
         );
@@ -1608,6 +1608,6 @@ mod test {
     
     #[test]
     fn bitset_run_subset_of() {
-        op_subset_test::<BitsetContainer, RunContainer, u16>(0..65535, 100, 10);
+        op_subset_test::<BitsetContainer, RunContainer, u16>(0..65535, 100, 1);
     }
 }

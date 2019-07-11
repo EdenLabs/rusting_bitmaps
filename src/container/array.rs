@@ -460,10 +460,7 @@ impl SetOr<Self> for ArrayContainer {
             // Result is going to be an array, convert back
             let len = bitset.len();
             if len <= DEFAULT_MAX_SIZE {
-                let required = len - self.capacity();
-                if required > 0 {
-                    self.reserve(required);
-                }
+                self.reserve(len);
 
                 // Load the contents of the bitset into the array
                 self.clear();
@@ -989,7 +986,7 @@ mod test {
     #[test]
     fn load() {
         // Load the container
-        let data = generate_data(0..65535, 100, 5);
+        let data = generate_data(0..65535, 1000, 5);
         let mut c = ArrayContainer::with_capacity(data.len());
         for value in data.iter() {
             c.add(*value);
@@ -1169,7 +1166,7 @@ mod test {
         op_test::<ArrayContainer, ArrayContainer, u16, _, Container>(
             OpType::Or, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.or(&b)
         );
@@ -1180,7 +1177,7 @@ mod test {
         op_test::<ArrayContainer, ArrayContainer, u16, _, Container>(
             OpType::And, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.and(&b)
         );
@@ -1191,7 +1188,7 @@ mod test {
         op_card_test::<ArrayContainer, ArrayContainer, u16, _>(
             OpType::And, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.and_cardinality(&b)
         );
@@ -1202,7 +1199,7 @@ mod test {
         op_test::<ArrayContainer, ArrayContainer, u16, _, Container>(
             OpType::AndNot, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.and_not(&b)
         );
@@ -1213,7 +1210,7 @@ mod test {
         op_test::<ArrayContainer, ArrayContainer, u16, _, Container>(
             OpType::Xor, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.xor(&b)
         );
@@ -1221,12 +1218,12 @@ mod test {
 
     #[test]
     fn array_array_subset_of() {
-        op_subset_test::<ArrayContainer, ArrayContainer, u16>(0..65535, 100, 10);
+        op_subset_test::<ArrayContainer, ArrayContainer, u16>(0..65535, 1000, 1);
     }
 
     #[test]
     fn array_not() {
-        let data_a = generate_data(0..65535, 100, 10);
+        let data_a = generate_data(0..65535, 1000, 1);
         let a = ArrayContainer::from_data(&data_a);
         let not_a = a.not(0..(a.cardinality() as u32));
 
@@ -1246,7 +1243,7 @@ mod test {
         op_test::<ArrayContainer, ArrayContainer, u16, _, Container>(
             OpType::Or, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.inplace_or(&b)
         );
@@ -1257,7 +1254,7 @@ mod test {
         op_test::<ArrayContainer, ArrayContainer, u16, _, Container>(
             OpType::And, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.inplace_and(&b)
         );
@@ -1268,7 +1265,7 @@ mod test {
         op_test::<ArrayContainer, ArrayContainer, u16, _, Container>(
             OpType::AndNot, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.inplace_and_not(&b)
         );
@@ -1279,7 +1276,7 @@ mod test {
         op_test::<ArrayContainer, ArrayContainer, u16, _, Container>(
             OpType::Xor, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.inplace_xor(&b)
         );
@@ -1290,7 +1287,7 @@ mod test {
         op_test::<ArrayContainer, BitsetContainer, u16, _, Container>(
             OpType::Or, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.or(&b)
         );
@@ -1301,7 +1298,7 @@ mod test {
         op_test::<ArrayContainer, BitsetContainer, u16, _, Container>(
             OpType::And, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.and(&b)
         );
@@ -1312,7 +1309,7 @@ mod test {
         op_card_test::<ArrayContainer, BitsetContainer, u16, _>(
             OpType::And, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.and_cardinality(&b)
         );
@@ -1323,7 +1320,7 @@ mod test {
         op_test::<ArrayContainer, BitsetContainer, u16, _, Container>(
             OpType::AndNot, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.and_not(&b)
         );
@@ -1334,7 +1331,7 @@ mod test {
         op_test::<ArrayContainer, BitsetContainer, u16, _, Container>(
             OpType::Xor, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.xor(&b)
         );
@@ -1342,7 +1339,7 @@ mod test {
 
     #[test]
     fn array_bitset_subset_of() {
-        op_subset_test::<ArrayContainer, BitsetContainer, u16>(0..65535, 100, 10);
+        op_subset_test::<ArrayContainer, BitsetContainer, u16>(0..65535, 1000, 1);
     }
 
     #[test]
@@ -1350,7 +1347,7 @@ mod test {
         op_test::<ArrayContainer, BitsetContainer, u16, _, Container>(
             OpType::Or, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.inplace_or(&b)
         );
@@ -1361,7 +1358,7 @@ mod test {
         op_test::<ArrayContainer, BitsetContainer, u16, _, Container>(
             OpType::And, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.inplace_and(&b)
         );
@@ -1372,7 +1369,7 @@ mod test {
         op_test::<ArrayContainer, BitsetContainer, u16, _, Container>(
             OpType::AndNot, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.inplace_and_not(&b)
         );
@@ -1383,7 +1380,7 @@ mod test {
         op_test::<ArrayContainer, BitsetContainer, u16, _, Container>(
             OpType::Xor, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.inplace_xor(&b)
         );
@@ -1394,7 +1391,7 @@ mod test {
         op_test::<ArrayContainer, RunContainer, u16, _, Container>(
             OpType::Or, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.or(&b)
         );
@@ -1405,7 +1402,7 @@ mod test {
         op_test::<ArrayContainer, RunContainer, u16, _, Container>(
             OpType::And, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.and(&b)
         );
@@ -1416,7 +1413,7 @@ mod test {
         op_card_test::<ArrayContainer, RunContainer, u16, _>(
             OpType::And, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.and_cardinality(&b)
         );
@@ -1427,7 +1424,7 @@ mod test {
         op_test::<ArrayContainer, RunContainer, u16, _, Container>(
             OpType::AndNot, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.and_not(&b)
         );
@@ -1438,7 +1435,7 @@ mod test {
         op_test::<ArrayContainer, RunContainer, u16, _, Container>(
             OpType::Xor, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.xor(&b)
         );
@@ -1449,7 +1446,7 @@ mod test {
         op_test::<ArrayContainer, RunContainer, u16, _, Container>(
             OpType::Or, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.inplace_or(&b)
         );
@@ -1460,7 +1457,7 @@ mod test {
         op_test::<ArrayContainer, RunContainer, u16, _, Container>(
             OpType::And, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.inplace_and(&b)
         );
@@ -1471,7 +1468,7 @@ mod test {
         op_test::<ArrayContainer, RunContainer, u16, _, Container>(
             OpType::AndNot, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.inplace_and_not(&b)
         );
@@ -1482,7 +1479,7 @@ mod test {
         op_test::<ArrayContainer, RunContainer, u16, _, Container>(
             OpType::Xor, 
             0..65535, 
-            10, 
+            1000, 
             1, 
             |a, b| a.inplace_xor(&b)
         );
@@ -1490,6 +1487,6 @@ mod test {
 
     #[test]
     fn array_run_subset_of() {
-        op_subset_test::<ArrayContainer, RunContainer, u16>(0..65535, 100, 10);
+        op_subset_test::<ArrayContainer, RunContainer, u16>(0..65535, 1000, 1);
     }
 }

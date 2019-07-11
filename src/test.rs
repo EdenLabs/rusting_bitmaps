@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use std::any::TypeId;
 use std::cmp::{PartialEq, PartialOrd};
 use std::ops::{Range};
 use std::fmt::Debug;
@@ -8,9 +9,10 @@ use rand::prelude::*;
 use rand::distributions::uniform::SampleUniform;
 
 use num_traits::Unsigned;
-use num_traits::cast::ToPrimitive;
+use num_traits::cast::{ToPrimitive, FromPrimitive};
+use num_traits::ops::checked::CheckedAdd;
 
-use crate::container::Subset;
+use crate::container::*;
 
 /// An internal trait for automating test setup
 pub(crate) trait TestShim<T> {
@@ -43,29 +45,16 @@ const SEED: [u8; 16] = [
 
 /// Generates a series of random data in the range [min-max) with `span_card` elements
 /// generated for every `span` elements in `range`. Elements are then deduplicated and sorted
-pub(crate) fn generate_data<T>(range: Range<T>, span: T, span_card: T) -> Vec<T> 
-    where T: Unsigned + ToPrimitive + SampleUniform + Ord + Copy
+pub(crate) fn generate_data<T>(range: Range<T>, count: usize) -> Vec<T> 
+    where T: Copy + Ord + Unsigned + ToPrimitive + CheckedAdd + SampleUniform
 {
-    assert!(span > span_card);
-
     let (min, max) = (range.start, range.end);
     let mut rng = rand::rngs::SmallRng::from_seed(SEED);
 
-    let est_cap = ((max - min) / span) * span_card;
-    let mut result: Vec<T> = Vec::with_capacity(est_cap.to_usize().unwrap());
-    let mut block: Vec<T> = Vec::with_capacity(span_card.to_usize().unwrap());
+    let mut result: Vec<T> = Vec::with_capacity(count.to_usize().unwrap());
 
-    let mut start = min;
-    let mut end = span;
-    while end < max {
-        while block.len() < span_card.to_usize().unwrap() {
-            block.push(rng.gen_range(start, end));
-        }
-
-        result.append(&mut block);
-
-        start = end;
-        end = start + span + T::one();
+    while result.len() < count {
+        result.push(rng.gen_range(min, max));
     }
 
     result.sort();
@@ -180,16 +169,37 @@ pub(crate) fn compute_result<T>(a: &[T], b: &[T], result: OpType) -> Vec<T>
     }
 }
 
-pub(crate) fn op_test<C0, C1, T, F, R>(op: OpType, range: Range<T>, span: T, span_card: T, f: F)
+fn select_range<C, T>() -> (Range<T>, usize) 
+    where C: 'static,
+          T: Unsigned + FromPrimitive
+{
+    if TypeId::of::<C>() == TypeId::of::<ArrayContainer>() {
+        (T::from_u32(0).unwrap()..T::from_u32(65535).unwrap(), 4000)
+    }
+    else if TypeId::of::<C>() == TypeId::of::<BitsetContainer>() {
+        (T::from_u32(0).unwrap()..T::from_u32(65535).unwrap(), 8000)
+    }
+    else if TypeId::of::<C>() == TypeId::of::<RunContainer>() {
+        (T::from_u32(0).unwrap()..T::from_u32(65535).unwrap(), 65535 /4)
+    }
+    else {
+        (T::from_u32(0).unwrap()..T::from_u32(4294967295).unwrap(), 4294967295 / 4)
+    }
+}
+
+pub(crate) fn op_test<C0, C1, T, F, R>(op: OpType, f: F)
     where C0: TestShim<T>,
           C1: TestShim<T>,
           R: TestShim<T>,
-          T: Debug + Copy + Ord + Unsigned + ToPrimitive + SampleUniform,
+          T: Debug + Copy + Ord + Unsigned + FromPrimitive + ToPrimitive + CheckedAdd + SampleUniform,
           F: FnOnce(C0, C1) -> R,
           u64: From<T>
 {
-    let data_a = generate_data(range.clone(), span, span_card);
-    let data_b = generate_data(range, span, span_card);
+    let (range0, count0) = select_range::<C0, T>();
+    let (range1, count1) = select_range::<C1, T>();
+
+    let data_a = generate_data(range0.clone(), count0);
+    let data_b = generate_data(range1, count1);
     let data_res = compute_result(&data_a, &data_b, op);
 
     let a = C0::from_data(&data_a);
@@ -214,7 +224,7 @@ pub(crate) fn op_test<C0, C1, T, F, R>(op: OpType, range: Range<T>, span: T, spa
 pub(crate) fn op_card_test<C0, C1, T, F>(op: OpType, range: Range<T>, span: T, span_card: T, f: F)
     where C0: TestShim<T>,
           C1: TestShim<T>,
-          T: Debug + Copy + Ord + Unsigned + ToPrimitive + SampleUniform,
+          T: Debug + Copy + Ord + Unsigned + FromPrimitive + ToPrimitive + CheckedAdd + SampleUniform,
           F: FnOnce(C0, C1) -> usize,
           u64: From<T>
 {
@@ -239,7 +249,7 @@ pub(crate) fn op_card_test<C0, C1, T, F>(op: OpType, range: Range<T>, span: T, s
 pub(crate) fn op_subset_test<C0, C1, T>(range: Range<T>, span: T, span_card: T)
     where C0: TestShim<T> + Subset<C1>,
           C1: TestShim<T> + Subset<C0>,
-          T: Debug + Copy + Ord + Unsigned + ToPrimitive + SampleUniform,
+          T: Debug + Copy + Ord + Unsigned + FromPrimitive + ToPrimitive + CheckedAdd + SampleUniform,
           u64: From<T>
 {
     let data_a = generate_data(range, span, span_card);
@@ -248,8 +258,8 @@ pub(crate) fn op_subset_test<C0, C1, T>(range: Range<T>, span: T, span_card: T)
     let mut data_b = Vec::with_capacity(count);
     data_b.extend_from_slice(&data_a[..count]);
 
-    let a = C0::from_data(&data_a);
-    let b = C1::from_data(&data_b);
+    let a = C1::from_data(&data_a);
+    let b = C0::from_data(&data_b);
 
     // Check that the cardinality matches the precomputed result
     assert!(b.subset_of(&a));
