@@ -55,7 +55,7 @@ impl BitsetContainer {
 
     /// Set all the bits within the range denoted by [min-max)
     pub fn set_range(&mut self, range: Range<u32>) {
-        let (min, max) = range.into_bound();
+        let (min, max) = (range.start, range.end);
 
         if min == max {
             self.set(min as u16);
@@ -193,26 +193,21 @@ impl BitsetContainer {
 
     /// Get the value of the bit at `index`
     pub fn get(&self, index: u16) -> bool {
-        let word_index = usize::from(index / 64);
-        let bit_index = index % 64;
-        let word = self.bitset[word_index];
-        let mask = 1 << bit_index;
-
-        (word & mask) > 0
+        (self.bitset[usize::from(index >> 6)] >> (index & 0x3F)) & 1 != 0
     }
 
     /// Check if all bits within a range are true
-    pub fn get_range(&self, range: Range<u32>) -> bool { // TODO: lift this up to the public api
-        let (min, max) = range.into_bound();
+    pub fn get_range(&self, range: Range<u32>) -> bool {
+        let (min, max) = (range.start, range.end);
 
         if min == max {
             return self.get(min as u16);
         }
 
         let first_word = (min >> 6) as usize;
-        let last_word = ((max + 1) >> 6) as usize;
-        let w0 = std::u64::MAX << (min % 64);
-        let w1 = std::u64::MAX >> ((!max + 1) % 64);
+        let last_word = (max >> 6) as usize;
+        let w0 = !((1 << (min & 0x3F)) - 1);
+        let w1 = (1 << (max & 0x3F)) - 1;
 
         // Start and end are the same, check if the range of bits are set
         if first_word == last_word {
@@ -580,7 +575,7 @@ impl<'a> From<&'a RunContainer> for BitsetContainer {
         let mut bitset = BitsetContainer::new();
         for run in container.iter_runs() {
             let min = u32::from(run.value);
-            let max = u32::from(run.length.saturating_sub(1));
+            let max = u32::from(run.end() + 1);
 
             bitset.set_range(min..max);
         }
@@ -1256,6 +1251,28 @@ mod test {
 
         for (found, expected) in iter {
             assert_eq!(found, *expected);
+        }
+    }
+
+    #[test]
+    fn from_array() {
+        let data = generate_data(0..65535, 3_000);
+        let a = ArrayContainer::from_data(&data);
+        let b = BitsetContainer::from(a.clone());
+
+        for (before, after) in a.iter().zip(b.iter()) {
+            assert_eq!(*before, after);
+        }
+    }
+
+    #[test]
+    fn from_run() {
+        let data = generate_data(0..65535, 12_000);
+        let a = RunContainer::from_data(&data);
+        let b = BitsetContainer::from(a.clone());
+
+        for (before, after) in a.iter().zip(b.iter()) {
+            assert_eq!(before, after);
         }
     }
 

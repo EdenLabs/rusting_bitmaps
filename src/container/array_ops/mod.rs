@@ -158,14 +158,6 @@ mod test {
     #[cfg(target_feature = "sse4.2")]
     use super::vector;
 
-    /// Create an array container from the given data set
-    fn make_container(data: &[u16]) -> Vec<u16> {
-        let mut container = Vec::with_capacity(data.len());
-        container.extend_from_slice(data);
-
-        container
-    }
-
     fn run_test<F>(op: OpType, f: F) 
         where F: Fn(&[u16], &[u16], *mut u16) -> usize 
     {

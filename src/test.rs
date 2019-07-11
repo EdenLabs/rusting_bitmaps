@@ -146,7 +146,7 @@ pub(crate) fn compute_result<T>(a: &[T], b: &[T], result: OpType) -> Vec<T>
                 }
                 // Element only in B
                 else if b[i1] < a[i0] {
-                    result.push(a[i1]);
+                    result.push(b[i1]);
                     i1 += 1;
                 }
                 // Element shared
@@ -183,7 +183,7 @@ fn select_range<C, T>() -> (Range<T>, usize)
         (T::from_u32(0).unwrap()..T::from_u32(65535).unwrap(), 65535 /4)
     }
     else {
-        (T::from_u32(0).unwrap()..T::from_u32(4294967295).unwrap(), 4294967295 / 4)
+        (T::from_u32(0).unwrap()..T::from_u32(10_000_000).unwrap(), 2_000_000)
     }
 }
 
@@ -204,6 +204,7 @@ pub(crate) fn op_test<C0, C1, T, F, R>(op: OpType, f: F)
 
     let a = C0::from_data(&data_a);
     let b = C1::from_data(&data_b);
+
     let r = (f)(a, b);
 
     // Check that the cardinality matches the precomputed result
@@ -236,6 +237,7 @@ pub(crate) fn op_card_test<C0, C1, T, F>(op: OpType, f: F)
 
     let a = C0::from_data(&data_a);
     let b = C1::from_data(&data_b);
+
     let r = (f)(a, b);
 
     // Check that the cardinality matches the precomputed result

@@ -891,7 +891,7 @@ impl Subset<Self> for ArrayContainer {
 
 impl Subset<BitsetContainer> for ArrayContainer {
     fn subset_of(&self, other: &BitsetContainer) -> bool {
-        if self.len() > other.len() {
+        if self.len() > other.cardinality() {
             return false;
         }
         
@@ -1120,6 +1120,28 @@ mod test {
 
         let rank = array.rank(20);
         assert_eq!(rank, 21);
+    }
+
+    #[test]
+    fn from_bitset() {
+        let data = generate_data(0..65535, 3_000);
+        let a = BitsetContainer::from_data(&data);
+        let b = ArrayContainer::from(a.clone());
+
+        for (before, after) in a.iter().zip(b.iter()) {
+            assert_eq!(before, *after);
+        }
+    }
+
+    #[test]
+    fn from_run() {
+        let data = generate_data(0..65535, 3_000);
+        let a = RunContainer::from_data(&data);
+        let b = ArrayContainer::from(a.clone());
+
+        for (before, after) in a.iter().zip(b.iter()) {
+            assert_eq!(before, *after);
+        }
     }
     
     #[test]

@@ -684,36 +684,36 @@ impl<'a> From<&'a mut ArrayContainer> for RunContainer {
 
 impl<'a> From<&'a ArrayContainer> for RunContainer {
     fn from(container: &'a ArrayContainer) -> Self {
-        let num_runs = container.num_runs();
-        let mut run_container = RunContainer::with_capacity(num_runs);
-
-        let mut prev: isize = -2;
-        let mut run_start: isize = -1;
-        let cardinality = container.cardinality();
-
-        if cardinality == 0 {
-            return run_container;
+        if container.is_empty() {
+            return RunContainer::new();
         }
         
+        let mut result = RunContainer::with_capacity(container.num_runs());
+
+        let mut run: Option<Rle16> = None;
         for value in container.iter() {
-            if *value != (prev + 1) as u16 {
-                if run_start != -1 {
-                    run_container.runs.push(
-                        Rle16::new(run_start as u16, prev as u16)
-                    );
+            if let Some(mut r) = run.as_mut() {
+                // The next value isn't in the current run, push and start the next run
+                if *value != r.end() + 1 {
+                    result.runs.push(*r);
+
+                    run = Some(Rle16::new(*value, 0));
                 }
-
-                run_start = *value as isize;
+                // Next value is in the run, just increment
+                else {
+                    r.length += 1;
+                }
             }
-
-            prev = *value as isize;
+            else {
+                run = Some(Rle16::new(*value, 0));
+            }
         }
 
-        run_container.runs.push(
-            Rle16::new(run_start as u16, prev as u16)
-        );
+        if let Some(r) = run {
+            result.runs.push(r);
+        }
 
-        run_container
+        result
     }
 }
 
@@ -733,36 +733,36 @@ impl<'a> From<&'a mut BitsetContainer> for RunContainer {
 
 impl<'a> From<&'a BitsetContainer> for RunContainer {
     fn from(container: &'a BitsetContainer) -> Self {
-        let num_runs = container.num_runs();
-        let mut run_container = RunContainer::with_capacity(num_runs);
-
-        let mut prev: isize = -2;
-        let mut run_start: isize = -1;
-        let cardinality = container.cardinality();
-
-        if cardinality == 0 {
-            return run_container;
+        if container.is_empty() {
+            return RunContainer::new();
         }
         
+        let mut result = RunContainer::with_capacity(container.num_runs());
+
+        let mut run: Option<Rle16> = None;
         for value in container.iter() {
-            if value != (prev + 1) as u16 {
-                if run_start != -1 {
-                    run_container.runs.push(
-                        Rle16::new(run_start as u16, prev as u16)
-                    );
+            if let Some(mut r) = run.as_mut() {
+                // The next value isn't in the current run, push and start the next run
+                if value != r.end() + 1 {
+                    result.runs.push(*r);
+
+                    run = Some(Rle16::new(value, 0));
                 }
-
-                run_start = value as isize;
+                // Next value is in the run, just increment
+                else {
+                    r.length += 1;
+                }
             }
-
-            prev = value as isize;
+            else {
+                run = Some(Rle16::new(value, 0));
+            }
         }
 
-        run_container.runs.push(
-            Rle16::new(run_start as u16, prev as u16)
-        );
+        if let Some(r) = run {
+            result.runs.push(r);
+        }
 
-        run_container
+        result
     }
 }
 
@@ -1071,7 +1071,7 @@ impl SetOr<BitsetContainer> for RunContainer {
 
         for rle in self.iter_runs() {
             let min = u32::from(rle.value);
-            let max = u32::from(rle.end());
+            let max = u32::from(rle.end() + 1);
 
             result.set_range(min..max);
         }
@@ -1399,7 +1399,7 @@ impl SetAnd<BitsetContainer> for RunContainer {
                 start = end + u32::from(run.length) + 1;
             }
 
-            bitset.unset_range(start..(!0));
+            bitset.unset_range(start..(!0 & 0xFFFF));
 
             if bitset.cardinality() > DEFAULT_MAX_SIZE {
                 Container::Bitset(bitset)
@@ -2007,16 +2007,20 @@ impl<'a> Iterator for Iter<'a> {
             if self.rle_index < self.runs.len() {
                 let rle = self.runs.get_unchecked(self.rle_index);
                 
-                if self.value_index < rle.length {
+                if self.value_index <= rle.length {
                     // Extract value
-                    let value = rle.value + self.value_index; // TODO: Double check that this isn't an off by one error
+                    let value = rle.value + self.value_index;
 
                     // Bump index
-                    self.value_index += 1;
+                    let next = self.value_index.checked_add(1);
 
                     // Increment run if necessary
-                    if self.value_index >= rle.length {
+                    if next.is_none() || next.unwrap() > rle.length {
                         self.rle_index += 1;
+                        self.value_index = 0;
+                    }
+                    else {
+                        self.value_index = next.unwrap();
                     }
 
                     Some(value)
@@ -2284,6 +2288,28 @@ mod test {
     }
 
     #[test]
+    fn from_array() {
+        let data = generate_data(0..65535, 3_000);
+        let a = ArrayContainer::from_data(&data);
+        let b = RunContainer::from(a.clone());
+
+        for (before, after) in a.iter().zip(b.iter()) {
+            assert_eq!(*before, after);
+        }
+    }
+
+    #[test]
+    fn from_bitset() {
+        let data = generate_data(0..65535, 7_000);
+        let a = BitsetContainer::from_data(&data);
+        let b = RunContainer::from(a.clone());
+
+        for (before, after) in a.iter().zip(b.iter()) {
+            assert_eq!(before, after);
+        }
+    }
+
+    #[test]
     fn round_trip_serialize() {
         let data = generate_data(0..65535, 20_000);
         let a = RunContainer::from_data(&data);
@@ -2355,7 +2381,7 @@ mod test {
 
         // Ensure that `not_a` contains no elements of A
         for value in a.iter() {
-            assert!(not_a.contains(value));
+            assert!(!not_a.contains(value), "Found {:?} in `not_a`", value);
         }
     }
 
