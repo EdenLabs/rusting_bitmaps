@@ -169,8 +169,8 @@ mod test {
     fn run_test<F>(op: OpType, f: F) 
         where F: Fn(&[u16], &[u16], *mut u16) -> usize 
     {
-        let data_a = generate_data(0..65535, 100, 30);
-        let data_b = generate_data(0..65535, 100, 30);
+        let data_a = generate_data(0..65535, 500);
+        let data_b = generate_data(0..65535, 500);
         let a = { let mut v = Vec::with_capacity(data_a.len()); v.extend_from_slice(&data_a); v };
         let b = { let mut v = Vec::with_capacity(data_b.len()); v.extend_from_slice(&data_b); v };
         let e = compute_result(&data_a, &data_b, op);

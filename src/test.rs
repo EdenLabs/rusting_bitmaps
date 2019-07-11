@@ -188,8 +188,8 @@ fn select_range<C, T>() -> (Range<T>, usize)
 }
 
 pub(crate) fn op_test<C0, C1, T, F, R>(op: OpType, f: F)
-    where C0: TestShim<T>,
-          C1: TestShim<T>,
+    where C0: TestShim<T> + 'static,
+          C1: TestShim<T> + 'static,
           R: TestShim<T>,
           T: Debug + Copy + Ord + Unsigned + FromPrimitive + ToPrimitive + CheckedAdd + SampleUniform,
           F: FnOnce(C0, C1) -> R,
@@ -198,7 +198,7 @@ pub(crate) fn op_test<C0, C1, T, F, R>(op: OpType, f: F)
     let (range0, count0) = select_range::<C0, T>();
     let (range1, count1) = select_range::<C1, T>();
 
-    let data_a = generate_data(range0.clone(), count0);
+    let data_a = generate_data(range0, count0);
     let data_b = generate_data(range1, count1);
     let data_res = compute_result(&data_a, &data_b, op);
 
@@ -221,15 +221,17 @@ pub(crate) fn op_test<C0, C1, T, F, R>(op: OpType, f: F)
     }
 }
 
-pub(crate) fn op_card_test<C0, C1, T, F>(op: OpType, range: Range<T>, span: T, span_card: T, f: F)
-    where C0: TestShim<T>,
-          C1: TestShim<T>,
+pub(crate) fn op_card_test<C0, C1, T, F>(op: OpType, f: F)
+    where C0: TestShim<T> + 'static,
+          C1: TestShim<T> + 'static,
           T: Debug + Copy + Ord + Unsigned + FromPrimitive + ToPrimitive + CheckedAdd + SampleUniform,
           F: FnOnce(C0, C1) -> usize,
           u64: From<T>
 {
-    let data_a = generate_data(range.clone(), span, span_card);
-    let data_b = generate_data(range, span, span_card);
+    let (range0, count0) = select_range::<C0, T>();
+    let (range1, count1) = select_range::<C1, T>();
+    let data_a = generate_data(range0, count0);
+    let data_b = generate_data(range1, count1);
     let data_res = compute_result(&data_a, &data_b, op);
 
     let a = C0::from_data(&data_a);
@@ -246,13 +248,14 @@ pub(crate) fn op_card_test<C0, C1, T, F>(op: OpType, range: Range<T>, span: T, s
     );
 }
 
-pub(crate) fn op_subset_test<C0, C1, T>(range: Range<T>, span: T, span_card: T)
-    where C0: TestShim<T> + Subset<C1>,
-          C1: TestShim<T> + Subset<C0>,
+pub(crate) fn op_subset_test<C0, C1, T>()
+    where C0: TestShim<T> + Subset<C1> + 'static,
+          C1: TestShim<T> + Subset<C0> + 'static,
           T: Debug + Copy + Ord + Unsigned + FromPrimitive + ToPrimitive + CheckedAdd + SampleUniform,
           u64: From<T>
 {
-    let data_a = generate_data(range, span, span_card);
+    let (range, count) = select_range::<C0, T>();
+    let data_a = generate_data(range, count);
 
     let count = data_a.len() / 2;
     let mut data_b = Vec::with_capacity(count);
