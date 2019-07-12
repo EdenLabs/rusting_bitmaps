@@ -45,11 +45,21 @@ const SEED: [u8; 16] = [
 
 /// Generates a series of random data in the range [min-max) with `span_card` elements
 /// generated for every `span` elements in `range`. Elements are then deduplicated and sorted
+#[inline]
 pub(crate) fn generate_data<T>(range: Range<T>, count: usize) -> Vec<T> 
     where T: Copy + Ord + Unsigned + ToPrimitive + CheckedAdd + SampleUniform
 {
+    generate_seeded_data(range, count, 0)
+}
+
+pub(crate) fn generate_seeded_data<T>(range: Range<T>, count: usize, seed_offset: u8) -> Vec<T> 
+    where T: Copy + Ord + Unsigned + ToPrimitive + CheckedAdd + SampleUniform
+{
     let (min, max) = (range.start, range.end);
-    let mut rng = rand::rngs::SmallRng::from_seed(SEED);
+
+    let mut seed = SEED;
+    seed[0] += seed_offset;
+    let mut rng = rand::rngs::SmallRng::from_seed(seed);
 
     let mut result: Vec<T> = Vec::with_capacity(count.to_usize().unwrap());
 
@@ -136,6 +146,8 @@ pub(crate) fn compute_result<T>(a: &[T], b: &[T], result: OpType) -> Vec<T>
         OpType::Xor => {
             let mut result = Vec::with_capacity(a.len() + b.len());
 
+            println!("xor - a: {:?}, b: {:?}", a.len(), b.len());
+
             let mut i0 = 0;
             let mut i1 = 0;
             while i0 < a.len() && i1 < b.len() {
@@ -157,12 +169,18 @@ pub(crate) fn compute_result<T>(a: &[T], b: &[T], result: OpType) -> Vec<T>
             }
 
             if i0 < a.len() {
+                println!("extend a");
+
                 result.extend_from_slice(&a[i0..]);
             }
 
             if i1 < b.len() {
+                println!("extend b");
+
                 result.extend_from_slice(&b[i1..])
             }
+
+            println!("result: {:?}", result.len());
 
             result
         }
@@ -198,9 +216,11 @@ pub(crate) fn op_test<C0, C1, T, F, R>(op: OpType, f: F)
     let (range0, count0) = select_range::<C0, T>();
     let (range1, count1) = select_range::<C1, T>();
 
-    let data_a = generate_data(range0, count0);
-    let data_b = generate_data(range1, count1);
+    let data_a = generate_seeded_data(range0, count0, 0);
+    let data_b = generate_seeded_data(range1, count1, 1);
     let data_res = compute_result(&data_a, &data_b, op);
+
+    println!("data_res: {:?}", data_res.len());
 
     let a = C0::from_data(&data_a);
     let b = C1::from_data(&data_b);
@@ -231,8 +251,8 @@ pub(crate) fn op_card_test<C0, C1, T, F>(op: OpType, f: F)
 {
     let (range0, count0) = select_range::<C0, T>();
     let (range1, count1) = select_range::<C1, T>();
-    let data_a = generate_data(range0, count0);
-    let data_b = generate_data(range1, count1);
+    let data_a = generate_seeded_data(range0, count0, 0);
+    let data_b = generate_seeded_data(range1, count1, 1);
     let data_res = compute_result(&data_a, &data_b, op);
 
     let a = C0::from_data(&data_a);
@@ -257,7 +277,7 @@ pub(crate) fn op_subset_test<C0, C1, T>()
           u64: From<T>
 {
     let (range, count) = select_range::<C0, T>();
-    let data_a = generate_data(range, count);
+    let data_a = generate_seeded_data(range, count, 0);
 
     let count = data_a.len() / 2;
     let mut data_b = Vec::with_capacity(count);

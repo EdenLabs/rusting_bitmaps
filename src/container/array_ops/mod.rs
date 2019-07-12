@@ -62,7 +62,7 @@ pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     { vector::xor(a, b, out) }
     
     #[cfg(not(target_feature = "sse4.2"))]
-    { scalar::xor(a, b, out) }
+    { scalar::xor(a, b, out) } // Segfaults
 }
 
 // TODO: Clean this mess up
