@@ -242,24 +242,20 @@ impl BitsetContainer {
 
     /// Flip all bits in the range [min-max)
     pub fn flip_range(&mut self, range: Range<u32>) {
-        let (min, max) = range.into_bound();
-
-        if min == max {
-            return self.flip(min as u16);
+        if range.start == range.end {
+            return self.flip(range.start as u16);
         }
 
-        let min = u32::from(min);
-        let max = u32::from(max);
-        let first_word = (min / 64) as usize;
-        let last_word = ((max - 1) / 64) as usize;
+        let first_word = (range.start / 64) as usize;
+        let last_word = ((range.end - 1) / 64) as usize;
         
-        self.bitset[first_word] ^= !((!0) << (min % 64));
+        self.bitset[first_word] ^= !((!0) << (range.start % 64));
         
         for i in first_word..last_word {
             self.bitset[i] = !self.bitset[i];
         }
 
-        self.bitset[last_word] ^= (!0) >> ((!max).wrapping_add(1) % 64);
+        self.bitset[last_word] ^= (!0) >> ((!range.end).saturating_add(1) % 64);
         self.cardinality.invalidate();
     }
 
@@ -270,10 +266,8 @@ impl BitsetContainer {
             let index = *value % 64;
             let load = self.bitset[word_index];
             let store = load ^ (1_u64 << index);
-            let change = 1 - 2 * ((((1_u64 << index) & load) >> index) as isize);// Update with -1 or +1
- 
-            self.cardinality.add(change);
             self.bitset[word_index] = store;
+            self.cardinality.invalidate();
         }
     }
 

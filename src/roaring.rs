@@ -789,7 +789,9 @@ impl RoaringBitmap {
     /// Negate all elements within `range` in this bitmap
     pub fn not<R: RangeBounds<u32>>(&self, range: R) -> Self {
         let (min, max) = range.into_bound();
-        let mut result = Self::new();
+        if min == max {
+            return Self::new();
+        }
 
         let mut start_high = min >> 16;
         let start_low = min & 0xFFFF;
@@ -797,10 +799,12 @@ impl RoaringBitmap {
         let mut end_high = max >> 16;
         let end_low = max & 0xFFFF;
 
+        let mut result = Self::new();
+
         // Append all preceding elements that are not to be flipped
         let end = array_ops::advance_until(&self.keys, 0, start_high as u16);
-        result.containers.extend_from_slice(&self.containers[0..end]);
-        result.keys.extend_from_slice(&self.keys[0..end]);
+        result.containers.extend_from_slice(&self.containers[..end]);
+        result.keys.extend_from_slice(&self.keys[..end]);
 
         // Range occupies the same container, just flip that
         if start_high == end_high {
@@ -815,17 +819,17 @@ impl RoaringBitmap {
                 start_high += 1;
             }
 
-            if end_low != (1 << 16) {
+            if end_low != 0xFFFF {
                 end_high -= 1;
             }
 
             // Handle all containers in the middle of the range skipping the last container
-            for bound in start_high..end_high {
+            for bound in start_high..=end_high {
                 result.append_flipped(self, bound as u16, 0..(1 << 16));
             }
 
             // Handle a partial final container
-            if end_low != (1 << 16) {
+            if end_low != 0xFFFF {
                 end_high += 1;
 
                 result.append_flipped(self, end_high as u16, 0..end_low);
@@ -1119,18 +1123,18 @@ impl RoaringBitmap {
                 }
             }
 
-            if low_end != (1 << 16) {
+            if low_end != 0xFFFF {
                 high_end -= 1;
             }
 
-            for bound in high_start..high_end {
+            for bound in high_start..=high_end {
                 if let Some(i) = self.get_index(bound) {
                     self.containers[i].not(0..(1 << 16));
                 }
             }
 
             // End is a partial container, flip in place
-            if low_end != (1 << 16) {
+            if low_end != 0xFFFF {
                 high_end += 1;
 
                 if let Some(i) = self.get_index(high_end) {
@@ -1843,7 +1847,7 @@ mod test {
         let bitmap = RoaringBitmap::from_slice(&input);
         let not_bitmap = bitmap.not(..);
 
-        assert_eq!(not_bitmap.cardinality(), ((std::u32::MAX as usize) + 1) - bitmap.cardinality());
+        assert_eq!(not_bitmap.cardinality(), (1 << 32) - bitmap.cardinality());
     }
 
     #[test]
@@ -1881,7 +1885,7 @@ mod test {
         let orig_card = bitmap.cardinality();
         bitmap.inplace_not(..);
 
-        assert_eq!(bitmap.cardinality(), ((std::u32::MAX as usize) + 1) - orig_card);
+        assert_eq!(bitmap.cardinality(), (1 << 32) - orig_card);
     }
 
     #[test]

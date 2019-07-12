@@ -942,11 +942,44 @@ impl SetNot for ArrayContainer {
     fn not(&self, range: Range<u32>) -> Container {
         debug_assert!(is_valid_range(range.clone()));
 
-        let mut bitset = BitsetContainer::new();
-        bitset.set_all();
-        bitset.clear_list(&self.array[(range.start as usize)..(range.end as usize)]);
+        let start_index = self.rank(range.start as u16).saturating_sub(1);
+        let end_index = self.rank(range.end.saturating_sub(1) as u16);
 
-        Container::Bitset(bitset)
+        let current_values = end_index.saturating_sub(start_index).saturating_sub(1);
+        let span = range.len();
+        let new_values = span - current_values;
+        let change = (new_values as isize) - (current_values as isize);
+        let new_card = ((self.array.len() as isize) + change) as usize;
+
+        // Result is going to be a bitset
+        if new_card > DEFAULT_MAX_SIZE {
+            let mut result = BitsetContainer::from(self);
+            result.flip_range(range);
+            
+            Container::Bitset(result)
+        }
+        // Result is going to be an array
+        else {
+            let mut result = ArrayContainer::with_capacity(new_card);
+            result.array.extend_from_slice(&self.array[..start_index]);
+
+            let mut i = start_index;
+            let mut value = self.array[start_index];
+            while u32::from(value) < range.end && i <= end_index {
+                if value != self.array[i] {
+                    result.push(value);
+                }
+                else {
+                    i += 1;
+                }
+
+                value += 1;
+            }
+
+            result.array.extend_from_slice(&self.array[(end_index + 1)..]);
+
+            Container::Array(result)
+        }
     }
 
     fn inplace_not(self, range: Range<u32>) -> Container {
@@ -1227,17 +1260,11 @@ mod test {
     fn array_not() {
         let data_a = generate_data(0..65535, 2_000);
         let a = ArrayContainer::from_data(&data_a);
-        let not_a = a.not(0..(a.cardinality() as u32));
+        let not_a = a.not(0..65536);
 
-        let mut failed = false;
         for value in a.iter() {
-            if not_a.contains(*value) {
-                failed = true;
-                break;
-            }
+            assert!(!not_a.contains(*value), "Found {:?} in `not_a", *value);
         }
-
-        assert!(!failed);
     }
 
     #[test]
