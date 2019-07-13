@@ -144,7 +144,7 @@ impl RoaringBitmap {
     fn add_fetch_container(&mut self, value: u32) -> usize {
         let x_high = (value >> 16) as u16;
 
-        if let Some(i) = self.get_index(x_high) {
+        if let Ok(i) = self.get_index(x_high) {
             self.containers[i].add(value as u16);
 
             i
@@ -245,7 +245,7 @@ impl RoaringBitmap {
     pub fn remove(&mut self, value: u32) {
         let x_high = (value >> 16) as u16;
         
-        if let Some(i) = self.get_index(x_high) {
+        if let Ok(i) = self.get_index(x_high) {
             self.containers[i].remove(value as u16);
             
             if self.containers[i].is_empty() {
@@ -267,17 +267,8 @@ impl RoaringBitmap {
             let container_min = if min_key == self.keys[i] { min & 0xFFFF } else { 0 };
             let container_max = if max_key == self.keys[i] { max & 0xFFFF } else { (1 << 16) };
 
-            let before = self.containers[i].cardinality();
             let has_elements = self.containers[i]
                 .remove_range(container_min..container_max);
-            
-            let after = self.containers[i].cardinality();
-            println!(
-                "change: {:?}, before: {:?}, after: {:?}",
-                before - after,
-                before,
-                after
-            );
 
             if has_elements {
                 i += 1;
@@ -300,7 +291,7 @@ impl RoaringBitmap {
             let key = (*value >> 16) as u16;
 
             if c_index.is_none() || key != self.keys[c_index.unwrap()] {
-                c_index = self.get_index(key);
+                c_index = self.get_index(key).ok();
             }
             
             if let Some(index) = c_index {
@@ -320,7 +311,7 @@ impl RoaringBitmap {
     pub fn contains(&self, value: u32) -> bool {
         let high = (value >> 16) as u16;
 
-        if let Some(i) = self.get_index(high) {
+        if let Ok(i) = self.get_index(high) {
             return self.containers[i].contains(value as u16);
         }
 
@@ -356,7 +347,7 @@ impl RoaringBitmap {
         let ci_max = self.get_index(key_max as u16);
 
         // One or both containers don't exist in this bitmap
-        if ci_min.is_none() || ci_max.is_none() {
+        if ci_min.is_err() || ci_max.is_err() {
             return false;
         }
 
@@ -834,7 +825,7 @@ impl RoaringBitmap {
         }
 
         // Append any remaining containers
-        if let Some(mut i_last) = self.get_index(end_high as u16) {
+        if let Ok(mut i_last) = self.get_index(end_high as u16) {
             i_last += 1; // Increment to get the next container after the last flipped one
 
             if i_last < self.containers.len() {
@@ -849,7 +840,7 @@ impl RoaringBitmap {
     /// Insert the negation of the container within `range` with the given key.
     /// Creates a new full container if no container is found
     fn append_flipped(&mut self, other: &Self, key: u16, range: Range<u32>) {
-        if let Some(i) = other.get_index(key) {
+        if let Ok(i) = other.get_index(key) {
             let unflipped = &other.containers[i];
             let flipped = unflipped.not(range);
 
@@ -1101,24 +1092,22 @@ impl RoaringBitmap {
     /// [`not`]: RoaringBitmap::not
     pub fn inplace_not<R: RangeBounds<u32>>(&mut self, range: R) {
         let (min, max) = range.into_bound();
-
-        let high_start = (min >> 16) as u16;
-        let mut high_end = (max >> 16) as u16;
+        let mut high_start = (min >> 16) as u16;
+        let mut high_end = ((max - 1) >> 16) as u16;
         let low_start = min & 0xFFFF;
-        let low_end = max & 0xFFFF;
+        let low_end = (max - 1) & 0xFFFF;
+
+        println!("high_start: {:?}, high_end: {:?}", high_start, high_end);
 
         // Keys are the same, just do it in place
         if high_start == high_end {
-            if let Some(i) = self.get_index(high_start) {
-                self.containers[i].not(low_start..low_end);
-            }
+            self.inplace_flip(high_start, low_start..low_end);
         }
         else {
             // First container is a partial one, flip in place
             if low_start > 0 {
-                if let Some(i) = self.get_index(high_start) {
-                    self.containers[i].not(low_start..(1 << 16));
-                }
+                self.inplace_flip(high_start, low_start..(1 << 16));
+                high_start += 1;
             }
 
             if low_end != 0xFFFF {
@@ -1126,18 +1115,24 @@ impl RoaringBitmap {
             }
 
             for bound in high_start..=high_end {
-                if let Some(i) = self.get_index(bound) {
-                    self.containers[i].not(0..(1 << 16));
-                }
+                self.inplace_flip(bound, 0..(1 << 16));
             }
 
             // End is a partial container, flip in place
             if low_end != 0xFFFF {
-                high_end += 1;
+                self.inplace_flip(high_end + 1, 0..low_end);
+            }
+        }
+    }
 
-                if let Some(i) = self.get_index(high_end) {
-                    self.containers[i].not(0..low_end);
-                }
+    fn inplace_flip(&mut self, key: u16, range: Range<u32>) {
+        match self.get_index(key) {
+            Ok(index) => {
+                self.containers[index].not(range);
+            },
+            Err(index) => {
+                self.keys.insert(index, key);
+                self.containers.insert(index, Container::from_range(range));
             }
         }
     }
@@ -1215,9 +1210,8 @@ impl RoaringBitmap {
 
     /// Find the index for a given key
     #[inline]
-    fn get_index(&self, x: u16) -> Option<usize> {
+    fn get_index(&self, x: u16) -> Result<usize, usize> {
         self.keys.binary_search(&x)
-            .ok()
     }
     
     /// Get an iterator over the values of the bitmap
@@ -1652,22 +1646,23 @@ mod test {
         let input = generate_data(0..20_000_000, 500_000);
         let mut bitmap = RoaringBitmap::new();
         bitmap.add_slice(&input);
-        
+
         // Remove the first all elements up to 10 million
         bitmap.remove_range(MIN..MAX);
 
-        let mut num_removed = 0;
+        let mut result = Vec::with_capacity(input.len());
         for value in input.iter() {
-            if *value >= MIN && *value < MAX {
-                num_removed += 1;
+            if *value < MIN || *value >= MAX {
+                result.push(*value);
             }
         }
 
-        println!("expected removed: {:?}", num_removed);
+        assert_eq!(bitmap.cardinality(), result.len());
 
-        assert_eq!(bitmap.cardinality(), input.len() - num_removed);
+        let iter = bitmap.iter()
+            .zip(result.iter());
 
-        for (found, expected) in bitmap.iter().zip(input[num_removed..].iter()) {
+        for (found, expected) in iter {
             assert_eq!(found, *expected);
         }
     }
@@ -1875,10 +1870,15 @@ mod test {
     fn inplace_not() {
         let input = generate_data(0..20_000_000, 500_000);
         let mut bitmap = RoaringBitmap::from_slice(&input);
-        let orig_card = bitmap.cardinality();
         bitmap.inplace_not(..);
 
-        assert_eq!(bitmap.cardinality(), (1 << 32) - orig_card);
+        println!(
+            "expected: {:?}, difference: {:?}", 
+            (1 << 32) - input.len(), 
+            (1 << 32) - bitmap.cardinality()
+        );
+
+        assert_eq!(bitmap.cardinality(), (1 << 32) - input.len());
     }
 
     #[test]

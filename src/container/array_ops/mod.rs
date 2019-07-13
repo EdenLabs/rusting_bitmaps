@@ -98,8 +98,6 @@ pub fn count_greater(slice: &[u16], key: u16) -> usize {
 }
 
 pub fn advance_until(slice: &[u16], index: usize, min: u16) -> usize {
-    // TODO: Optimize
-
     let mut lower = index as usize;
     if lower >= slice.len() || slice[lower] >= min {
         return lower;

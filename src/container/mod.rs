@@ -244,8 +244,7 @@ impl Container {
         else {
             let mut container = BitsetContainer::new();
             container.set_range(range);
-
-            Container::Bitset(container)
+            container.into_efficient_container()
         }
     }
 

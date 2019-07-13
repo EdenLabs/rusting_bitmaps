@@ -167,7 +167,7 @@ impl ArrayContainer {
         }
 
         let min_index = array_ops::advance_until(&self, 0, range.start as u16);
-        let max_index = array_ops::advance_until(&self, min_index, range.end as u16);
+        let max_index = array_ops::advance_until(&self, min_index, (range.end - 1) as u16);
 
         self.array.copy_within(max_index.., min_index);
         self.array.truncate(self.len() - (max_index - min_index));
