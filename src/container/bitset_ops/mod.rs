@@ -1,3 +1,4 @@
+// TODO: Move all these to their respective trait impls
 macro_rules! bitset_op {
     ($name: ident, $($op:tt)*) => {
         /// Perform the operation between `a` and `b` and write the result into `out`

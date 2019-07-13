@@ -558,17 +558,11 @@ impl SetAnd<BitsetContainer> for ArrayContainer {
     fn and(&self, other: &BitsetContainer) -> Container {
         let mut result = ArrayContainer::with_capacity(self.cardinality());
 
-        unsafe {
-            let mut new_card = 0;
-            let card = self.cardinality();
-
-            for i in 0..card {
-                let key = *self.array.get_unchecked(i);
-                *result.array.get_unchecked_mut(new_card) = key;
-                new_card += other.contains(key) as usize;
+        for i in 0..self.cardinality() {
+            let key = self.array[i];
+            if other.contains(key) {
+                result.push(key);
             }
-
-            result.array.set_len(new_card);
         }
 
         Container::Array(result)
@@ -606,41 +600,36 @@ impl SetAnd<RunContainer> for ArrayContainer {
         if other.num_runs() == 0 {
             return 0;
         }
-        
-        unsafe {
-            let ptr_a = self.as_ptr();
-            let ptr_r = other.as_ptr();
 
-            let mut i_a = 0;
-            let mut i_r = 0;
-            let mut card = 0;
+        let mut i_a = 0;
+        let mut i_r = 0;
+        let mut card = 0;
 
-            while i_a < self.len() {
-                let value = *(ptr_a.add(i_a));
-                let (mut start, mut end) = (*(ptr_r.add(i_r))).range();
+        while i_a < self.len() {
+            let value = self[i_a];
+            let (mut start, mut end) = other[i_r].range();
 
-                while end < value {
-                    i_r += 1;
-                    if i_r == other.num_runs() {
-                        return card;
-                    }
-
-                    let se = (*(ptr_r.add(i_r))).range();
-                    start = se.0;
-                    end = se.1;
+            while end < value {
+                i_r += 1;
+                if i_r == other.num_runs() {
+                    return card;
                 }
 
-                if start > value {
-                    i_a = array_ops::advance_until(&self, i_a, start);
-                }
-                else {
-                    card += 1;
-                    i_a += 1;
-                }
+                let se = other[i_r].range();
+                start = se.0;
+                end = se.1;
             }
-        
-            card
+
+            if start > value {
+                i_a = array_ops::advance_until(&self, i_a, start);
+            }
+            else {
+                card += 1;
+                i_a += 1;
+            }
         }
+    
+        card
     }
     
     // TODO: Find a way to do this inplace
@@ -696,14 +685,10 @@ impl SetAndNot<BitsetContainer> for ArrayContainer {
     fn and_not(&self, other: &BitsetContainer) -> Container {
         let mut result = ArrayContainer::with_capacity(self.cardinality());
 
-        unsafe {
-            let mut card = 0;
-            for key in self.array.iter() {
-                *result.get_unchecked_mut(card) = *key;
-                card += !other.contains(*key) as usize;
+        for key in self.array.iter() {
+            if !other.contains(*key) {
+                result.push(*key);
             }
-
-            result.set_cardinality(card);
         }
 
         Container::Array(result)
@@ -777,17 +762,16 @@ impl SetAndNot<RunContainer> for ArrayContainer {
 
 impl SetXor<Self> for ArrayContainer {
     fn xor(&self, other: &Self) -> Container {
-        let len = self.len() + other.len();
-        let mut result = ArrayContainer::with_capacity(len);
-        let ptr = result.as_mut_ptr();
-
         unsafe {
+            let req = self.len() + other.len();
+            let mut result = ArrayContainer::with_capacity(req);
+
+            let ptr = result.as_mut_ptr();
             let len = array_ops::xor(&self, &other, ptr);
-
             result.set_cardinality(len);
+            
+            Container::Array(result)
         }
-
-        Container::Array(result)
     }
     
     fn inplace_xor(mut self, other: &Self) -> Container {
@@ -910,31 +894,26 @@ impl Subset<RunContainer> for ArrayContainer {
         if self.len() > other.len() {
             return false;
         }
+
+        let mut i_a = 0;
+        let mut i_r = 0;
         
-        unsafe {
-            let ptr_a = self.as_ptr();
-            let ptr_r = other.as_ptr();
+        while i_a < self.len() && i_r < other.len() {
+            let (start, end) = other[i_r].range();
+            let value = self[i_a];
             
-            let mut i_a = 0;
-            let mut i_r = 0;
-            
-            while i_a < self.len() && i_r < other.len() {
-                let (start, end) = (*(ptr_r.add(i_r))).range();
-                let value = *(ptr_a.add(i_a));
-                
-                if value < start {
-                    return false;
-                }
-                else if value > end {
-                    i_r += 1;
-                }
-                else {
-                    i_a += 1;
-                }
+            if value < start {
+                return false;
             }
-            
-            i_a == self.len()
+            else if value > end {
+                i_r += 1;
+            }
+            else {
+                i_a += 1;
+            }
         }
+        
+        i_a == self.len()
     }
 }
 

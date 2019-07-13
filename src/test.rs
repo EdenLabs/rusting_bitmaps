@@ -146,8 +146,6 @@ pub(crate) fn compute_result<T>(a: &[T], b: &[T], result: OpType) -> Vec<T>
         OpType::Xor => {
             let mut result = Vec::with_capacity(a.len() + b.len());
 
-            println!("xor - a: {:?}, b: {:?}", a.len(), b.len());
-
             let mut i0 = 0;
             let mut i1 = 0;
             while i0 < a.len() && i1 < b.len() {
@@ -169,18 +167,12 @@ pub(crate) fn compute_result<T>(a: &[T], b: &[T], result: OpType) -> Vec<T>
             }
 
             if i0 < a.len() {
-                println!("extend a");
-
                 result.extend_from_slice(&a[i0..]);
             }
 
             if i1 < b.len() {
-                println!("extend b");
-
                 result.extend_from_slice(&b[i1..])
             }
-
-            println!("result: {:?}", result.len());
 
             result
         }
@@ -220,8 +212,6 @@ pub(crate) fn op_test<C0, C1, T, F, R>(op: OpType, f: F)
     let data_b = generate_seeded_data(range1, count1, 1);
     let data_res = compute_result(&data_a, &data_b, op);
 
-    println!("data_res: {:?}", data_res.len());
-
     let a = C0::from_data(&data_a);
     let b = C1::from_data(&data_b);
 
@@ -235,6 +225,13 @@ pub(crate) fn op_test<C0, C1, T, F, R>(op: OpType, f: F)
         r.card(), 
         data_res.len()
     );
+
+    let iter = r.iter()
+        .zip(data_res.iter());
+
+    for (found, expected) in iter {
+        //println!("found: {:?}, expected: {:?}", found, expected);
+    }
 
     // Check that the output matches the precomputed result
     for (found, expected) in r.iter().zip(data_res.iter()) {

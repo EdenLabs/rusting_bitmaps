@@ -266,13 +266,6 @@ impl Container {
         }
     }
 
-    pub fn is_bitset(&self) -> bool {
-        match self {
-            Container::Bitset(_c) => true,
-            _ => false
-        }
-    }
-
     /// Shrink the container it fit it's content
     pub fn shrink_to_fit(&mut self) {
         match self {

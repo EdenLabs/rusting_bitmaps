@@ -1104,6 +1104,7 @@ impl RoaringBitmap {
     /// [`not`]: RoaringBitmap::not
     pub fn inplace_not<R: RangeBounds<u32>>(&mut self, range: R) {
         let (min, max) = range.into_bound();
+
         let high_start = (min >> 16) as u16;
         let mut high_end = (max >> 16) as u16;
         let low_start = min & 0xFFFF;
@@ -1535,10 +1536,8 @@ impl<'a> Iterator for Iter<'a> {
         }
 
         item.map(|low| {
-            let key = unsafe { 
-                *self.keys.get_unchecked(self.index) 
-            };
-
+            let key = self.keys[self.index];
+            
             (u32::from(key) << 16) | u32::from(low)
         })
     }
@@ -1777,11 +1776,6 @@ mod test {
 
         assert!(b.subset_of(&a));
         assert!(!a.subset_of(&b));
-    }
-
-    #[test]
-    fn jaccard_index() {
-        unimplemented!()
     }
 
     #[test]

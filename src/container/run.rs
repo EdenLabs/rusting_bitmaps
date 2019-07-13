@@ -1820,35 +1820,33 @@ impl Subset<Self> for RunContainer {
             return false;
         }
 
-        unsafe {
-            let mut i_0 = 0;
-            let mut i_1 = 0;
+        let mut i_0 = 0;
+        let mut i_1 = 0;
 
-            while i_0 < self.runs.len() && i_1 < other.runs.len() {
-                let start_0 = self.runs.get_unchecked(i_0).value;
-                let start_1 = other.runs.get_unchecked(i_1).value;
-                let stop_0 = start_0 + self.runs.get_unchecked(i_0).length;
-                let stop_1 = start_1 + other.runs.get_unchecked(i_1).length;
+        while i_0 < self.runs.len() && i_1 < other.runs.len() {
+            let start_0 = self.runs[i_0].value;
+            let start_1 = other.runs[i_1].value;
+            let stop_0 = start_0 + self.runs[i_0].length;
+            let stop_1 = start_1 + other.runs[i_1].length;
 
-                if start_0 < start_1 {
-                    return false;
+            if start_0 < start_1 {
+                return false;
+            }
+            else {
+                if stop_0 < stop_1 {
+                    i_0 += 1;
+                }
+                else if stop_0 == stop_1 {
+                    i_0 += 1;
+                    i_1 += 1;
                 }
                 else {
-                    if stop_0 < stop_1 {
-                        i_0 += 1;
-                    }
-                    else if stop_0 == stop_1 {
-                        i_0 += 1;
-                        i_1 += 1;
-                    }
-                    else {
-                        i_1 += 1;
-                    }
+                    i_1 += 1;
                 }
             }
-
-            i_0 == self.runs.len()
         }
+
+        i_0 == self.runs.len()
     }
 }
 
@@ -2003,35 +2001,33 @@ impl<'a> Iterator for Iter<'a> {
     type Item = u16;
     
     fn next(&mut self) -> Option<Self::Item> {
-        unsafe {
-            if self.rle_index < self.runs.len() {
-                let rle = self.runs.get_unchecked(self.rle_index);
-                
-                if self.value_index <= rle.length {
-                    // Extract value
-                    let value = rle.value + self.value_index;
+        if self.rle_index < self.runs.len() {
+            let rle = self.runs[self.rle_index];
+            
+            if self.value_index <= rle.length {
+                // Extract value
+                let value = rle.value + self.value_index;
 
-                    // Bump index
-                    let next = self.value_index.checked_add(1);
+                // Bump index
+                let next = self.value_index.checked_add(1);
 
-                    // Increment run if necessary
-                    if next.is_none() || next.unwrap() > rle.length {
-                        self.rle_index += 1;
-                        self.value_index = 0;
-                    }
-                    else {
-                        self.value_index = next.unwrap();
-                    }
-
-                    Some(value)
+                // Increment run if necessary
+                if next.is_none() || next.unwrap() > rle.length {
+                    self.rle_index += 1;
+                    self.value_index = 0;
                 }
                 else {
-                    None
+                    self.value_index = next.unwrap();
                 }
+
+                Some(value)
             }
             else {
                 None
             }
+        }
+        else {
+            None
         }
     }
 }

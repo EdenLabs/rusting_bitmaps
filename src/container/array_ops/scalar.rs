@@ -4,7 +4,7 @@ use std::ptr;
 unsafe fn append_slice(slice: &[u16], dst: *mut u16) {
     let src = slice.as_ptr();
     let len = slice.len();
-    
+
     ptr::copy(src, dst, len);
 }
 
@@ -256,49 +256,41 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 /// # Remarks
 /// - Assumes that `a` and `b` are sorted. The result is undefined if violated
 pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
-    let mut ptr_a = a.as_ptr();
-    let mut ptr_b = b.as_ptr();
-    let ptr_a_end = ptr_a.add(a.len());
-    let ptr_b_end = ptr_b.add(b.len());
-    
+    let mut i0 = 0;
+    let mut i1 = 0;
     let mut count = 0;
 
-    while ptr_a < ptr_a_end && ptr_b < ptr_b_end {        
-        if *ptr_a == *ptr_b {
-            ptr_a = ptr_a.add(1);
-            ptr_b = ptr_b.add(1);
+    while i0 < a.len() && i1 < b.len() {        
+        let s0 = a[i0];
+        let s1 = b[i1];
+        
+        if s0 == s1 {
+            i0 += 1;
+            i1 += 1;
         }
         else {
-            if *ptr_a < *ptr_b {
-                ptr::write(out.add(count), *ptr_a);
+            if s0 < s1 {
+                ptr::write(out.add(count), s0);
+                i0 += 1;   
                 count += 1;
-
-                ptr_a = ptr_a.add(1);   
             }
             else {
-                ptr::write(out.add(count)), *ptr_b);
+                ptr::write(out.add(count), s1);
+                i1 += 1;
                 count += 1;
-
-                ptr_b = ptr_b.add(1);
             }
         }
     }
-    
-    if ptr_a < ptr_a_end {
-        let i = ptr_a_end.offset_from(ptr_a) as usize;
-        
-        append_slice(&a[i..], out.add(count));
-        count += a.len() - i;
+
+    if i0 < a.len() {
+        append_slice(&a[i0..], out.add(count));
+        count += a.len() - i0;
     }
     
-    if ptr_b < ptr_b_end {
-        let i = ptr_b_end.offset_from(ptr_b) as usize;
-
-        append_slice(&b[i..], out.add(count));
-        count += b.len() - i;
+    if i1 < b.len() {
+        append_slice(&b[i1..], out.add(count));
+        count += b.len() - i1;
     }
 
     count
 }
-
-// TODO: Write tests
