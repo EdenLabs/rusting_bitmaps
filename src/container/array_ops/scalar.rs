@@ -270,13 +270,13 @@ pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         }
         else {
             if *ptr_a < *ptr_b {
-                *(out.add(count)) = *ptr_a;
+                ptr::write(out.add(count), *ptr_a);
                 count += 1;
 
                 ptr_a = ptr_a.add(1);   
             }
             else {
-                *(out.add(count)) = *ptr_b;
+                ptr::write(out.add(count)), *ptr_b);
                 count += 1;
 
                 ptr_b = ptr_b.add(1);
