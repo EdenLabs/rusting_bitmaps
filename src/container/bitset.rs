@@ -6,17 +6,6 @@ use std::ops::{Deref, DerefMut, Range};
 use crate::IntoBound;
 use crate::container::*;
 
-use super::bitset_ops;
-
-// Notes on inplace ops:
-//
-// We cheat a bit here to get the operations inplace
-// The routine is designed in a way that it reads in the word from each 
-// bitset then outputs the result into the out set.
-// 
-// By telling it to read and write from the same set we can operate
-// inplace and still maintain vectorization
-
 /// The size of the bitset in 64bit words
 pub const BITSET_SIZE_IN_WORDS: usize = 1024;
 
@@ -58,7 +47,6 @@ impl BitsetContainer {
         let (min, max) = (range.start, range.end);
 
         if min == max {
-            self.set(min as u16);
             return;
         }
 
@@ -128,7 +116,6 @@ impl BitsetContainer {
         let (min, max) = range.into_bound();
 
         if min == max {
-            self.unset(min as u16);
             return;
         }
 
@@ -136,21 +123,21 @@ impl BitsetContainer {
         let last_word = ((max - 1) / 64) as usize;
 
         if first_word == last_word {
-            let w0 = std::u64::MAX << (min % 64);
-            let w1 = std::u64::MAX >> ((!max + 1) % 64);
+            let w0 = !0_u64 << (min % 64);
+            let w1 = !0_u64 >> ((!max + 1) % 64);
             self.bitset[first_word] &= !(w0 & w1);
             self.cardinality.invalidate();
 
             return;
         }
 
-        self.bitset[first_word] &= !(std::u64::MAX << (min % 64));
+        self.bitset[first_word] &= !(!0_u64 << (min % 64));
         
-        for word in self.bitset[(first_word + 1)..last_word].iter_mut() {
-            *word = 0;
+        for i in (first_word + 1)..last_word {
+            self.bitset[i] = 0;
         }
 
-        self.bitset[last_word] &= !(std::u64::MAX >> ((!max + 1) % 64));
+        self.bitset[last_word] &= !(!0_u64 >> ((!max + 1) % 64));
     
         self.cardinality.invalidate();
     }
@@ -291,7 +278,14 @@ impl BitsetContainer {
     /// The cardinality of the bitset
     #[inline]
     pub fn cardinality(&self) -> usize {
-        self.cardinality.get(|| bitset_ops::cardinality(&self))
+        self.cardinality.get(|| {
+            let mut count = 0;
+            for word in self.bitset.iter() {
+                count += word.count_ones();
+            }
+
+            count as usize
+        })
     }
 
     /// Get the cardinality of the range [min-max)
@@ -304,7 +298,7 @@ impl BitsetContainer {
         }
 
         let start = min as usize;
-        let len_minus_one = ((max - min) - 1) as usize;
+        let len_minus_one = range.len() - 1;
 
         let first_word = start >> 6;
         let last_word = (start + len_minus_one) >> 6;
@@ -457,7 +451,7 @@ impl BitsetContainer {
         num_runs as usize
     }
 
-    /// Get an iterator over the words of the bitset
+    /// Get an iterator over the elements of the bitset
     pub fn iter(&self) -> Iter {
         let (index, first_word) = {
             let mut index = 0;
@@ -479,6 +473,12 @@ impl BitsetContainer {
             word: first_word,
             base: (index * 64) as u32// TODO: Fixme
         }
+    }
+
+    /// Get an iterator over the words of the bitset
+    #[inline]
+    pub fn iter_words(&self) -> impl Iterator<Item=&u64> {
+        self.bitset.iter()
     }
     
     /// Get a mutable pointer to the words of the bitset
@@ -604,7 +604,15 @@ impl DerefMut for BitsetContainer {
 impl SetOr<Self> for BitsetContainer {
     fn or(&self, other: &Self) -> Container {
         let mut result = BitsetContainer::new();
-        bitset_ops::or(&self, &other, &mut result);
+
+        let pass = self.iter_words()
+            .zip(other.iter_words())
+            .enumerate()
+            .map(|(i, (wa, wb))| (i, wa, wb));
+
+        for (i, wa, wb) in pass {
+            result[i] = wa | wb;
+        }
         
         result.cardinality.invalidate();
         
@@ -616,7 +624,15 @@ impl SetOr<Self> for BitsetContainer {
         unsafe {
             let ptr = self.as_mut_ptr();
             let out_slice = slice::from_raw_parts_mut(ptr, BITSET_SIZE_IN_WORDS);
-            bitset_ops::or(&self, &other, out_slice);
+            
+            let pass = self.iter_words()
+                .zip(other.iter_words())
+                .enumerate()
+                .map(|(i, (wa, wb))| (i, wa, wb));
+
+            for (i, wa, wb) in pass {
+                out_slice[i] = wa | wb;
+            }
             
             self.cardinality.invalidate();
             
@@ -672,13 +688,28 @@ impl SetOr<RunContainer> for BitsetContainer {
 impl SetAnd<Self> for BitsetContainer {
     fn and(&self, other: &Self) -> Container {
         let mut result = BitsetContainer::new();
-        bitset_ops::and(&self, &other, &mut result);
+        let pass = self.iter_words()
+            .zip(other.iter_words())
+            .enumerate()
+            .map(|(i, (wa, wb))| (i, wa, wb));
+
+        for (i, wa, wb) in pass {
+            result[i] = wa & wb;
+        }
 
         Container::Bitset(result)
     }
 
     fn and_cardinality(&self, other: &Self) -> usize {
-        bitset_ops::and_cardinality(&self, &other)
+        let mut count = 0;
+        let pass = self.iter_words()
+            .zip(other.iter_words());
+
+        for (a, b) in pass {
+            count += (a & b).count_ones();
+        }
+
+        count as usize
     }
 
     fn inplace_and(mut self, other: &Self) -> Container {
@@ -686,7 +717,15 @@ impl SetAnd<Self> for BitsetContainer {
         unsafe {
             let ptr = self.as_mut_ptr();
             let out_slice = slice::from_raw_parts_mut(ptr, BITSET_SIZE_IN_WORDS);
-            bitset_ops::and(&self, &other, out_slice);
+            
+            let pass = self.iter_words()
+                .zip(other.iter_words())
+                .enumerate()
+                .map(|(i, (wa, wb))| (i, wa, wb));
+
+            for (i, wa, wb) in pass {
+                out_slice[i] = wa & wb;
+            }
             
             self.cardinality.invalidate();
         }
@@ -759,7 +798,15 @@ impl SetAnd<RunContainer> for BitsetContainer {
 impl SetAndNot<Self> for BitsetContainer {
     fn and_not(&self, other: &Self) -> Container {
         let mut result = BitsetContainer::new();
-        bitset_ops::and_not(&self, &other, &mut result);
+
+        let pass = self.iter_words()
+            .zip(other.iter_words())
+            .enumerate()
+            .map(|(i, (wa, wb))| (i, wa, wb));
+
+        for (i, wa, wb) in pass {
+            result[i] = wa & !wb;
+        }
 
         result.into_efficient_container()
     }
@@ -769,7 +816,15 @@ impl SetAndNot<Self> for BitsetContainer {
         unsafe {
             let ptr = self.as_mut_ptr();
             let out_slice = slice::from_raw_parts_mut(ptr, BITSET_SIZE_IN_WORDS);
-            bitset_ops::and_not(&self, &other, out_slice);
+            
+            let pass = self.iter_words()
+                .zip(other.iter_words())
+                .enumerate()
+                .map(|(i, (wa, wb))| (i, wa, wb));
+
+            for (i, wa, wb) in pass {
+                out_slice[i] = wa & !wb;
+            }
             
             self.cardinality.invalidate();
         }
@@ -814,7 +869,14 @@ impl SetAndNot<RunContainer> for BitsetContainer {
 impl SetXor<Self> for BitsetContainer {
     fn xor(&self, other: &Self) -> Container {
         let mut result = BitsetContainer::new();
-        bitset_ops::xor(&self, &other, &mut result);
+        let pass = self.iter_words()
+            .zip(other.iter_words())
+            .enumerate()
+            .map(|(i, (wa, wb))| (i, wa, wb));
+
+        for (i, wa, wb) in pass {
+            result[i] = wa ^ wb;
+        }
 
         result.into_efficient_container()
     }
@@ -824,7 +886,15 @@ impl SetXor<Self> for BitsetContainer {
         unsafe {
             let ptr = self.as_mut_ptr();
             let out_slice = slice::from_raw_parts_mut(ptr, BITSET_SIZE_IN_WORDS);
-            bitset_ops::xor(&self, &other, out_slice);
+            
+            let pass = self.iter_words()
+                .zip(other.iter_words())
+                .enumerate()
+                .map(|(i, (wa, wb))| (i, wa, wb));
+
+            for (i, wa, wb) in pass {
+                out_slice[i] = wa ^ wb;
+            }
             
             self.cardinality.invalidate();
         }

@@ -20,7 +20,6 @@
 //! - Custom allocator support
 //! - Copy-on-Write is unsupported
 
-// TODO: Reduce unsafe code usage without impacting performance much
 // TODO: Run through and change any operations on intermediate containers to be inplace to reduce memory churn
 // TODO: Ensure soundness in the face of panics where necessary
 

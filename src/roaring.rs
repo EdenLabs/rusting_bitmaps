@@ -89,8 +89,6 @@ impl RoaringBitmap {
             let key = value >> 16;
             let container_min = (value & 0xFFFF) as u32;
             let container_max = ((max - (key << 16)).min(1 << 16)) as u32;
-            
-            println!("value: {:?}, min: {:?}, max: {:?}", value, container_min, container_max);
             let container = Container::from_range(container_min..container_max);
 
             bitmap.containers.push(container);
@@ -264,31 +262,30 @@ impl RoaringBitmap {
         let min_key = (min >> 16) as u16;
         let max_key = (max >> 16) as u16;
 
-        let mut src = array_ops::count_less(&self.keys, min_key);
-        let mut dst = src;
+        let mut i = array_ops::count_less(&self.keys, min_key);
+        while i < self.keys.len() && self.keys[i] <= max_key {
+            let container_min = if min_key == self.keys[i] { min & 0xFFFF } else { 0 };
+            let container_max = if max_key == self.keys[i] { max & 0xFFFF } else { (1 << 16) };
 
-        while src < self.keys.len() && self.keys[src] <= max_key {
-            let container_min = if min_key == self.keys[src] { min } else { 0 };
-            let container_max = if max_key == self.keys[src] { max } else { 0xFFFF };
-
-            let has_elements = self.containers[src]
+            let before = self.containers[i].cardinality();
+            let has_elements = self.containers[i]
                 .remove_range(container_min..container_max);
+            
+            let after = self.containers[i].cardinality();
+            println!(
+                "change: {:?}, before: {:?}, after: {:?}",
+                before - after,
+                before,
+                after
+            );
 
             if has_elements {
-                dst += 1;
+                i += 1;
             }
-
-            src += 1;
-        }
-
-        // Check if any containers can be removed
-        if src > dst {
-            let count = dst - src;
-            let start = self.containers.len() - src;
-            let end = start + count;
-
-            self.containers.drain(start..end);
-            self.keys.drain(start..end);
+            else {
+                self.keys.remove(i);
+                self.containers.remove(i);
+            }
         }
     }
     
@@ -1434,8 +1431,6 @@ impl RoaringBitmap {
         for i in 0..(size as usize) {
             let card = (cards[i] as usize) + 1;
             let (is_bitset, is_run) = {
-                println!("has_run: {:?}, i: {:?}, index: {:?}", has_run, i, i / 8);
-
                 if has_run && bitmap[i / 8] & (1 << (i % 8)) != 0 {
                     (false, true)
                 }
@@ -1651,22 +1646,26 @@ mod test {
 
     #[test]
     fn remove_range() {
+        const MIN: u32 = 5_000_000;
+        const MAX: u32 = 10_000_000;
+
         let input = generate_data(0..20_000_000, 500_000);
         let mut bitmap = RoaringBitmap::new();
         bitmap.add_slice(&input);
         
         // Remove the first all elements up to 10 million
-        bitmap.remove_range(0..10_000_000);
+        bitmap.remove_range(MIN..MAX);
 
-        // Figure out how many elements were removed
-        let num_removed = {
-            match input.binary_search(&10_000_000) {
-                Ok(index) => input.len() - index,
-                Err(index) => input.len() - index + 1
+        let mut num_removed = 0;
+        for value in input.iter() {
+            if *value >= MIN && *value < MAX {
+                num_removed += 1;
             }
-        };
+        }
 
-        assert_eq!(bitmap.len(), input.len() - num_removed);
+        println!("expected removed: {:?}", num_removed);
+
+        assert_eq!(bitmap.cardinality(), input.len() - num_removed);
 
         for (found, expected) in bitmap.iter().zip(input[num_removed..].iter()) {
             assert_eq!(found, *expected);

@@ -161,15 +161,16 @@ impl ArrayContainer {
     }
 
     /// Remove all elements within the spefied range, exclusive
-    pub fn remove_range(&mut self, range: Range<usize>) {
-        if range.is_empty() || range.end as usize > self.len() {
+    pub fn remove_range(&mut self, range: Range<u32>) {        
+        if range.is_empty() {
             return;
         }
 
-        let len = self.len();
-        let remainder = (range.end)..len;
-        self.array.copy_within(remainder.clone(), range.start);
-        self.array.truncate(range.start + remainder.len());
+        let min_index = array_ops::advance_until(&self, 0, range.start as u16);
+        let max_index = array_ops::advance_until(&self, min_index, range.end as u16);
+
+        self.array.copy_within(max_index.., min_index);
+        self.array.truncate(self.len() - (max_index - min_index));
     }
 
     /// Check if the array contains a specified value
@@ -587,49 +588,17 @@ impl SetAnd<BitsetContainer> for ArrayContainer {
 }
 
 impl SetAnd<RunContainer> for ArrayContainer {
+    // These are the logical equivalent of each other
+    // so we can just call the run version
+
     #[inline]
     fn and(&self, other: &RunContainer) -> Container {
         SetAnd::and(other, self)
     }
 
+    #[inline]
     fn and_cardinality(&self, other: &RunContainer) -> usize {
-        if other.is_full() {
-            return self.len();
-        }
-        
-        if other.num_runs() == 0 {
-            return 0;
-        }
-
-        let mut i_a = 0;
-        let mut i_r = 0;
-        let mut card = 0;
-
-        while i_a < self.len() {
-            let value = self[i_a];
-            let (mut start, mut end) = other[i_r].range();
-
-            while end < value {
-                i_r += 1;
-                if i_r == other.num_runs() {
-                    return card;
-                }
-
-                let se = other[i_r].range();
-                start = se.0;
-                end = se.1;
-            }
-
-            if start > value {
-                i_a = array_ops::advance_until(&self, i_a, start);
-            }
-            else {
-                card += 1;
-                i_a += 1;
-            }
-        }
-    
-        card
+        SetAnd::and_cardinality(other, self)
     }
     
     // TODO: Find a way to do this inplace
@@ -706,10 +675,6 @@ impl SetAndNot<RunContainer> for ArrayContainer {
             return Container::Array(self.clone());
         }
 
-        if other.is_full() {
-            return Container::Array(ArrayContainer::new());
-        }
-
         let mut result = ArrayContainer::with_capacity(self.cardinality());
  
         let runs = other.deref();
@@ -718,9 +683,9 @@ impl SetAndNot<RunContainer> for ArrayContainer {
         let mut run_end: usize = usize::from(run.end());
         let mut which_run = 0;
 
-        let mut i = 0;
-        while i < self.cardinality() {
-            let value = usize::from(self.array[i]);
+        let mut i: isize = 0;
+        while (i as usize) < self.cardinality() {
+            let value = usize::from(self.array[i as usize]);
 
             if value < run_start {
                 result.push(value as u16);
@@ -728,7 +693,7 @@ impl SetAndNot<RunContainer> for ArrayContainer {
                 ;
             }
             else {
-                while value > run_end {
+                loop {
                     if which_run + 1 < runs.len() {
                         which_run += 1;
 
@@ -740,11 +705,13 @@ impl SetAndNot<RunContainer> for ArrayContainer {
                         run_end = (1 << 16) + 1;
                         run_start = run_end;
                     }
+
+                    if value <= run_end {
+                        break;
+                    }
                 }
 
-                if i > 0 {
-                    i -= 1;
-                }
+                i -= 1;
             }
 
             i += 1;
@@ -1055,19 +1022,20 @@ mod test {
 
     #[test]
     fn remove_range() {
-        let range = 0..60;
+        let range = 0..10;
+        let res = [0, 1, 2, 3, 4, 8, 9];
+
         let mut array = ArrayContainer::with_capacity(range.len());
         array.add_range(range.clone());
+        array.remove_range(5..8);
 
-        array.remove_range(45..60);
-
-        assert_eq!(array.cardinality(), 45);
+        assert_eq!(array.cardinality(), res.len());
 
         let pass = array.iter()
-            .zip(0..60);
+            .zip(res.iter());
 
         for (found, expected) in pass {
-            assert_eq!(*found, expected);
+            assert_eq!(*found, *expected);
         }
     }
 

@@ -1,7 +1,6 @@
 mod array;
 pub mod array_ops;
 mod bitset;
-mod bitset_ops;
 mod run;
 
 pub use self::array::ArrayContainer;
@@ -324,42 +323,30 @@ impl Container {
     /// Remove all elements within [min-max)
     /// 
     /// # Returns
-    /// Returns false if no more elements are in the container, returns true otherwise
+    /// Returns true if the container still has elements, returns false otherwise
     pub fn remove_range(&mut self, range: Range<u32>) -> bool {
         match self {
             Container::Array(c) => {
-                let vals_greater = array_ops::count_greater(&c[..], range.end as u16);// TODO: Make sure these don't truncate
-                let vals_less = array_ops::count_less(&c[0..(c.len() - vals_greater)], range.start as u16);
-                let result_card = vals_less + vals_greater;
-
-                if result_card == 0 {
-                    false
-                }
-                else {
-                    c.remove_range((range.start as usize)..(range.end as usize));
-
-                    true
-                }
+                c.remove_range(range);
+                !c.is_empty()
             },
             Container::Bitset(c) => {
-                let result_card = c.cardinality() - c.cardinality_range(range.clone());
-
-                if result_card == 0 {
+                println!("bitset");
+                c.unset_range(range);
+                
+                if c.is_empty() {
                     false
                 }
-                else if result_card < DEFAULT_MAX_SIZE {
-                    c.unset_range(range);
-                    *self = Container::Array(c.into());
-
-                    true
-                }
                 else {
-                    c.unset_range(range);
+                    if c.cardinality() < DEFAULT_MAX_SIZE {
+                        *self = Container::Array(c.into());
+                    }
 
                     true
                 }
             },
             Container::Run(c) => {
+                println!("run");
                 let num_runs = c.num_runs();
                 if num_runs == 0 {
                     return false;

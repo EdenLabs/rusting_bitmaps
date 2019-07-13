@@ -19,76 +19,54 @@ pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Second operand is empty, just copy into out
     if b.is_empty() {
         append_slice(a, out);
-        
         return a.len();
     }
 
     // First operand is empty, copy into out
     if a.is_empty() {
         append_slice(b, out);
-        
         return b.len();
     }
 
-
     // Perform union of both operands and append the result into out
-    let mut ptr_a = a.as_ptr();
-    let mut ptr_b = b.as_ptr();
+    let mut i0 = 0;
+    let mut i1 = 0;
     let mut count = 0;
     
-    let ptr_a_end = ptr_a.add(a.len());
-    let ptr_b_end = ptr_b.add(b.len());
+    while i0 < a.len() && i1 < b.len() {
+        let s0 = a[i0];
+        let s1 = b[i1];
 
-    loop {
         // B is greater; append A and advance the iterator
-        if *ptr_a < *ptr_b {
-            *(out.add(count)) = *ptr_a;
+        if s0 < s1 {
+            ptr::write(out.add(count), s0);
+            i0 += 1;
             count += 1;
-
-            ptr_a = ptr_a.add(1);
-            if ptr_a >= ptr_a_end {
-                break;
-            }
         }
         // A is greater; append b and advance the iterator
-        else if *ptr_b < *ptr_a {
-            *(out.add(count)) = *ptr_b;
+        else if s1 < s0 {
+            ptr::write(out.add(count), s1);
+            i1 += 1;
             count += 1;
-
-            ptr_b = ptr_b.add(1);
-            if ptr_b >= ptr_b_end {
-                break;
-            }
         }
         // A and B are equal; append one and advance the iterators
         else {
-            *(out.add(count)) = *ptr_a;
-             count += 1;
-
-            ptr_a = ptr_a.add(1);
-            ptr_b = ptr_b.add(1);
-
-            if ptr_a >= ptr_a_end {
-                break;
-            }
-
-            if ptr_b >= ptr_b_end {
-                break;
-            }
+            ptr::write(out.add(count), s0);
+            i0 += 1;
+            i1 += 1;
+            count += 1;
         }
     }
 
-    if ptr_a < ptr_a_end {
-        let i = ptr_a.offset_from(a.as_ptr()) as usize;
-        
-        append_slice(&a[i..], out.add(count));
-        count += a.len() - i;
+    // Append remainders
+    if i0 < a.len() {
+        append_slice(&a[i0..], out.add(count));
+        count += a.len() - i0;
     }
-    else if ptr_b < ptr_b_end {
-        let i = ptr_b.offset_from(b.as_ptr()) as usize;
-       
-        append_slice(&b[i..], out.add(count));
-        count += b.len() - i;
+    
+    if i1 < b.len() {
+        append_slice(&b[i1..], out.add(count));
+        count += b.len() - i1;
     }
         
     count
@@ -106,40 +84,25 @@ pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         return 0;
     }
 
-    let mut ptr_a = a.as_ptr();
-    let mut ptr_b = b.as_ptr();
-    let ptr_a_end = ptr_a.add(a.len());
-    let ptr_b_end = ptr_b.add(b.len());
-
+    let mut i0 = 0;
+    let mut i1 = 0;
     let mut count = 0;
 
-    'outer: loop {
-        while *ptr_a < *ptr_b {
-            ptr_a = ptr_a.add(1);
+    while i0 < a.len() && i1 < b.len() {
+        let s0 = a[i0];
+        let s1 = b[i1];
 
-            if ptr_a >= ptr_a_end {
-                break 'outer;
-            }
+        if s0 < s1 {
+            i0 += 1;
         }
-
-        while *ptr_b < *ptr_a {
-            ptr_b = ptr_b.add(1);
-
-            if ptr_b >= ptr_b_end {
-                break 'outer;
-            }
+        else if s1 < s0 {
+            i1 += 1;
         }
-
-        if *ptr_a == *ptr_b {
-            *(out.add(count)) = *ptr_a;
+        else {
+            ptr::write(out.add(count), s0);
+            i0 += 1;
+            i1 += 1;
             count += 1;
-
-            ptr_a = ptr_a.add(1);
-            ptr_b = ptr_b.add(1);
-
-            if ptr_a >= ptr_a_end || ptr_b >= ptr_b_end {
-                break;
-            }
         }
     }
 
@@ -155,45 +118,28 @@ pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
         return 0;
     }
 
-    unsafe {
-        let mut ptr_a = a.as_ptr();
-        let mut ptr_b = b.as_ptr();
-        let ptr_a_end = ptr_a.add(a.len());
-        let ptr_b_end = ptr_b.add(b.len());
+    let mut i0 = 0;
+    let mut i1 = 0;
+    let mut count = 0;
 
-        let mut count = 0;
+    while i0 < a.len() && i1 < b.len() {
+        let s0 = a[i0];
+        let s1 = b[i1];
 
-        'outer: loop {
-            while *ptr_a < *ptr_b {
-                ptr_a = ptr_a.add(1);
-
-                if ptr_a >= ptr_a_end {
-                    break 'outer;
-                }
-            }
-
-            while *ptr_b < *ptr_a {
-                ptr_b = ptr_b.add(1);
-
-                if ptr_b >= ptr_b_end {
-                    break 'outer;
-                }
-            }
-
-            if *ptr_a == *ptr_b {
-                count += 1;
-
-                ptr_a = ptr_a.add(1);
-                ptr_b = ptr_b.add(1);
-
-                if ptr_a >= ptr_a_end || ptr_b >= ptr_b_end {
-                    break;
-                }
-            }
+        if s0 < s1 {
+            i0 += 1;
         }
-
-        count
+        else if s1 < s0 {
+            i1 += 1;
+        }
+        else {
+            i0 += 1;
+            i1 += 1;
+            count += 1;
+        }
     }
+
+    count
 }
 
 /// Calculate the difference between two slices using a scalar algorithm and return the number of elements in the result
@@ -212,37 +158,33 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         append_slice(a, out);
         return a.len();
     }
-    
-    let mut ptr_a = a.as_ptr();
-    let mut ptr_b = b.as_ptr();
-    let ptr_a_end = ptr_a.add(a.len());
-    let ptr_b_end = ptr_b.add(b.len());
 
+    let mut i0 = 0;
+    let mut i1 = 0;
     let mut count = 0;
 
-    while ptr_a < ptr_a_end && ptr_b < ptr_b_end {
-        if *ptr_a < *ptr_b {
-            ptr::copy_nonoverlapping(ptr_a, out.add(count), 1);
+    while i0 < a.len() && i1 < b.len() {
+        let s0 = a[i0];
+        let s1 = b[i1];
 
+        if s0 < s1 {
+            ptr::write(out.add(count), s0);
+            i0 += 1;
             count += 1;
-
-            ptr_a = ptr_a.add(1);
         }
-        else if *ptr_a == *ptr_b {
-            ptr_a = ptr_a.add(1);
-            ptr_b = ptr_b.add(1);
+        else if s1 < s0 {
+            i1 += 1;
         }
         else {
-            ptr_b = ptr_b.add(1);   
+            i0 += 1;
+            i1 += 1;
         }
     }
 
     // B finished first, append the remainder of A
-    if ptr_a < ptr_a_end {
-        let i = ptr_a_end.offset_from(ptr_a) as usize;
-
-        append_slice(&a[i..], out.add(count));
-        count += a.len() - i;
+    if i0 < a.len() {
+        append_slice(&a[i0..], out.add(count));
+        count += a.len() - i0;
     }
 
     count

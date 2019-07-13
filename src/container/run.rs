@@ -1399,7 +1399,7 @@ impl SetAnd<BitsetContainer> for RunContainer {
                 start = end + u32::from(run.length) + 1;
             }
 
-            bitset.unset_range(start..(!0 & 0xFFFF));
+            bitset.unset_range(start..(1 << 16));
 
             if bitset.cardinality() > DEFAULT_MAX_SIZE {
                 Container::Bitset(bitset)
@@ -1453,7 +1453,7 @@ impl SetAndNot<Self> for RunContainer {
         };
 
         while i_a < self.runs.len() && i_b < other.runs.len() {
-            if end_a < start_b {
+            if end_a <= start_b {
                 result.runs.push(
                     Rle16::new(start_a, end_a - start_a - 1)
                 );
@@ -1465,7 +1465,7 @@ impl SetAndNot<Self> for RunContainer {
                     end_a = run.end() + 1;
                 }
             }
-            else if end_b < start_a {
+            else if end_b <= start_a {
                 i_b += 1;
                 if i_b < other.runs.len() {
                     let run = other.runs[i_b];

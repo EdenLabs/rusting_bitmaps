@@ -226,13 +226,6 @@ pub(crate) fn op_test<C0, C1, T, F, R>(op: OpType, f: F)
         data_res.len()
     );
 
-    let iter = r.iter()
-        .zip(data_res.iter());
-
-    for (found, expected) in iter {
-        //println!("found: {:?}, expected: {:?}", found, expected);
-    }
-
     // Check that the output matches the precomputed result
     for (found, expected) in r.iter().zip(data_res.iter()) {
         assert_eq!(found, *expected, "Sets are not equivalent. Found {:?}, expected {:?}", found, *expected);
