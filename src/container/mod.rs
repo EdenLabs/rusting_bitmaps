@@ -227,15 +227,6 @@ impl Container {
         Container::Array(ArrayContainer::new())
     }
 
-    pub fn dbg(&self) -> &'static str {
-        match self {
-            Container::Array(_c) => "Array",
-            Container::Bitset(_c) => "Bitset",
-            Container::Run(_c) => "Run",
-            _ => panic!()
-        }
-    }
-
     /// Create a container with all values in the specified range
     pub fn from_range(range: Range<u32>) -> Self {
         debug_assert!(!range.is_empty());
@@ -288,7 +279,10 @@ impl Container {
         match self {
             Container::Array(c) => {
                 if !c.add(value) {
-                    *self = Container::Bitset(c.into());
+                    let mut bitset: BitsetContainer = c.into();
+                    bitset.add(value);
+
+                    *self = Container::Bitset(bitset);
                 }
             },
             Container::Bitset(c) => {
@@ -339,7 +333,6 @@ impl Container {
                 !c.is_empty()
             },
             Container::Bitset(c) => {
-                println!("bitset");
                 c.unset_range(range);
                 
                 if c.is_empty() {
@@ -354,7 +347,6 @@ impl Container {
                 }
             },
             Container::Run(c) => {
-                println!("run");
                 let num_runs = c.num_runs();
                 if num_runs == 0 {
                     return false;

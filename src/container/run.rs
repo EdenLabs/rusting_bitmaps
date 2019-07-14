@@ -2479,7 +2479,18 @@ mod test {
 
     #[test]
     fn run_array_subset_of() {
-        op_subset_test::<RunContainer, ArrayContainer, u16>();
+        let data_a = generate_seeded_data(0..65535, 4000, 0);
+
+        let count = data_a.len() / 2;
+        let mut data_b = Vec::with_capacity(count);
+        data_b.extend_from_slice(&data_a[..count]);
+
+        let a = ArrayContainer::from_data(&data_a);
+        let b = RunContainer::from_data(&data_b);
+
+        // Check that the cardinality matches the precomputed result
+        assert!(b.subset_of(&a));
+        assert!(!a.subset_of(&b));
     }
 
     #[test]

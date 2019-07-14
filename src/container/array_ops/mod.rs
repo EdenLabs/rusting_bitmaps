@@ -78,7 +78,7 @@ pub fn count_less(slice: &[u16], key: u16) -> usize {
 
     match slice.binary_search(&key) {
         Ok(index) => index,
-        Err(index) => index + 1
+        Err(index) => index
     }
 }
 
@@ -93,7 +93,7 @@ pub fn count_greater(slice: &[u16], key: u16) -> usize {
 
     match slice.binary_search(&key) {
         Ok(index) => slice.len() - (index + 1),
-        Err(index) => slice.len() - index.saturating_sub(1)
+        Err(index) => slice.len() - index
     }
 }
 
@@ -233,5 +233,15 @@ mod test {
     #[cfg(target_feature = "sse4.2")]
     fn xor_vector() {
         run_test(OpType::Xor, |a, b, out| unsafe { vector::xor(a, b, out) } );
+    }
+
+    #[test]
+    fn advance_until() {
+        let values: Vec<u16> = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let max_index = super::advance_until(&values, 5, 9);
+        let mid_index = super::advance_until(&values, 0, 5);
+
+        assert_eq!(max_index, 9);
+        assert_eq!(mid_index, 5);
     }
 }

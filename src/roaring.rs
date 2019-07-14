@@ -266,10 +266,10 @@ impl RoaringBitmap {
         let mut i = array_ops::count_less(&self.keys, min_key);
         while i < self.keys.len() && self.keys[i] <= max_key {
             let container_min = if min_key == self.keys[i] { min & 0xFFFF } else { 0 };
-            let container_max = if max_key == self.keys[i] { max & 0xFFFF } else { (1 << 16) };
+            let container_max = if max_key == self.keys[i] { max & 0xFFFF } else { 0xFFFF };
 
             let has_elements = self.containers[i]
-                .remove_range(container_min..container_max);
+                .remove_range(container_min..(container_max + 1));
 
             if has_elements {
                 i += 1;
@@ -1094,9 +1094,9 @@ impl RoaringBitmap {
     pub fn inplace_not<R: RangeBounds<u32>>(&mut self, range: R) {
         let (min, max) = range.into_bound();
         let mut high_start = (min >> 16) as u16;
-        let mut high_end = ((max - 1) >> 16) as u16;
+        let mut high_end = (max >> 16) as u16;
         let low_start = min & 0xFFFF;
-        let low_end = (max - 1) & 0xFFFF;
+        let low_end = max & 0xFFFF;
 
         // Keys are the same, just do it in place
         if high_start == high_end {
@@ -1651,7 +1651,7 @@ mod test {
         let mut bitmap = RoaringBitmap::new();
         bitmap.add_slice(&input);
 
-        // Remove the first all elements up to 10 million
+        // Remove the first all elements in [min-max)
         bitmap.remove_range(MIN..MAX);
 
         let mut result = Vec::with_capacity(input.len());
@@ -1667,7 +1667,13 @@ mod test {
             .zip(result.iter());
 
         for (found, expected) in iter {
-            assert_eq!(found, *expected);
+            assert_eq!(
+                found,
+                *expected,
+                "Missmatched elements. Found {:?}, expected {:?}",
+                found,
+                *expected
+            );
         }
     }
 
@@ -1875,12 +1881,6 @@ mod test {
         let input = generate_data(0..20_000_000, 500_000);
         let mut bitmap = RoaringBitmap::from_slice(&input);
         bitmap.inplace_not(..);
-
-        println!(
-            "expected: {:?}, difference: {:?}", 
-            (1 << 32) - input.len(), 
-            (1 << 32) - bitmap.cardinality()
-        );
 
         assert_eq!(bitmap.cardinality(), (1 << 32) - input.len());
     }

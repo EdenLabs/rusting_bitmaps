@@ -103,7 +103,7 @@ impl ArrayContainer {
                 None => true
             };
 
-            is_max_value && self.cardinality() < (std::u16::MAX as usize)
+            is_max_value && self.cardinality() < DEFAULT_MAX_SIZE
         };
 
         if can_append {
@@ -116,7 +116,7 @@ impl ArrayContainer {
                 true
             },
             Err(index) => {
-                if self.cardinality() < (std::u16::MAX as usize) {
+                if self.cardinality() < DEFAULT_MAX_SIZE {
                     self.array.insert(index, value);
 
                     true
@@ -166,11 +166,20 @@ impl ArrayContainer {
             return;
         }
 
-        let min_index = array_ops::advance_until(&self, 0, range.start as u16);
-        let max_index = array_ops::advance_until(&self, min_index, range.end as u16);
+        let num_less = array_ops::count_less(&self, range.start as u16);
+        let num_greater = array_ops::count_greater(&self, (range.end - 1) as u16);
+        let final_card = num_less + num_greater;
 
-        self.array.copy_within(max_index.., min_index);
-        self.array.truncate(self.len() - (max_index - min_index));
+        if final_card != 0 {
+            let len = self.len() - final_card;
+            let start = num_less;
+            let end = start + len;
+            self.array.copy_within(end.., start);
+            self.array.truncate(final_card);
+        }
+        else {
+            self.array.truncate(0);
+        }
     }
 
     /// Check if the array contains a specified value
@@ -187,7 +196,7 @@ impl ArrayContainer {
         let re = (range.end - 1) as u16;
 
         let min = array_ops::advance_until(&self.array, 0, rs);
-        let max = array_ops::advance_until(&self.array, 0, re);
+        let max = array_ops::advance_until(&self.array, min, re);
 
         if  min < self.len() && max < self.len() {
             return max - min == (re - rs) as usize && self.array[min] == rs && self.array[max] == re;
@@ -612,9 +621,11 @@ impl SetAndNot<Self> for ArrayContainer {
     fn and_not(&self, other: &Self) -> Container {
         let len = self.len();
         let mut result = ArrayContainer::with_capacity(len);
-        let ptr = result.array.as_mut_ptr();
+
+        println!("self: {:?}, other: {:?}", self.cardinality(), other.cardinality());
 
         unsafe {
+            let ptr = result.array.as_mut_ptr();
             let len = array_ops::and_not(
                 self.array.as_slice(), 
                 other.array.as_slice(),
@@ -635,7 +646,7 @@ impl SetAndNot<Self> for ArrayContainer {
 
             let src = self.as_mut_ptr();
             let dst = src.add(len);
-            ptr::copy(src, dst, len);
+            ptr::copy_nonoverlapping(src, dst, len);
             
             let slice = slice::from_raw_parts(
                 self.as_ptr().add(len),
@@ -1022,11 +1033,13 @@ mod test {
 
     #[test]
     fn remove_range() {
+        // Try removing elements in the middle
         let range = 0..10;
         let res = [0, 1, 2, 3, 4, 8, 9];
 
         let mut array = ArrayContainer::with_capacity(range.len());
         array.add_range(range.clone());
+
         array.remove_range(5..8);
 
         assert_eq!(array.cardinality(), res.len());
@@ -1037,6 +1050,21 @@ mod test {
         for (found, expected) in pass {
             assert_eq!(*found, *expected);
         }
+
+        // Try the full range for a partial set
+        array.clear();
+        array.add_range(50..75);
+
+        array.remove_range(50..75);
+
+        assert_eq!(array.cardinality(), 0);
+
+        // Try the full range
+        array.clear();
+        array.add_range(0..65536);
+        array.remove_range(0..65536);
+
+        assert_eq!(array.cardinality(), 0);
     }
 
     #[test]

@@ -190,7 +190,7 @@ fn select_range<C, T>() -> (Range<T>, usize)
         (T::from_u32(0).unwrap()..T::from_u32(65535).unwrap(), 8000)
     }
     else if TypeId::of::<C>() == TypeId::of::<RunContainer>() {
-        (T::from_u32(0).unwrap()..T::from_u32(65535).unwrap(), 65535 /4)
+        (T::from_u32(0).unwrap()..T::from_u32(65535).unwrap(), 65535 / 4)
     }
     else {
         (T::from_u32(0).unwrap()..T::from_u32(10_000_000).unwrap(), 2_000_000)

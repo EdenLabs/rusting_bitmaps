@@ -1,7 +1,7 @@
 // Required since code is conditionally compiled out in this module
 #![allow(dead_code)]
 
-#[cfg(target_feature = "sse4.2")] use super::scalar;
+use std::ops::Deref;
 #[cfg(target_feature = "sse4.2")] use std::ptr;
 #[cfg(target_feature = "sse4.2")] use std::arch::x86_64::{
     _SIDD_BIT_MASK,
@@ -29,6 +29,8 @@
     _mm_extract_epi32,
     _mm_or_si128,
 };
+
+#[cfg(target_feature = "sse4.2")] use super::scalar;
 
 #[cfg(target_feature = "sse4.2")]
 const CMPISTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
@@ -403,21 +405,16 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         let ptr = a.as_ptr();
         let len = a.len();
 
-        ptr::copy(ptr, out, len);
+        ptr::copy_nonoverlapping(ptr, out, len);
 
         return len;
     }
 
-    // Don't bother with vector processing if there's not enough elements
-    if a.len() < 8 || b.len() < 8 {
-        return scalar::and_not(a, b, out);
-    }
-    
-    let stop_a = (a.len() / 8) * 8;
-    let stop_b = (b.len() / 8) * 8;
     let ptr_a = a.as_ptr();
     let ptr_b = b.as_ptr();
     
+    let mut len_a = a.len();
+    let mut len_b = b.len();
     let mut i_a = 0;
     let mut i_b = 0;
     let mut count = 0;
@@ -428,16 +425,24 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         if *ptr_a == *ptr_b {
             i_a += 1;
             i_b += 1;
+
+            len_a -= 1;
+            len_b -= 1;
         }
         else if *ptr_a == 0 {
-            *out = *ptr_a;
+            ptr::write(out.add(count), *ptr_a);
             i_a += 1;
+            len_a -= 1;
             count += 1;
         }
         else {
             i_b += 1;
+            len_b -= 1;
         }
     }
+
+    let stop_a = (len_a / 8) * 8;
+    let stop_b = (len_b / 8) * 8;
 
     if i_a < stop_a && i_b < stop_b {
         let mut v_a = _mm_lddqu_si128(ptr_a.add(i_a) as *const __m128i);
@@ -752,7 +757,18 @@ unsafe fn merge(a: __m128i, b: __m128i, min: &mut __m128i, max: &mut __m128i) {
     *min = _mm_alignr_epi8(*min, *min, 2);
 }
 
-const UNIQUE_SHUFFLE: [u8; 4096] = [
+#[repr(align(16))]
+struct Aligned<T>(T);
+
+impl<T> Deref for Aligned<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+const UNIQUE_SHUFFLE: Aligned<[u8; 4096]> = Aligned([
     0x0,  0x1,  0x2,  0x3,  0x4,  0x5,  0x6,  0x7,  0x8,  0x9,  0xa,  0xb,
     0xc,  0xd,  0xe,  0xf,  0x2,  0x3,  0x4,  0x5,  0x6,  0x7,  0x8,  0x9,
     0xa,  0xb,  0xc,  0xd,  0xe,  0xf,  0xFF, 0xFF, 0x0,  0x1,  0x4,  0x5,
@@ -1095,9 +1111,9 @@ const UNIQUE_SHUFFLE: [u8; 4096] = [
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF
-];
+]);
 
-const SHUFFLE_MASK16: [u8; 4096] = [
+const SHUFFLE_MASK16: Aligned<[u8; 4096]> = Aligned([
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF, 0,    1,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 2,    3,    0xFF, 0xFF,
@@ -1440,4 +1456,4 @@ const SHUFFLE_MASK16: [u8; 4096] = [
     6,    7,    8,    9,    10,   11,   12,   13,   14,   15,   0xFF, 0xFF,
     0,    1,    2,    3,    4,    5,    6,    7,    8,    9,    10,   11,
     12,   13,   14,   15
-];
+]);
