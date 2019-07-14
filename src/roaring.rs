@@ -3,6 +3,7 @@
 use std::io::{self, Read, Write, Seek, SeekFrom};
 use std::ops::{RangeBounds, Range};
 use std::fmt;
+use std::mem;
 
 use tinybit::Endian;
 
@@ -1097,8 +1098,6 @@ impl RoaringBitmap {
         let low_start = min & 0xFFFF;
         let low_end = (max - 1) & 0xFFFF;
 
-        println!("high_start: {:?}, high_end: {:?}", high_start, high_end);
-
         // Keys are the same, just do it in place
         if high_start == high_end {
             self.inplace_flip(high_start, low_start..low_end);
@@ -1128,7 +1127,12 @@ impl RoaringBitmap {
     fn inplace_flip(&mut self, key: u16, range: Range<u32>) {
         match self.get_index(key) {
             Ok(index) => {
-                self.containers[index].not(range);
+                // Swap the container at `index` for `None`
+                let c = mem::replace(&mut self.containers[index], Container::None);
+
+                // Operate on the container and swap back into the slot at `index`
+                let c = c.inplace_not(range);
+                mem::replace(&mut self.containers[index], c);
             },
             Err(index) => {
                 self.keys.insert(index, key);

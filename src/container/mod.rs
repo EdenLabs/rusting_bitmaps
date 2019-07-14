@@ -227,6 +227,15 @@ impl Container {
         Container::Array(ArrayContainer::new())
     }
 
+    pub fn dbg(&self) -> &'static str {
+        match self {
+            Container::Array(_c) => "Array",
+            Container::Bitset(_c) => "Bitset",
+            Container::Run(_c) => "Run",
+            _ => panic!()
+        }
+    }
+
     /// Create a container with all values in the specified range
     pub fn from_range(range: Range<u32>) -> Self {
         debug_assert!(!range.is_empty());
@@ -503,6 +512,16 @@ impl Container {
 
     /// Compute the `xor` of self `self` and `other` storing the result in `self`
     inplace!(inplace_xor);
+
+    /// Compute the negation of self inplace within the specified range
+    pub fn inplace_not(self, range: Range<u32>) -> Container {
+        match self {
+            Container::Array(c) => c.inplace_not(range),
+            Container::Bitset(c) => c.inplace_not(range),
+            Container::Run(c) => c.inplace_not(range),
+            Container::None => unreachable!()
+        }
+    }
     
     /// Get a generic iterator over the container values
     pub fn iter(&self) -> Iter {

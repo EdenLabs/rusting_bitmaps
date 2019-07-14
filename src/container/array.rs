@@ -167,7 +167,7 @@ impl ArrayContainer {
         }
 
         let min_index = array_ops::advance_until(&self, 0, range.start as u16);
-        let max_index = array_ops::advance_until(&self, min_index, (range.end - 1) as u16);
+        let max_index = array_ops::advance_until(&self, min_index, range.end as u16);
 
         self.array.copy_within(max_index.., min_index);
         self.array.truncate(self.len() - (max_index - min_index));
@@ -1212,6 +1212,17 @@ mod test {
         for value in a.iter() {
             assert!(!not_a.contains(*value), "Found {:?} in `not_a", *value);
         }
+    }
+
+    #[test]
+    fn array_inplace_not() {
+        let data_a = generate_data(0..65535, 2_000);
+        let a = ArrayContainer::from_data(&data_a);
+
+        let orig_card = a.cardinality();
+        let a = a.inplace_not(0..65536);
+
+        assert_eq!(a.cardinality(), (1 << 16) - orig_card);
     }
 
     #[test]
