@@ -4,7 +4,7 @@ extern crate criterion;
 use std::ops::Range;
 
 use criterion::Criterion;
-use criterion::black_box;
+use criterion::BatchSize;
 
 use rand::prelude::*;
 
@@ -21,8 +21,6 @@ const SEED1: [u8; 16] = [
 ];
 
 fn generate_seeded_data(range: Range<u32>, count: usize, seed: [u8; 16]) -> Vec<u32> {
-    let (min, max) = (range.start, range.end);
-
     let mut rng = rand::rngs::SmallRng::from_seed(seed);
     let mut result = Vec::with_capacity(count);
 
@@ -67,7 +65,7 @@ fn setup_small() -> (RoaringBitmap, RoaringBitmap) {
 fn or_large(c: &mut Criterion) {
     let (a, b) = setup_large();
 
-    c.bench_function("roaring or - large", move |bencher| {
+    c.bench_function("or_large", move |bencher| {
         bencher.iter_with_large_drop(|| a.or(&b) )
     });
 }
@@ -75,7 +73,7 @@ fn or_large(c: &mut Criterion) {
 fn and_large(c: &mut Criterion) {
     let (a, b) = setup_large();
 
-    c.bench_function("roaring and - large", move |bencher| {
+    c.bench_function("and_large", move |bencher| {
         bencher.iter_with_large_drop(|| a.and(&b) )
     });
 }
@@ -83,7 +81,7 @@ fn and_large(c: &mut Criterion) {
 fn and_not_large(c: &mut Criterion) {
     let (a, b) = setup_large();
 
-    c.bench_function("roaring and not - large", move |bencher| {
+    c.bench_function("and_not_large", move |bencher| {
         bencher.iter_with_large_drop(|| a.and_not(&b) )
     });
 }
@@ -91,7 +89,7 @@ fn and_not_large(c: &mut Criterion) {
 fn xor_large(c: &mut Criterion) {
     let (a, b) = setup_large();
 
-    c.bench_function("roaring xor - large", move |bencher| {
+    c.bench_function("xor_large", move |bencher| {
         bencher.iter_with_large_drop(|| a.xor(&b) )
     });
 }
@@ -99,7 +97,7 @@ fn xor_large(c: &mut Criterion) {
 fn or_small(c: &mut Criterion) {
     let (a, b) = setup_small();
 
-    c.bench_function("roaring or - small", move |bencher| {
+    c.bench_function("or_small", move |bencher| {
         bencher.iter_with_large_drop(|| a.or(&b) )
     });
 }
@@ -107,7 +105,7 @@ fn or_small(c: &mut Criterion) {
 fn and_small(c: &mut Criterion) {
     let (a, b) = setup_small();
 
-    c.bench_function("roaring and - small", move |bencher| {
+    c.bench_function("and_small", move |bencher| {
         bencher.iter_with_large_drop(|| a.and(&b) )
     });
 }
@@ -115,7 +113,7 @@ fn and_small(c: &mut Criterion) {
 fn and_not_small(c: &mut Criterion) {
     let (a, b) = setup_small();
 
-    c.bench_function("roaring and not - small", move |bencher| {
+    c.bench_function("and_not_small", move |bencher| {
         bencher.iter_with_large_drop(|| a.and_not(&b) )
     });
 }
@@ -123,29 +121,78 @@ fn and_not_small(c: &mut Criterion) {
 fn xor_small(c: &mut Criterion) {
     let (a, b) = setup_small();
 
-    c.bench_function("roaring xor - small", move |bencher| {
+    c.bench_function("xor_small", move |bencher| {
         bencher.iter_with_large_drop(|| a.xor(&b) )
     });
 }
 
-fn inplace_or(c: &mut Criterion) {
-    
+fn inplace_or_large(c: &mut Criterion) {
+    let (a, b) = setup_large();
+
+    c.bench_function("inplace_or_large", move |bencher| {
+        bencher.iter_batched(|| a.clone(), |mut bitmap| bitmap.inplace_or(&b), BatchSize::LargeInput)
+    });
 }
 
-fn inplace_and(c: &mut Criterion) {
+fn inplace_and_large(c: &mut Criterion) {
+    let (a, b) = setup_large();
 
+    c.bench_function("inplace_and_large", move |bencher| {
+        bencher.iter_batched(|| a.clone(), |mut bitmap| bitmap.inplace_and(&b), BatchSize::LargeInput)
+    });
 }
 
-fn inplace_and_not(c: &mut Criterion) {
+fn inplace_and_not_large(c: &mut Criterion) {
+    let (a, b) = setup_large();
 
+    c.bench_function("inplace_and_not_large", move |bencher| {
+        bencher.iter_batched(|| a.clone(), |mut bitmap| bitmap.inplace_and_not(&b), BatchSize::LargeInput)
+    });
 }
 
-fn inplace_xor(c: &mut Criterion) {
+fn inplace_xor_large(c: &mut Criterion) {
+    let (a, b) = setup_large();
 
+    c.bench_function("inplace_xor_large", move |bencher| {
+        bencher.iter_batched(|| a.clone(), |mut bitmap| bitmap.inplace_xor(&b), BatchSize::LargeInput)
+    });
+}
+
+fn inplace_or_small(c: &mut Criterion) {
+    let (a, b) = setup_small();
+
+    c.bench_function("inplace_or_small", move |bencher| {
+        bencher.iter_batched(|| a.clone(), |mut bitmap| bitmap.inplace_or(&b), BatchSize::LargeInput)
+    });
+}
+
+fn inplace_and_small(c: &mut Criterion) {
+    let (a, b) = setup_small();
+
+    c.bench_function("inplace_and_small", move |bencher| {
+        bencher.iter_batched(|| a.clone(), |mut bitmap| bitmap.inplace_and(&b), BatchSize::LargeInput)
+    });
+}
+
+fn inplace_and_not_small(c: &mut Criterion) {
+    let (a, b) = setup_small();
+
+    c.bench_function("inplace_and_not_small", move |bencher| {
+        bencher.iter_batched(|| a.clone(), |mut bitmap| bitmap.inplace_and_not(&b), BatchSize::LargeInput)
+    });
+}
+
+fn inplace_xor_small(c: &mut Criterion) {
+    let (a, b) = setup_small();
+
+    c.bench_function("inplace_xor_small", move |bencher| {
+        bencher.iter_batched(|| a.clone(), |mut bitmap| bitmap.inplace_xor(&b), BatchSize::LargeInput)
+    });
 }
 
 criterion_group!(roaring_large, or_large, and_large, and_not_large, xor_large);
 criterion_group!(roaring_small, or_small, and_small, and_not_small, xor_small);
-criterion_group!(roaring_inplace, inplace_or, inplace_and, inplace_and_not, inplace_xor);
+criterion_group!(roaring_inplace_large, inplace_or_large, inplace_and_large, inplace_and_not_large, inplace_xor_large);
+criterion_group!(roaring_inplace_small, inplace_or_small, inplace_and_small, inplace_and_not_small, inplace_xor_small);
 
-criterion_main!(roaring_large, roaring_small);
+criterion_main!(roaring_large, roaring_small, roaring_inplace_large, roaring_inplace_small);
