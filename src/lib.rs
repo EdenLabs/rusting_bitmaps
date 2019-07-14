@@ -1,8 +1,3 @@
-#![feature(const_fn)]
-#![feature(ptr_offset_from)]
-#![feature(slice_partition_dedup)]
-#![feature(seek_convenience)]
-
 // To appease clippy
 #![feature(range_is_empty)]
 #![feature(exact_size_is_empty)]

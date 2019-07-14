@@ -8,5 +8,10 @@ edition = "2018"
 tinybit = { git = "https://github.com/techgeek1/tinybit" }
 
 [dev-dependencies]
-rand = { version = "0.7.0", features = ["small_rng"] }
+criterion = "0.2.11"
 num-traits = "0.2.8"
+rand = { version = "0.7.0", features = ["small_rng"] }
+
+[[bench]]
+name = "queries"
+harness = false

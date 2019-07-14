@@ -622,8 +622,6 @@ impl SetAndNot<Self> for ArrayContainer {
         let len = self.len();
         let mut result = ArrayContainer::with_capacity(len);
 
-        println!("self: {:?}, other: {:?}", self.cardinality(), other.cardinality());
-
         unsafe {
             let ptr = result.array.as_mut_ptr();
             let len = array_ops::and_not(
