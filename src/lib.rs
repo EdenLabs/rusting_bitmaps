@@ -21,7 +21,7 @@ mod roaring;
 
 #[cfg(test)] mod test;
 
-pub use roaring::RoaringBitmap;
+pub use roaring::*;
 
 use std::ops::{RangeBounds, Bound};
 
