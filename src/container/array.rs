@@ -60,6 +60,7 @@ impl ArrayContainer {
     }
 
     /// The capacity of the array container
+    #[allow(dead_code)]
     #[inline]
     pub fn capacity(&self) -> usize {
         self.array.capacity()
@@ -699,7 +700,7 @@ impl SetAndNot<RunContainer> for ArrayContainer {
             if value < run_start {
                 result.push(value as u16);
             } else if value <= run_end {
-                ;
+                ()
             }
             else {
                 loop {

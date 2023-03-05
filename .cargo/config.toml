@@ -1,4 +1,0 @@
-paths = ["../eden-engine/core/"]
-
-[build]
-rustflags = ["-C target-cpu=native"]

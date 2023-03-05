@@ -1,11 +1,9 @@
-#![deny(exceeding_bitshifts)]
+#![deny(arithmetic_overflow)]
 
 use std::io::{self, Read, Write, Seek, SeekFrom};
 use std::ops::{RangeBounds, Range};
 use std::fmt;
 use std::mem;
-
-use tinybit::Endian;
 
 use crate::IntoBound;
 use crate::container::{self, *, array_ops};
@@ -189,7 +187,7 @@ impl RoaringBitmap {
         let mut dst: isize = (len as isize) - suffix_len - 1;
         for key in (min_key..=max_key).rev() {
             let container_min = if min_key == key { min & 0xFFFF } else { 0 };
-            let container_max = if max_key == key { max & 0xFFFF } else { (1 << 16) };
+            let container_max = if max_key == key { max & 0xFFFF } else { 1 << 16 };
 
             if src >= 0 && self.keys[src as usize] == key as u16 {
                let container = &mut self.containers[src as usize];
@@ -1132,7 +1130,7 @@ impl RoaringBitmap {
 
                 // Operate on the container and swap back into the slot at `index`
                 let c = c.inplace_not(range);
-                mem::replace(&mut self.containers[index], c);
+                self.containers[index] = c;
             },
             Err(index) => {
                 self.keys.insert(index, key);
@@ -1293,9 +1291,10 @@ impl RoaringBitmap {
         // Write the header
         let has_run = self.has_run();
         if has_run {
-            let len = self.containers.len();
-            bytes_written += (Self::SERIAL_COOKIE | (((len - 1) << 16) as u32))
-                .write_le(buf)?;
+            let len       = self.containers.len();
+            let len_bytes = (Self::SERIAL_COOKIE | (((len - 1) << 16) as u32)).to_le_bytes();
+
+            bytes_written += buf.write(&len_bytes)?;
 
             let s = (len + 7) / 8;
             let mut bitmap: Vec<u8> = vec![0; s];
@@ -1316,8 +1315,8 @@ impl RoaringBitmap {
             }
         }
         else {
-            bytes_written += Self::SERIAL_COOKIE_NO_RUNCONTAINER.write_le(buf)?;
-            bytes_written += (self.containers.len() as u32).write_le(buf)?;
+            bytes_written += buf.write(&Self::SERIAL_COOKIE_NO_RUNCONTAINER.to_le_bytes())?;
+            bytes_written += buf.write(&(self.containers.len() as u32).to_le_bytes())?;
 
             let len = self.containers.len();
             start_offset = 4 + 4 + 4 * len + 4 * len;
@@ -1328,15 +1327,15 @@ impl RoaringBitmap {
 
         // Write the keys and cardinality
         for (key, c) in pass {
-            bytes_written += key.write_le(buf)?;
-            bytes_written += ((c.cardinality() - 1) as u16).write_le(buf)?;
+            bytes_written += buf.write(&key.to_le_bytes())?;
+            bytes_written += buf.write(&((c.cardinality() - 1) as u16).to_le_bytes())?;
         }
 
         // Write the container offsets if there's no run containers or we're above the no offset threshold
         if !has_run || (self.containers.len() as u32) >= Self::NO_OFFSET_THRESHOLD {
             for c in self.containers.iter() {
-                bytes_written += (start_offset as u32).write_le(buf)?;
-                start_offset += c.serialized_size();
+                bytes_written += buf.write(&(start_offset as u32).to_le_bytes())?;
+                start_offset  += c.serialized_size();
             }
         }
 
@@ -1355,8 +1354,11 @@ impl RoaringBitmap {
     pub fn deserialize<R: Read + Seek>(buf: &mut R) -> Result<Self, DeserializeError> {
         // Read out the cookie and number of containers
         let (cookie, size) = {
-            let cookie = u32::read_le(buf)
+            let mut cookie_bytes = [0; mem::size_of::<u32>()];
+            buf.read_exact(&mut cookie_bytes)
                 .map_err(DeserializeError::IoError)?;
+
+            let cookie = u32::from_le_bytes(cookie_bytes);
 
             // Validate cookie
             if (cookie & 0xFFFF) != Self::SERIAL_COOKIE && cookie != Self::SERIAL_COOKIE_NO_RUNCONTAINER {
@@ -1369,8 +1371,11 @@ impl RoaringBitmap {
                     (cookie >> 16) + 1
                 }
                 else {
-                    u32::read_le(buf)
-                        .map_err(DeserializeError::IoError)?
+                    let mut size_bytes = [0; mem::size_of::<u32>()];
+                    buf.read_exact(&mut size_bytes)
+                        .map_err(DeserializeError::IoError)?;
+
+                    u32::from_le_bytes(size_bytes)
                 }
             };
 
@@ -1405,11 +1410,17 @@ impl RoaringBitmap {
         // Read out the keys into the bitmap and save the cards for later
         let mut cards = Vec::with_capacity(size as usize);
         for _i in 0..size {
-            let key = u16::read_le(buf)
+            let mut key_bytes  = [0; mem::size_of::<u16>()];
+            let mut card_bytes = [0; mem::size_of::<u16>()];
+
+            buf.read_exact(&mut key_bytes)
+                .map_err(DeserializeError::IoError)?;
+            buf.read_exact(&mut card_bytes)
                 .map_err(DeserializeError::IoError)?;
 
-            let card = u16::read_le(buf)
-                .map_err(DeserializeError::IoError)?;
+
+            let key  = u16::from_le_bytes(key_bytes);
+            let card = u16::from_le_bytes(card_bytes);
 
             result.keys.push(key);
             cards.push(card);

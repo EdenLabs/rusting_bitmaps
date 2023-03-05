@@ -7,8 +7,6 @@ use std::fmt;
 use std::iter::Iterator;
 use std::slice;
 
-use tinybit::Endian;
-
 use crate::container::*;
 use crate::container::array_ops;
 
@@ -633,8 +631,7 @@ impl RunContainer {
     pub fn serialize<W: Write>(&self, buf: &mut W) -> io::Result<usize> {
         let mut num_written = 0;
 
-        num_written += (self.num_runs() as u16)
-            .write_le(buf)?;
+        num_written += buf.write(&(self.num_runs() as u16).to_le_bytes())?;
 
         unsafe {
             let ptr = self.as_ptr() as *const u8;
@@ -649,9 +646,11 @@ impl RunContainer {
     /// Deserialize a run container from the provided buffer
     #[cfg(target_endian = "little")]
     pub fn deserialize<R: Read>(buf: &mut R) -> io::Result<Self> {
-        let num_runs = u16::read_le(buf)? as usize;
+        let mut bytes = [0; 2];
+        buf.read_exact(&mut bytes)?;
 
-        let mut result = Self::with_capacity(num_runs);
+        let num_runs    = u16::from_le_bytes(bytes) as usize;
+        let mut result  = Self::with_capacity(num_runs);
 
         unsafe {
             let num_bytes = num_runs * mem::size_of::<Rle16>();

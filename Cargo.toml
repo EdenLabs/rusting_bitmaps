@@ -1,17 +1,14 @@
 [package]
-name = "rusting_bitmaps"
+name    = "rusting-bitmaps"
 version = "0.1.0"
-authors = ["Techgeek1 <austin.rife@gmail.com>"]
+authors = ["Techgeek1"]
 edition = "2018"
 
-[dependencies]
-tinybit = { git = "https://github.com/techgeek1/tinybit" }
-
 [dev-dependencies]
-criterion = "0.2.11"
-num-traits = "0.2.8"
-rand = { version = "0.7.0", features = ["small_rng"] }
+criterion   = "0.2.11"
+num-traits  = "0.2.8"
+rand        = { version = "0.7.0", features = ["small_rng"] }
 
 [[bench]]
-name = "queries"
+name    = "queries"
 harness = false

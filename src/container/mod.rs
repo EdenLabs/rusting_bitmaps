@@ -96,6 +96,7 @@ impl LazyCardinality {
         }
     }
 
+    #[allow(dead_code)]
     pub fn add(&self, value: isize) {
         if let Some(card) = self.card.get() {
             self.card.set(Some(((card as isize) + value) as usize));
@@ -143,7 +144,8 @@ impl fmt::Debug for LazyCardinality {
 }
 
 macro_rules! op {
-    ($fn_name: ident, $ret_val: ty) => {
+    (#[$doc:meta] $fn_name: ident, $ret_val: ty) => {
+        #[$doc]
         pub fn $fn_name(&self, other: &Self) -> $ret_val {
             match self {
                 Container::Array(c0) => match other {
@@ -171,7 +173,8 @@ macro_rules! op {
 }
 
 macro_rules! inplace {
-    ($fn_name: ident) => {
+    (#[$doc:meta] $fn_name: ident) => {
+        #[$doc]
         pub fn $fn_name(&mut self, other: &Self) {
             let owned = mem::replace(self, Container::None);
             let result = match owned {
@@ -198,7 +201,7 @@ macro_rules! inplace {
 
             debug_assert!(!result.is_none());
 
-            mem::replace(self, result);
+            *self = result;
         }
     }
 }
@@ -219,10 +222,9 @@ pub enum Container {
     Run(RunContainer)
 }
 
-// TODO: Sort these to match `RoaringBitmap` because it's triggering me
-
 impl Container {
     /// Create an empty container
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Container::Array(ArrayContainer::new())
     }
@@ -465,20 +467,30 @@ impl Container {
         }
     }
 
-    /// Check whether self is a subset of other
-    op!(subset_of, bool);
+    op! {
+        /// Check whether self is a subset of other
+        subset_of, bool
+    }
 
-    /// Perform an `or` operation between `self` and `other`
-    op!(or, Self);
+    op! {
+        /// Perform an `or` operation between `self` and `other`
+        or, Self
+    }
 
-    /// Perform an `and` operation between `self` and `other`
-    op!(and, Self);
+    op! {
+        /// Perform an `and` operation between `self` and `other`
+        and, Self
+    }
 
-    /// Perform an `and not` operation between `self` and `other`
-    op!(and_not, Self);
+    op! {
+        /// Perform an `and not` operation between `self` and `other`
+        and_not, Self
+    }
 
-    /// Perform an `xor` operation between `self` and `other`
-    op!(xor, Self);
+    op! {
+        /// Perform an `xor` operation between `self` and `other`
+        xor, Self
+    }
 
     /// Compute the negation of this container within the specified range
     pub fn not(&self, range: Range<u32>) -> Self {
@@ -490,20 +502,30 @@ impl Container {
         }
     }
 
-    /// Compute the cardinality of an `and` operation between `self` and `other`
-    op!(and_cardinality, usize);
+    op! {
+        /// Compute the cardinality of an `and` operation between `self` and `other`
+        and_cardinality, usize
+    }
 
-    /// Compute the `or` of self `self` and `other` storing the result in `self`
-    inplace!(inplace_or);
+    inplace! {
+        /// Compute the `or` of self `self` and `other` storing the result in `self`
+        inplace_or
+    }
 
-    /// Compute the `and` of self `self` and `other` storing the result in `self`
-    inplace!(inplace_and);
+    inplace! {
+        /// Compute the `and` of self `self` and `other` storing the result in `self`
+        inplace_and
+    }
 
-    /// Compute the `and_not` of self `self` and `other` storing the result in `self`
-    inplace!(inplace_and_not);
+    inplace! {
+        /// Compute the `and_not` of self `self` and `other` storing the result in `self`
+        inplace_and_not
+    }
 
-    /// Compute the `xor` of self `self` and `other` storing the result in `self`
-    inplace!(inplace_xor);
+    inplace! {
+        /// Compute the `xor` of self `self` and `other` storing the result in `self`
+        inplace_xor
+    }
 
     /// Compute the negation of self inplace within the specified range
     pub fn inplace_not(self, range: Range<u32>) -> Container {

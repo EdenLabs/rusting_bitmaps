@@ -87,6 +87,7 @@ impl BitsetContainer {
     }
 
     /// Set all the bits in the bitset
+    #[allow(dead_code)]
     pub fn set_all(&mut self) {
         for word in &mut *self.bitset {
             *word = std::u64::MAX;

@@ -1,5 +1,4 @@
 // To appease clippy
-#![feature(range_is_empty)]
 #![feature(exact_size_is_empty)]
 
 // TODO: Enable these lints after sketching out the api
@@ -12,8 +11,7 @@
 //!
 //! - An idiomatic and safe Rust API
 //! - Additional optimizations (particularly around inplace operations)
-//! - Custom allocator support
-//! - Copy-on-Write is unsupported
+//! - Copy-on-Write is unsupported (yet, TBD)
 
 // TODO: Run through and change any operations on intermediate containers to be inplace to reduce memory churn
 // TODO: Ensure soundness in the face of panics where necessary
