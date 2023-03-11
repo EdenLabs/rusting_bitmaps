@@ -17,7 +17,6 @@ pub const BITSET_SIZE_IN_WORDS: usize = 1024;
 #[derive(Clone, Debug)]
 pub struct BitsetContainer {
     bitset: Vec<u64>,
-    cardinality: LazyCardinality
 }
 
 impl BitsetContainer {
@@ -25,7 +24,6 @@ impl BitsetContainer {
     pub fn new() -> Self {
         Self {
             bitset: vec![0; BITSET_SIZE_IN_WORDS],
-            cardinality: LazyCardinality::none()
         }
     }
 
@@ -38,7 +36,6 @@ impl BitsetContainer {
         let change = ((word ^ new_word) >> 1) as usize;
 
         self.bitset[word_index] = new_word;
-        self.cardinality.increment(change);
 
         change > 0
     }
@@ -58,7 +55,6 @@ impl BitsetContainer {
             let w0 = std::u64::MAX << (min % 64);
             let w1 = std::u64::MAX >> ((!max + 1) % 64);
             self.bitset[first_word] |= w0 & w1;
-            self.cardinality.invalidate();
         }
         else {
             self.bitset[first_word] |= std::u64::MAX << (min % 64);
@@ -68,8 +64,6 @@ impl BitsetContainer {
             }
 
             self.bitset[last_word] |= std::u64::MAX >> ((!max + 1) % 64);
-            
-            self.cardinality.invalidate();
         }
     }
 
@@ -82,8 +76,6 @@ impl BitsetContainer {
             let new_load = load | (1_u64 << index);
             self.bitset[offset] = new_load;
         }
-
-        self.cardinality.invalidate();
     }
 
     /// Set all the bits in the bitset
@@ -92,8 +84,6 @@ impl BitsetContainer {
         for word in &mut *self.bitset {
             *word = std::u64::MAX;
         }
-        
-        self.cardinality.set(1 << 16);
     }
 
     /// Unset the bit at `index`
@@ -108,7 +98,6 @@ impl BitsetContainer {
         let change = (delta >> bit_index) as usize;
 
         self.bitset[word_index] = new_word;
-        self.cardinality.decrement(change);
 
         change > 0
     }
@@ -128,7 +117,6 @@ impl BitsetContainer {
             let w0 = !0_u64 << (min % 64);
             let w1 = !0_u64 >> ((!max + 1) % 64);
             self.bitset[first_word] &= !(w0 & w1);
-            self.cardinality.invalidate();
 
             return;
         }
@@ -140,8 +128,6 @@ impl BitsetContainer {
         }
 
         self.bitset[last_word] &= !(!0_u64 >> ((!max + 1) % 64));
-    
-        self.cardinality.invalidate();
     }
 
     /// Clear the elements specified in the list from the bitset
@@ -155,10 +141,6 @@ impl BitsetContainer {
                 .unwrap_or(0);
 
             self.bitset[offset as usize] = new_load;
-
-            self.cardinality.decrement(
-                (load ^ new_load).checked_shr(index).unwrap_or(0) as usize
-            );
         }
     }
 
@@ -226,7 +208,6 @@ impl BitsetContainer {
         let bit_index = index % 64;
 
         self.bitset[word_index as usize] ^= !(1 << bit_index);
-        self.cardinality.invalidate();
     }
 
     /// Flip all bits in the range [min-max)
@@ -245,7 +226,6 @@ impl BitsetContainer {
         }
 
         self.bitset[last_word] ^= (!0) >> ((!range.end).saturating_add(1) % 64);
-        self.cardinality.invalidate();
     }
 
     /// Flip all bits contained in `list`
@@ -256,7 +236,6 @@ impl BitsetContainer {
             let load = self.bitset[word_index];
             let store = load ^ (1_u64 << index);
             self.bitset[word_index] = store;
-            self.cardinality.invalidate();
         }
     }
 
@@ -280,14 +259,12 @@ impl BitsetContainer {
     /// The cardinality of the bitset
     #[inline]
     pub fn cardinality(&self) -> usize {
-        self.cardinality.get(|| {
-            let mut count = 0;
-            for word in self.bitset.iter() {
-                count += word.count_ones();
-            }
+        let mut count = 0;
+        for word in self.bitset.iter() {
+            count += word.count_ones();
+        }
 
-            count as usize
-        })
+        count as usize
     }
 
     /// Get the cardinality of the range [min-max)
@@ -522,8 +499,6 @@ impl BitsetContainer {
                 return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
             }
 
-            result.cardinality.invalidate();
-
             Ok(result)
         }
     }
@@ -576,9 +551,6 @@ impl<'a> From<&'a RunContainer> for BitsetContainer {
             bitset.set_range(min..max);
         }
 
-        // We know this is safe since we're just copying the cardinality from the other
-        // container and that all elements of a run are set
-        bitset.cardinality.set(container.cardinality());
         bitset
     }
 }
@@ -619,8 +591,6 @@ impl SetOr<Self> for BitsetContainer {
             }
         }
         
-        result.cardinality.invalidate();
-        
         Container::Bitset(result)
     }
 
@@ -635,8 +605,6 @@ impl SetOr<Self> for BitsetContainer {
             for (i, (wa, wb)) in pass {
                 ptr::write(out.add(i), wa | wb);
             }
-            
-            self.cardinality.invalidate();
             
             Container::Bitset(self)
         }
@@ -728,8 +696,6 @@ impl SetAnd<Self> for BitsetContainer {
             for (i, (wa, wb)) in pass {
                 ptr::write(out.add(i), wa & wb);
             }
-            
-            self.cardinality.invalidate();
         }
         
         Container::Bitset(self)
@@ -826,8 +792,6 @@ impl SetAndNot<Self> for BitsetContainer {
             for (i, (wa, wb)) in pass {
                 ptr::write(out.add(i), wa & !wb);
             }
-            
-            self.cardinality.invalidate();
         }
         
         self.into_efficient_container()
@@ -897,8 +861,6 @@ impl SetXor<Self> for BitsetContainer {
             for (i, (wa, wb)) in pass {
                 ptr::write(out.add(i), wa ^ wb);
             }
-            
-            self.cardinality.invalidate();
         }
 
        self.into_efficient_container()

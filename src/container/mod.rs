@@ -12,13 +12,13 @@ pub mod consts {
     pub use super::bitset::BITSET_SIZE_IN_WORDS;
 }
 
-use std::cell::Cell;
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::iter::Iterator;
 use std::mem;
 use std::ops::Range;
 use std::slice;
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 // NOTE: Inplace variants consume self and return either self or a new container
 
@@ -65,82 +65,6 @@ pub(crate) trait SetNot {
     fn not(&self, range: Range<u32>) -> Container;
 
     fn inplace_not(self, range: Range<u32>) -> Container;
-}
-
-/// A struct for managing a lazily evaluated cardinality
-#[derive(Clone)]
-struct LazyCardinality {
-    /// The managed cardinality, set to None if dirty
-    card: Cell<Option<usize>>
-}
-
-impl LazyCardinality {
-    /// Create a new `LazyCardinality` with no value
-    pub fn none() -> Self {
-        Self {
-            card: Cell::new(None)
-        }
-    }
-
-    /// Increment the cardinality by `value` if not dirty
-    pub fn increment(&self, value: usize) {
-        if let Some(card) = self.card.get() {
-            self.card.set(Some(card + value));
-        }
-    }
-
-    /// Decrement the cardinality by `value` if not dirty
-    pub fn decrement(&self, value: usize) {
-        if let Some(card) = self.card.get() {
-            self.card.set(Some(card - value));
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn add(&self, value: isize) {
-        if let Some(card) = self.card.get() {
-            self.card.set(Some(((card as isize) + value) as usize));
-        }
-    }
-
-    /// Mark the cardinality as dirty
-    #[inline]
-    pub fn invalidate(&self) {
-        self.card.set(None)
-    }
-
-    /// Get the cardinality
-    pub fn get<F>(&self, eval: F) -> usize
-        where F: Fn() -> usize
-    {
-        match self.card.get() {
-            Some(card) => {
-                card
-            },
-            None => {
-                let card = (eval)();
-
-                self.card.set(Some(card));
-                
-                card
-            }
-        }
-    }
-
-    /// Set the cardinality to a specified value
-    #[inline]
-    pub fn set(&self, value: usize) {
-        self.card.set(Some(value))
-    }
-}
-
-impl fmt::Debug for LazyCardinality {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.card.get() {
-            Some(card) => write!(f, "{}", card),
-            None => write!(f, "-")
-        }
-    }
 }
 
 macro_rules! op {

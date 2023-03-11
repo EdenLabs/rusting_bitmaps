@@ -78,9 +78,6 @@ enum SearchResult {
 pub struct RunContainer {
     /// The rle encoded runs of this run container
     runs: Vec<Rle16>,
-
-    /// The cardinality of this container. Lazily computed on demand if dirty
-    cardinality: LazyCardinality
 }
 
 impl RunContainer {
@@ -88,7 +85,6 @@ impl RunContainer {
     pub fn new() -> Self {
         Self {
             runs: Vec::new(),
-            cardinality: LazyCardinality::none()
         }
     }
     
@@ -96,7 +92,6 @@ impl RunContainer {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             runs: Vec::with_capacity(capacity),
-            cardinality: LazyCardinality::none()
         }
     }
     
@@ -373,7 +368,7 @@ impl RunContainer {
     /// The cardinality of the run container
     #[inline]
     pub fn cardinality(&self) -> usize {
-        self.cardinality.get(|| self.compute_cardinality())
+        self.compute_cardinality()
     }
 
     /// Compute the cardinality of this run container
