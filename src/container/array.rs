@@ -1,11 +1,8 @@
-use std::io::{self, Read, Write};
-use std::mem;
 use std::ptr;
 use std::ops::{Deref, DerefMut};
-use std::slice::{self, Iter};
+use std::slice::Iter;
 
 use crate::container::*;
-use crate::container::array_ops;
 
 /// An array container. Elements are sorted numerically and represented as individual values in the array
 #[derive(Clone, Debug, PartialEq, Eq)]

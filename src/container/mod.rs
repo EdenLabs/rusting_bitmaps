@@ -7,18 +7,12 @@ pub use self::array::ArrayContainer;
 pub use self::bitset::BitsetContainer;
 pub use self::run::RunContainer;
 
-pub mod consts {
-    pub use super::DEFAULT_MAX_SIZE;
-    pub use super::bitset::BITSET_SIZE_IN_WORDS;
-}
-
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::iter::Iterator;
 use std::mem;
 use std::ops::Range;
 use std::slice;
-use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 // NOTE: Inplace variants consume self and return either self or a new container
 

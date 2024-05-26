@@ -1,8 +1,7 @@
 #![cfg(test)]
 
 use std::any::TypeId;
-use std::cmp::{PartialEq, PartialOrd};
-use std::ops::{Range};
+use std::ops::Range;
 use std::fmt::Debug;
 
 use rand::prelude::*;

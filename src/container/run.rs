@@ -1,14 +1,8 @@
 use std::ops::{Deref, DerefMut};
-use std::io;
 use std::iter;
-use std::mem;
 use std::ptr;
-use std::fmt;
-use std::iter::Iterator;
-use std::slice;
 
 use crate::container::*;
-use crate::container::array_ops;
 
 /// A RLE word storing the value and the length of that run
 /// 
@@ -686,7 +680,7 @@ impl<'a> From<&'a ArrayContainer> for RunContainer {
 
         let mut run: Option<Rle16> = None;
         for value in container.iter() {
-            if let Some(mut r) = run.as_mut() {
+            if let Some(r) = run.as_mut() {
                 // The next value isn't in the current run, push and start the next run
                 if *value != r.end() + 1 {
                     result.runs.push(*r);
@@ -735,7 +729,7 @@ impl<'a> From<&'a BitsetContainer> for RunContainer {
 
         let mut run: Option<Rle16> = None;
         for value in container.iter() {
-            if let Some(mut r) = run.as_mut() {
+            if let Some(r) = run.as_mut() {
                 // The next value isn't in the current run, push and start the next run
                 if value != r.end() + 1 {
                     result.runs.push(*r);

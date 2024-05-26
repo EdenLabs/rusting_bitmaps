@@ -915,13 +915,10 @@ impl RoaringBitmap {
     /// 
     /// [`and`]: RoaringBitmap::and
     pub fn inplace_and(&mut self, other: &Self) {
-        let mut len0 = self.keys.len();
-        let len1 = other.keys.len();
-        
         let mut i0 = 0;
         let mut i1 = 0;
 
-        while i0 < len0 && i1 < len1 {
+        while i0 < self.keys.len() && i1 < other.keys.len() {
             let k0 = self.keys[i0];
             let k1 = other.keys[i1];
 
@@ -937,8 +934,6 @@ impl RoaringBitmap {
                 if is_empty {
                     self.containers.remove(i0);
                     self.keys.remove(i0);
-                    
-                    len0 -= 1;
                 }
                 else {
                     i0 += 1;
@@ -962,9 +957,11 @@ impl RoaringBitmap {
 
         // Other ran out of elements, remove the remainder from self since
         // they obviously don't intersect
-        if i0 < len0 {
-            self.containers.drain(i0..len0);
-            self.keys.drain(i0..len0);
+        while i0 < self.keys.len() {
+            self.containers.drain(i0..self.keys.len());
+            self.keys.drain(i0..self.keys.len());
+
+            i0 += 1;
         }
     }
 
