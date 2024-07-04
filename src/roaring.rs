@@ -870,17 +870,16 @@ impl RoaringBitmap {
             return;
         }
 
-        let len0 = self.keys.len();
-        let len1 = other.keys.len();
+        let mut len0    = self.keys.len();
+        let len1        = other.keys.len();
 
         // Handle shared containers in place
         let mut i0 = 0;
         let mut i1 = 0;
+        let mut k0 = self.keys[i0];
+        let mut k1 = self.keys[i1];
 
-        while i0 < len0 && i1 < len1 {
-            let k0 = self.keys[i0];
-            let k1 = self.keys[i1];
-
+        loop {
             if k0 == k1 {
                 let c0 = &mut self.containers[i0];
 
@@ -890,17 +889,32 @@ impl RoaringBitmap {
 
                 i0 += 1;
                 i1 += 1;
+
+                if i0 == len0 { break; }
+                if i1 == len1 { break; }
+
+                k0 = self.keys[i0];
+                k1 = self.keys[i1];
             }
             else if k0 < k1 {
                 i0 += 1;
+
+                if i0 == len0 { break; }
+
+                k0 = self.keys[i0];
             }
             else {
                 let c1 = other.containers[i1].clone();
                 self.containers.insert(i0, c1);
                 self.keys.insert(i0, k1);
 
-                i0 += 1;
-                i1 += 1;
+                i0      += 1;
+                i1      += 1;
+                len0    += 1;
+
+                if i1 == len1 { break; }
+                
+                k1 = self.keys[i1];
             }
         }
 
