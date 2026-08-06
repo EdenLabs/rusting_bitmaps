@@ -5,7 +5,7 @@ use std::ops::Range;
 use std::fmt::Debug;
 
 use rand::prelude::*;
-use rand::distributions::uniform::SampleUniform;
+use rand::distr::uniform::SampleUniform;
 
 use num_traits::Unsigned;
 use num_traits::cast::{ToPrimitive, FromPrimitive};
@@ -37,10 +37,7 @@ pub(crate) enum OpType {
     Xor
 }
 
-const SEED: [u8; 16] = [
-    3, 4, 1, 6, 3, 8, 6, 0, 
-    9, 5, 4, 7, 6, 8, 1, 2
-];
+const SEED: u64 = 0x0206_0807_0405_0409;
 
 /// Generates a series of random data in the range [min-max) with `span_card` elements
 /// generated for every `span` elements in `range`. Elements are then deduplicated and sorted
@@ -56,14 +53,12 @@ pub(crate) fn generate_seeded_data<T>(range: Range<T>, count: usize, seed_offset
 {
     let (min, max) = (range.start, range.end);
 
-    let mut seed = SEED;
-    seed[0] += seed_offset;
-    let mut rng = rand::rngs::SmallRng::from_seed(seed);
+    let mut rng = rand::rngs::SmallRng::seed_from_u64(SEED + u64::from(seed_offset));
 
     let mut result: Vec<T> = Vec::with_capacity(count.to_usize().unwrap());
 
     while result.len() < count {
-        result.push(rng.gen_range(min, max));
+        result.push(rng.random_range(min..max));
     }
 
     result.sort();

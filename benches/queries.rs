@@ -1,8 +1,6 @@
-#[macro_use]
-extern crate criterion;
-
 use std::ops::Range;
 
+use criterion::{criterion_group, criterion_main};
 use criterion::Criterion;
 use criterion::BatchSize;
 
@@ -10,18 +8,12 @@ use rand::prelude::*;
 
 use rusting_bitmaps::RoaringBitmap;
 
-const SEED0: [u8; 16] = [
-    3, 4, 1, 6, 3, 8, 6, 0, 
-    9, 5, 4, 7, 6, 8, 1, 2
-];
+const SEED0: u64 = 0x0206_0807_0405_0409;
 
-const SEED1: [u8; 16] = [
-    3, 4, 1, 6, 3, 8, 6, 0, 
-    9, 5, 4, 7, 6, 8, 1, 2
-];
+const SEED1: u64 = 0x0703_0105_0902_0806;
 
-fn generate_seeded_data(range: Range<u32>, count: usize, seed: [u8; 16]) -> Vec<u32> {
-    let mut rng = rand::rngs::SmallRng::from_seed(seed);
+fn generate_seeded_data(range: Range<u32>, count: usize, seed: u64) -> Vec<u32> {
+    let mut rng = rand::rngs::SmallRng::seed_from_u64(seed);
     let mut result = Vec::with_capacity(count);
 
     // Fill the range
@@ -31,7 +23,7 @@ fn generate_seeded_data(range: Range<u32>, count: usize, seed: [u8; 16]) -> Vec<
 
     // Randomly remove values till we have the desired number
     while result.len() > count {
-        let index = rng.gen_range(0, result.len());
+        let index = rng.random_range(0..result.len());
         result.swap_remove(index);
     }
 

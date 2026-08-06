@@ -1,13 +1,13 @@
 [package]
 name    = "rusting-bitmaps"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Techgeek1"]
 edition = "2018"
 
 [dev-dependencies]
-criterion   = "0.2.11"
+criterion   = { version = "0.8.2", features = ["html_reports"] }
 num-traits  = "0.2.8"
-rand        = { version = "0.7.0", features = ["small_rng"] }
+rand        = "0.10.2"
 
 [[bench]]
 name    = "queries"
