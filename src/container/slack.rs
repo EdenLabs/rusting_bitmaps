@@ -53,7 +53,7 @@ impl SlackVec {
         self.buf.reserve(additional);
     }
 
-    /// A pointer to the first live element, valid for reads and writes up to `capacity()`
+    /// A pointer to the first live element, valid for reads of the live elements
     #[inline]
     pub fn as_ptr(&self) -> *const u16 {
         // Derived from the whole allocation, not the live slice, so the spare capacity after
