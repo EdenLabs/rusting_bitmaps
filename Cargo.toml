@@ -12,3 +12,7 @@ rand        = "0.10.2"
 [[bench]]
 name    = "queries"
 harness = false
+
+[[bench]]
+name    = "churn"
+harness = false

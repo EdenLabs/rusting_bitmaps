@@ -3,12 +3,13 @@ use std::ops::{Deref, DerefMut};
 use std::slice::Iter;
 
 use crate::container::*;
+use crate::container::slack::SlackVec;
 
 /// An array container. Elements are sorted numerically and represented as individual values in the array
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArrayContainer {
     /// The internal array containing container values
-    array: Vec<u16>
+    array: SlackVec
 }
 
 impl ArrayContainer {
@@ -16,7 +17,7 @@ impl ArrayContainer {
     #[inline]
     pub fn new() -> Self {
         Self {
-            array: Vec::new()
+            array: SlackVec::new()
         }
     }
 
@@ -24,7 +25,7 @@ impl ArrayContainer {
     #[inline]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            array: Vec::with_capacity(capacity)
+            array: SlackVec::with_capacity(capacity)
         }
     }
 
@@ -93,23 +94,27 @@ impl ArrayContainer {
         self.array.push(value);
     }
 
-    /// Add a value to the array
+    /// Add a value to the array, returning false if it did not fit
     pub fn add(&mut self, value: u16) -> bool {
-        let can_append = {
-            let is_max_value = match self.max() {
-                Some(max) => max < value,
-                None => true
-            };
-
-            is_max_value && self.cardinality() < DEFAULT_MAX_SIZE
+        // The ends need no search. Appending is the common case when building from sorted
+        // input, and inserting at the front is the common case when popping the minimum and releasing
+        // values near it
+        let position = match (self.array.first(), self.array.last()) {
+            (Some(&min), Some(&max)) => {
+                if value > max {
+                    Err(self.array.len())
+                }
+                else if value < min {
+                    Err(0)
+                }
+                else {
+                    self.array.binary_search(&value)
+                }
+            },
+            _ => Err(0)
         };
 
-        if can_append {
-            self.push(value);
-            return true;
-        }
-
-        match self.array.binary_search(&value) {
+        match position {
             Ok(_index) => {
                 true
             },
@@ -126,23 +131,53 @@ impl ArrayContainer {
         }
     }
 
-    /// Add all values within the specified range
+    /// The cardinality after adding every value in `range`
+    pub fn cardinality_with_range(&self, range: &Range<u32>) -> usize {
+        let (lo, hi) = self.range_bounds(range);
+
+        self.array.len() - (hi - lo) + range.len()
+    }
+
+    /// The indices bracketing the elements that lie within `range`
+    fn range_bounds(&self, range: &Range<u32>) -> (usize, usize) {
+        let lo = self.array.partition_point(|&x| u32::from(x) < range.start);
+        let hi = lo + self.array[lo..].partition_point(|&x| u32::from(x) < range.end);
+
+        (lo, hi)
+    }
+
+    /// Add all values within the specified, non-empty range
+    ///
+    /// # Remarks
+    /// The caller is responsible for converting to a bitset if the result would not fit in an
+    /// array container, see `Container::add_range`
     pub fn add_range(&mut self, range: Range<u32>) {
         debug_assert!(is_valid_range(range.clone()));
+        debug_assert!(!range.is_empty());
 
-        if range.is_empty() {
-            self.add(range.start as u16);
+        let (lo, hi) = self.range_bounds(&range);
+
+        // The cast is valid since we only store the lower 16 bits inside containers.
+        // The upper 16 are stored as keys in the roaring bitmap
+        let values = range.map(|i| i as u16);
+        if lo == self.array.len() {
+            self.array.extend(values);
         }
         else {
-            // Resize to fit all new elements
-            self.reserve(range.len());
+            self.array.splice(lo..hi, values);
+        }
+    }
 
-            // Append new elements
-            for i in range {
-                // This is technically valid since we only store the lower 16 bits
-                // inside containers. The upper 16 are stored as keys in the roaring bitmap
-                self.array.push(i as u16);
-            }
+    /// Remove and return the smallest value in the array
+    ///
+    /// Constant time: the start of the slice moves instead of shifting the elements
+    #[inline]
+    pub fn pop_min(&mut self) -> Option<u16> {
+        if self.array.is_empty() {
+            None
+        }
+        else {
+            Some(self.array.remove(0))
         }
     }
 
@@ -960,7 +995,7 @@ mod test {
         }
 
         fn iter<'a>(&'a self) -> Box<dyn Iterator<Item=u16> + 'a> {
-            Box::new(self.clone().array.into_iter())
+            Box::new(self.to_vec().into_iter())
         }
 
         fn card(&self) -> usize {

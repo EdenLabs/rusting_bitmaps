@@ -13,14 +13,57 @@ pub const BITSET_SIZE_IN_WORDS: usize = 1024;
 /// Contents are aligned to the 32byte boundary and stored as 64bit words
 #[derive(Clone, Debug)]
 pub struct BitsetContainer {
-    bitset: Vec<u64>,
+    bitset: Words,
+}
+
+/// The words of a bitset with its cardinality, when known
+///
+/// Writing through `DerefMut` can change any bit so it forgets the cardinality. The
+/// single bit `set` and `unset` write the words directly and keep it exact while it is known, so a run of
+/// them never pays for a popcount over all the words.
+#[derive(Clone, Debug)]
+struct Words {
+    words: Vec<u64>,
+
+    /// The popcount of `words`, or `CARDINALITY_UNKNOWN`
+    cardinality: u32
+}
+
+const CARDINALITY_UNKNOWN: u32 = u32::MAX;
+
+impl Deref for Words {
+    type Target = [u64];
+
+    #[inline]
+    fn deref(&self) -> &[u64] {
+        &self.words
+    }
+}
+
+impl DerefMut for Words {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [u64] {
+        self.cardinality = CARDINALITY_UNKNOWN;
+
+        &mut self.words
+    }
+}
+
+/// Equal when the words are, whether or not either cardinality is known
+impl PartialEq for Words {
+    fn eq(&self, other: &Words) -> bool {
+        self.words == other.words
+    }
 }
 
 impl BitsetContainer {
     // Create a new bitset
     pub fn new() -> Self {
         Self {
-            bitset: vec![0; BITSET_SIZE_IN_WORDS],
+            bitset: Words {
+                words: vec![0; BITSET_SIZE_IN_WORDS],
+                cardinality: 0
+            },
         }
     }
 
@@ -28,13 +71,17 @@ impl BitsetContainer {
     pub fn set(&mut self, index: u16) -> bool {
         let word_index = usize::from(index / 64);
         let bit_index = index % 64;
-        let word = self.bitset[word_index];
+        let word = self.bitset.words[word_index];
         let new_word = word | (1 << bit_index);
-        let change = ((word ^ new_word) >> 1) as usize;
+        let changed = word != new_word;
 
-        self.bitset[word_index] = new_word;
+        self.bitset.words[word_index] = new_word;
 
-        change > 0
+        if changed && self.bitset.cardinality != CARDINALITY_UNKNOWN {
+            self.bitset.cardinality += 1;
+        }
+
+        changed
     }
 
     /// Set all the bits within the range denoted by [min-max)
@@ -88,15 +135,18 @@ impl BitsetContainer {
         let word_index = usize::from(index / 64);
         let bit_index = u64::from(index % 64);
 
-        let word = self.bitset[word_index];
+        let word = self.bitset.words[word_index];
         let mask = 1_u64 << bit_index;
         let new_word = word & !mask;
-        let delta = (word ^ new_word) & mask;
-        let change = (delta >> bit_index) as usize;
+        let changed = word != new_word;
 
-        self.bitset[word_index] = new_word;
+        self.bitset.words[word_index] = new_word;
 
-        change > 0
+        if changed && self.bitset.cardinality != CARDINALITY_UNKNOWN {
+            self.bitset.cardinality -= 1;
+        }
+
+        changed
     }
 
     /// Unset all the bits between [min-max)
@@ -254,14 +304,46 @@ impl BitsetContainer {
     }
 
     /// The cardinality of the bitset
+    ///
+    /// Counts the bits when the cardinality is not known, see `cached_cardinality`
     #[inline]
     pub fn cardinality(&self) -> usize {
+        if self.bitset.cardinality != CARDINALITY_UNKNOWN {
+            return self.bitset.cardinality as usize;
+        }
+
+        self.count_bits()
+    }
+
+    /// The cardinality of the bitset, remembered for as long as only single bits change
+    ///
+    /// Costs a pass over the words the first time after a bulk write, then is free
+    #[inline]
+    pub fn cached_cardinality(&mut self) -> usize {
+        if self.bitset.cardinality == CARDINALITY_UNKNOWN {
+            self.bitset.cardinality = self.count_bits() as u32;
+        }
+
+        self.bitset.cardinality as usize
+    }
+
+    fn count_bits(&self) -> usize {
         let mut count = 0;
         for word in self.bitset.iter() {
             count += word.count_ones();
         }
 
         count as usize
+    }
+
+    /// Check if the bitset has no bits set. Constant time when the cardinality is known, otherwise
+    /// stops at the first nonzero word
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        match self.bitset.cardinality {
+            CARDINALITY_UNKNOWN => self.bitset.iter().all(|&word| word == 0),
+            cardinality => cardinality == 0
+        }
     }
 
     /// Get the cardinality of the range [min-max)
@@ -1185,6 +1267,54 @@ mod test {
 
         assert!(a.contains_range(25..75));
         assert!(!a.contains_range(100..150));
+    }
+
+    #[test]
+    fn set_reports_a_change_for_edge_bits() {
+        let mut a = BitsetContainer::new();
+
+        for bit in [0u16, 1, 63, 64, 65_535].iter() {
+            assert!(a.set(*bit), "first set of {}", bit);
+            assert!(!a.set(*bit), "second set of {}", bit);
+        }
+
+        assert_eq!(a.cardinality(), 5);
+    }
+
+    #[test]
+    fn single_bit_writes_keep_the_cardinality_exact() {
+        let count = |a: &BitsetContainer| a.iter_words().map(|w| w.count_ones() as usize).sum::<usize>();
+
+        let mut a = BitsetContainer::new();
+        assert!(a.is_empty());
+
+        a.set(0);
+        a.set(70);
+        a.set(70);
+        assert_eq!(a.cached_cardinality(), 2);
+        assert_eq!(a.cardinality(), count(&a));
+
+        a.unset(70);
+        a.unset(71);
+        assert_eq!(a.cached_cardinality(), 1);
+
+        // A bulk write forgets the count rather than leaving a stale one
+        a.set_range(100..1_000);
+        assert_eq!(a.cardinality(), 901);
+        assert_eq!(a.cached_cardinality(), 901);
+
+        a.unset(150);
+        assert_eq!(a.cached_cardinality(), 900);
+
+        a.unset_range(0..1_000);
+        assert!(a.is_empty());
+        assert_eq!(a.cached_cardinality(), 0);
+
+        a.set(5);
+        a[10] = 0b1011;
+        assert!(!a.is_empty());
+        assert_eq!(a.cached_cardinality(), count(&a));
+        assert_eq!(a.cardinality(), 4);
     }
 
     #[test]
