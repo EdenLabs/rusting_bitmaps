@@ -16,7 +16,8 @@ use std::ops::{Deref, DerefMut, RangeBounds};
 pub struct SlackVec {
     buf: Vec<u16>,
 
-    /// Index into `buf` of the first live element. Zero whenever there are no live elements
+    /// Index into `buf` of the first live element, never past its end. Zero whenever there are
+    /// no live elements
     head: usize
 }
 
@@ -66,7 +67,7 @@ impl SlackVec {
 
     #[inline]
     pub fn as_slice(&self) -> &[u16] {
-        &self.buf[self.head..]
+        self
     }
 
     #[inline]
@@ -185,14 +186,20 @@ impl Deref for SlackVec {
 
     #[inline]
     fn deref(&self) -> &[u16] {
-        &self.buf[self.head..]
+        debug_assert!(self.head <= self.buf.len());
+
+        // Safety: every method keeps `head <= buf.len()`
+        unsafe { self.buf.get_unchecked(self.head..) }
     }
 }
 
 impl DerefMut for SlackVec {
     #[inline]
     fn deref_mut(&mut self) -> &mut [u16] {
-        &mut self.buf[self.head..]
+        debug_assert!(self.head <= self.buf.len());
+
+        // Safety: every method keeps `head <= buf.len()`
+        unsafe { self.buf.get_unchecked_mut(self.head..) }
     }
 }
 

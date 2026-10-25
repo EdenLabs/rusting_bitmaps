@@ -38,8 +38,11 @@ use crate::container::{self, *, array_ops};
 ///  - Nonlinear growable vectors to store a 16 bit key and container pointer + data for each bucket
 /// 
 /// Containers:
-///  - Arrays require a maximum of `4096 * 2` bytes (grown with contents)
-///  - Bitmaps require `1024 * 8` bytes (fixed at allocation)
+///  - Arrays require a maximum of `4096 * 2` bytes (grown with contents). Removing from the front of
+///    an array leaves room there, which the next insert near the front or a push into a full array reuses
+///  - Bitmaps require `1024 * 8` bytes (fixed at allocation). A bitmap that shrinks below 4096 elements
+///    stays a bitmap until it falls below 3840, so a set hovering at the limit does not convert on every
+///    other operation
 ///  - Run containers are nonlinear and depend on the distribution of the set contents over the universe of 32 bit integers
 /// 
 /// Once a bitmap is built queries done via the `inplace_<op>` variants will only incur a cost for the query bitmap.
