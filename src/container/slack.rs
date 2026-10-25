@@ -332,7 +332,7 @@ mod test {
     fn pop_and_extend_do_not_grow() {
         let mut slack = SlackVec::with_capacity(4_000);
         slack.extend(0..4_000);
-        let capacity = slack.capacity();
+        let allocated = slack.buf.capacity();
 
         // Pop the smallest values and add a range at the top, repeatedly
         let mut next = 4_000u32;
@@ -353,7 +353,7 @@ mod test {
             assert_eq!(slack.len(), 4_000);
         }
 
-        assert_eq!(slack.capacity(), capacity);
+        assert_eq!(slack.buf.capacity(), allocated);
     }
 
     #[test]
