@@ -41,8 +41,8 @@ use crate::container::{self, *, array_ops};
 ///  - Arrays require a maximum of `4096 * 2` bytes (grown with contents). Removing from the front of
 ///    an array leaves room there, which the next insert near the front or a push into a full array reuses
 ///  - Bitmaps require `1024 * 8` bytes (fixed at allocation). A bitmap that shrinks below 4096 elements
-///    stays a bitmap until it falls below 3840, so a set hovering at the limit does not convert on every
-///    other operation
+///    by `remove` stays a bitmap until it falls `BITSET_RETAIN_MARGIN` (256) below the limit, so a set
+///    hovering at the limit does not convert on every other operation. `remove_range` converts at the limit
 ///  - Run containers are nonlinear and depend on the distribution of the set contents over the universe of 32 bit integers
 /// 
 /// Once a bitmap is built queries done via the `inplace_<op>` variants will only incur a cost for the query bitmap.
@@ -162,7 +162,7 @@ impl RoaringBitmap {
         }
     }
 
-    /// Add a range of values to the bitmap. An empty range adds nothing
+    /// Add a range of values to the bitmap. An empty or inverted range adds nothing
     pub fn add_range<R: RangeBounds<u32>>(&mut self, range: R) {
         let (min, max) = range.into_bound();
         if min >= max {
@@ -239,7 +239,8 @@ impl RoaringBitmap {
 
     /// Remove and return the smallest value in the bitmap. Returns None if empty
     ///
-    /// Equivalent to `min()` followed by `remove()` with a single lookup
+    /// Equivalent to `min()` followed by `remove()` without searching for the container.
+    /// Removing the last value of the lowest container shifts the key and container vectors
     pub fn pop_min(&mut self) -> Option<u32> {
         let key = *self.keys.first()?;
         let low = self.containers[0].pop_min()?;
@@ -2199,8 +2200,8 @@ mod test {
 
             check(&bitmap, &model);
 
-            // The first container went array, bitset and back to array
-            assert!(peak > 4_096 && trough < 4_096, "peak {} trough {}", peak, trough);
+            // The first container crossed the array limit in both directions, and the margin
+            assert!(peak > 4_096 && trough < 3_840, "peak {} trough {}", peak, trough);
         }
     }
 }

@@ -6,18 +6,19 @@ use std::ops::{Deref, DerefMut, RangeBounds};
 /// Removing from the front moves the start of the slice instead of shifting every element
 /// down, and an insert near the front takes that room back. The sorted array containers of
 /// an id allocator are popped from the front and pushed back near it, so both are constant
-/// time there, and any other index shifts the shorter side.
+/// time there. `remove` shifts the shorter side and `insert` the shorter side when there is
+/// slack to shift into.
 ///
-/// The slack is the elements `buf[..head]`, kept in the `Vec`'s length so that it is never
-/// reallocated or reinterpreted. It adds no capacity: a `push` into a full buffer reclaims it
-/// before the `Vec` grows.
+/// The slack is the elements `buf[..head]`, kept inside the `Vec`'s length so that it is always
+/// initialized. It adds no capacity: a `push` or `insert` into a full buffer reclaims it before
+/// the `Vec` grows.
 ///
 /// Dereferences to the live elements.
 pub struct SlackVec {
     buf: Vec<u16>,
 
-    /// Index into `buf` of the first live element, never past its end. Zero whenever there are
-    /// no live elements
+    /// Index into `buf` of the first live element, never past its end. `clear`, `truncate(0)`
+    /// and removing the last element reset it to zero
     head: usize
 }
 
@@ -91,7 +92,8 @@ impl SlackVec {
         self.buf.push(value);
     }
 
-    /// Insert `value` at `index`, shifting the shorter side
+    /// Insert `value` at `index`. Shifts the elements before `index` into the slack when there
+    /// is slack and `index` is nearer the front, otherwise shifts the tail
     pub fn insert(&mut self, index: usize, value: u16) {
         let len = self.len();
         assert!(index <= len);
@@ -171,8 +173,9 @@ impl SlackVec {
 
     /// Take back the slack rather than grow when the buffer is full
     ///
-    /// Costs a shift of every element, which is what growing would have cost an insert at
-    /// the front, and keeps the capacity, and so the memory, from creeping up.
+    /// Costs a shift of every element, which is what an insert at the front would have cost
+    /// without the slack, and keeps the capacity, and so the memory, from creeping up for
+    /// `push` and `insert`. `extend` and `splice` grow the `Vec` without reclaiming.
     #[inline]
     fn reclaim_if_full(&mut self) {
         if self.head > 0 && self.buf.len() == self.buf.capacity() {

@@ -20,8 +20,8 @@ use std::slice;
 /// Default maximum size of an array container before it is converted to another type
 pub const DEFAULT_MAX_SIZE: usize = 4096;
 
-/// How far below `DEFAULT_MAX_SIZE` a bitset container must fall by removals before it becomes
-/// an array again
+/// How far below `DEFAULT_MAX_SIZE` a bitset container must fall by single-value removals before it
+/// becomes an array again. `remove_range` does not apply it
 ///
 /// Without the margin a container whose cardinality hovers at the limit converts on every
 /// other operation, each conversion costing a pass over the whole container. A bitset in the
@@ -224,7 +224,8 @@ impl Container {
         };
     }
 
-    /// Add all values within the non-empty `range`
+    /// Add all values within the non-empty `range`. An array that would exceed `DEFAULT_MAX_SIZE`
+    /// becomes a bitset
     pub fn add_range(&mut self, range: Range<u32>) {
         match self {
             Container::Array(c) => {
@@ -244,7 +245,8 @@ impl Container {
         }
     }
     
-    /// Remove a value from the underlying container, returning whether it was present
+    /// Remove a value from the underlying container, returning whether it was present. A bitset
+    /// becomes an array once its cardinality falls below `DEFAULT_MAX_SIZE - BITSET_RETAIN_MARGIN`
     pub fn remove(&mut self, value: u16) -> bool {
         match self {
             Container::Array(c) => {
@@ -265,7 +267,9 @@ impl Container {
         }
     }
 
-    /// Remove and return the smallest value in the container
+    /// Remove and return the smallest value in the container, `None` if it is empty
+    ///
+    /// Constant time for an array. The other containers find the minimum then remove it
     pub fn pop_min(&mut self) -> Option<u16> {
         match self {
             Container::Array(c) => c.pop_min(),
@@ -591,7 +595,7 @@ mod test {
         container.add(DEFAULT_MAX_SIZE as u16);
         assert!(is_bitset(&container));
 
-        // Removing down to the limit and into the margin keeps the bitset
+        // Removing down to exactly the margin edge keeps the bitset
         for value in 0..=(BITSET_RETAIN_MARGIN as u16) {
             assert!(container.remove(value));
         }

@@ -19,7 +19,7 @@ pub struct BitsetContainer {
 /// The words of a bitset with its cardinality, when known
 ///
 /// Writing through `DerefMut` can change any bit so it forgets the cardinality. The
-/// single bit `set` and `unset` write the words directly and keep it exact, so a run of
+/// single bit `set` and `unset` write the words directly and keep it exact while it is known, so a run of
 /// them never pays for a popcount over all the words.
 #[derive(Clone, Debug)]
 struct Words {
@@ -49,6 +49,7 @@ impl DerefMut for Words {
     }
 }
 
+/// Equal when the words are, whether or not either cardinality is known
 impl PartialEq for Words {
     fn eq(&self, other: &Words) -> bool {
         self.words == other.words
@@ -335,7 +336,8 @@ impl BitsetContainer {
         count as usize
     }
 
-    /// Check if the bitset has no bits set
+    /// Check if the bitset has no bits set. Constant time when the cardinality is known, otherwise
+    /// stops at the first nonzero word
     #[inline]
     pub fn is_empty(&self) -> bool {
         match self.bitset.cardinality {
@@ -1268,7 +1270,7 @@ mod test {
     }
 
     #[test]
-    fn set_reports_a_change_for_every_bit() {
+    fn set_reports_a_change_for_edge_bits() {
         let mut a = BitsetContainer::new();
 
         for bit in [0u16, 1, 63, 64, 65_535].iter() {

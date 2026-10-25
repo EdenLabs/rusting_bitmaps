@@ -110,7 +110,8 @@ fn sample(bitmap: &RoaringBitmap) -> Vec<u32> {
     (0..4096).map(|_| all[rng.below(all.len() as u64) as usize]).collect()
 }
 
-/// Acquire the lowest `BATCH` ids then release them in shuffled order.
+/// Acquire the lowest `BATCH` ids then release them in shuffled order. `fused` selects the
+/// single-call API (`pop_min`, `remove`, `min`) over the multi-call equivalent.
 fn run_churn(bitmap: &mut RoaringBitmap, ops: usize, fused: bool) -> u64 {
     let mut rng = Rng(7);
     let mut held = [0u32; BATCH];
@@ -186,7 +187,8 @@ fn run_min(bitmap: &mut RoaringBitmap, ops: usize, fused: bool) -> u64 {
     acc
 }
 
-/// Cross the array/bitset threshold back and forth: one add then three more, per op.
+/// Hover at the array/bitset threshold: add and remove a value above the limit, then remove and
+/// re-add one below it. Each op is four updates.
 fn run_edge(bitmap: &mut RoaringBitmap, ops: usize) -> u64 {
     for i in 0..ops as u32 {
         let new = (i % 4096) * 2 + 1;
@@ -201,7 +203,7 @@ fn run_edge(bitmap: &mut RoaringBitmap, ops: usize) -> u64 {
     bitmap.len() as u64
 }
 
-/// Reserve small gaps above everything in the set, as the allocator does for a specific id.
+/// Add small disjoint ranges above everything in the set.
 fn run_add_range(bitmap: &mut RoaringBitmap, ops: usize) -> u64 {
     let base = 1u32 << 26;
 

@@ -97,7 +97,8 @@ impl ArrayContainer {
     /// Add a value to the array, returning false if it did not fit
     pub fn add(&mut self, value: u16) -> bool {
         // The ends need no search. Appending is the common case when building from sorted
-        // input, and an id allocator frees ids near the smallest it has
+        // input, and inserting at the front is the common case when popping the minimum and releasing
+        // values near it
         let position = match (self.array.first(), self.array.last()) {
             (Some(&min), Some(&max)) => {
                 if value > max {
@@ -147,7 +148,7 @@ impl ArrayContainer {
 
     /// Add all values within the specified, non-empty range
     ///
-    /// # Notes
+    /// # Remarks
     /// The caller is responsible for converting to a bitset if the result would not fit in an
     /// array container, see `Container::add_range`
     pub fn add_range(&mut self, range: Range<u32>) {
@@ -168,6 +169,8 @@ impl ArrayContainer {
     }
 
     /// Remove and return the smallest value in the array
+    ///
+    /// Constant time: the start of the slice moves instead of shifting the elements
     #[inline]
     pub fn pop_min(&mut self) -> Option<u16> {
         if self.array.is_empty() {
