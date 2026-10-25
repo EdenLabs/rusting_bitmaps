@@ -2,6 +2,7 @@ mod array;
 pub mod array_ops;
 mod bitset;
 mod run;
+mod slack;
 
 pub use self::array::ArrayContainer;
 pub use self::bitset::BitsetContainer;
@@ -18,6 +19,14 @@ use std::slice;
 
 /// Default maximum size of an array container before it is converted to another type
 pub const DEFAULT_MAX_SIZE: usize = 4096;
+
+/// How far below `DEFAULT_MAX_SIZE` a bitset container must fall by removals before it becomes
+/// an array again
+///
+/// Without the margin a container whose cardinality hovers at the limit converts on every
+/// other operation, each conversion costing a pass over the whole container. A bitset in the
+/// margin takes at most `2 * BITSET_RETAIN_MARGIN` bytes more than the array would.
+pub const BITSET_RETAIN_MARGIN: usize = 256;
 
 /// The set union operation
 pub(crate) trait SetOr<T> {
@@ -235,21 +244,37 @@ impl Container {
         }
     }
     
-    /// Remove a value from the underlying container
-    pub fn remove(&mut self, value: u16) {
+    /// Remove a value from the underlying container, returning whether it was present
+    pub fn remove(&mut self, value: u16) -> bool {
         match self {
             Container::Array(c) => {
-                c.remove(value);
+                c.remove(value)
             },
             Container::Bitset(c) => {
-                if c.remove(value) && c.cached_cardinality() < DEFAULT_MAX_SIZE {
+                let removed = c.remove(value);
+                if removed && c.cached_cardinality() < DEFAULT_MAX_SIZE - BITSET_RETAIN_MARGIN {
                     *self = Container::Array(c.into());
                 }
+
+                removed
             },
             Container::Run(c) => {
-                c.remove(value);
+                c.remove(value)
             },
             Container::None => unreachable!()
+        }
+    }
+
+    /// Remove and return the smallest value in the container
+    pub fn pop_min(&mut self) -> Option<u16> {
+        match self {
+            Container::Array(c) => c.pop_min(),
+            _ => {
+                let min = self.min()?;
+                self.remove(min);
+
+                Some(min)
+            }
         }
     }
 
@@ -551,6 +576,43 @@ fn is_valid_range(range: Range<u32>) -> bool {
 mod test {
     use crate::test::*;
     use super::*;
+
+    #[test]
+    fn bitset_converts_back_below_the_margin() {
+        let is_bitset = |c: &Container| match c { Container::Bitset(_) => true, _ => false };
+
+        let mut container = Container::new();
+        for value in 0..DEFAULT_MAX_SIZE as u16 {
+            container.add(value);
+        }
+        assert!(!is_bitset(&container));
+
+        // One past the array limit
+        container.add(DEFAULT_MAX_SIZE as u16);
+        assert!(is_bitset(&container));
+
+        // Removing down to the limit and into the margin keeps the bitset
+        for value in 0..=(BITSET_RETAIN_MARGIN as u16) {
+            assert!(container.remove(value));
+        }
+        assert_eq!(container.cardinality(), DEFAULT_MAX_SIZE - BITSET_RETAIN_MARGIN);
+        assert!(is_bitset(&container));
+
+        // and one below the margin converts, without losing anything
+        assert!(container.remove(BITSET_RETAIN_MARGIN as u16 + 1));
+        assert!(!is_bitset(&container));
+        assert_eq!(container.cardinality(), DEFAULT_MAX_SIZE - BITSET_RETAIN_MARGIN - 1);
+        assert_eq!(container.min(), Some(BITSET_RETAIN_MARGIN as u16 + 2));
+        assert_eq!(container.max(), Some(DEFAULT_MAX_SIZE as u16));
+        assert!(!container.remove(0));
+
+        // An array fills to the limit before it becomes a bitset again
+        for value in 0..=(BITSET_RETAIN_MARGIN as u16 + 1) {
+            container.add(value);
+        }
+        assert_eq!(container.cardinality(), DEFAULT_MAX_SIZE + 1);
+        assert!(is_bitset(&container));
+    }
 
     impl TestShim<u16> for Container {
         fn from_data(data: &[u16]) -> Self {

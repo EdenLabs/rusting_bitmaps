@@ -3,12 +3,13 @@ use std::ops::{Deref, DerefMut};
 use std::slice::Iter;
 
 use crate::container::*;
+use crate::container::slack::SlackVec;
 
 /// An array container. Elements are sorted numerically and represented as individual values in the array
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArrayContainer {
     /// The internal array containing container values
-    array: Vec<u16>
+    array: SlackVec
 }
 
 impl ArrayContainer {
@@ -16,7 +17,7 @@ impl ArrayContainer {
     #[inline]
     pub fn new() -> Self {
         Self {
-            array: Vec::new()
+            array: SlackVec::new()
         }
     }
 
@@ -24,7 +25,7 @@ impl ArrayContainer {
     #[inline]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            array: Vec::with_capacity(capacity)
+            array: SlackVec::with_capacity(capacity)
         }
     }
 
@@ -93,23 +94,26 @@ impl ArrayContainer {
         self.array.push(value);
     }
 
-    /// Add a value to the array
+    /// Add a value to the array, returning false if it did not fit
     pub fn add(&mut self, value: u16) -> bool {
-        let can_append = {
-            let is_max_value = match self.max() {
-                Some(max) => max < value,
-                None => true
-            };
-
-            is_max_value && self.cardinality() < DEFAULT_MAX_SIZE
+        // The ends need no search. Appending is the common case when building from sorted
+        // input, and an id allocator frees ids near the smallest it has
+        let position = match (self.array.first(), self.array.last()) {
+            (Some(&min), Some(&max)) => {
+                if value > max {
+                    Err(self.array.len())
+                }
+                else if value < min {
+                    Err(0)
+                }
+                else {
+                    self.array.binary_search(&value)
+                }
+            },
+            _ => Err(0)
         };
 
-        if can_append {
-            self.push(value);
-            return true;
-        }
-
-        match self.array.binary_search(&value) {
+        match position {
             Ok(_index) => {
                 true
             },
@@ -160,6 +164,17 @@ impl ArrayContainer {
         }
         else {
             self.array.splice(lo..hi, values);
+        }
+    }
+
+    /// Remove and return the smallest value in the array
+    #[inline]
+    pub fn pop_min(&mut self) -> Option<u16> {
+        if self.array.is_empty() {
+            None
+        }
+        else {
+            Some(self.array.remove(0))
         }
     }
 
@@ -977,7 +992,7 @@ mod test {
         }
 
         fn iter<'a>(&'a self) -> Box<dyn Iterator<Item=u16> + 'a> {
-            Box::new(self.clone().array.into_iter())
+            Box::new(self.to_vec().into_iter())
         }
 
         fn card(&self) -> usize {

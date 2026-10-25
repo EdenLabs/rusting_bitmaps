@@ -215,18 +215,38 @@ impl RoaringBitmap {
         }
     }
     
-    /// Remove a value from the bitmap
-    pub fn remove(&mut self, value: u32) {
+    /// Remove a value from the bitmap, returning whether it was present
+    pub fn remove(&mut self, value: u32) -> bool {
         let x_high = (value >> 16) as u16;
-        
-        if let Ok(i) = self.get_index(x_high) {
-            self.containers[i].remove(value as u16);
-            
-            if self.containers[i].is_empty() {
-                self.containers.remove(i);
-                self.keys.remove(i);
-            }
+
+        match self.get_index(x_high) {
+            Ok(i) => {
+                let removed = self.containers[i].remove(value as u16);
+
+                if removed && self.containers[i].is_empty() {
+                    self.containers.remove(i);
+                    self.keys.remove(i);
+                }
+
+                removed
+            },
+            Err(_) => false
         }
+    }
+
+    /// Remove and return the smallest value in the bitmap. Returns None if empty
+    ///
+    /// Equivalent to `min()` followed by `remove()` with a single lookup
+    pub fn pop_min(&mut self) -> Option<u32> {
+        let key = *self.keys.first()?;
+        let low = self.containers[0].pop_min()?;
+
+        if self.containers[0].is_empty() {
+            self.containers.remove(0);
+            self.keys.remove(0);
+        }
+
+        Some(u32::from(low) | (u32::from(key) << 16))
     }
 
     /// Remove a range of values from the bitmap
@@ -2019,6 +2039,44 @@ mod test {
     }
 
     #[test]
+    fn remove_reports_whether_the_value_was_present() {
+        let mut bitmap = RoaringBitmap::from_slice(&[5, 70_000]);
+        bitmap.add_range(200_000..210_000);
+
+        assert!(bitmap.remove(5));
+        assert!(!bitmap.remove(5));
+        assert!(!bitmap.remove(6));
+        assert!(!bitmap.remove(70_001));
+        assert!(!bitmap.remove(130_000));
+        assert!(bitmap.remove(70_000));
+        assert!(bitmap.remove(205_000));
+        assert!(!bitmap.remove(205_000));
+        assert_eq!(bitmap.len(), 9_999);
+    }
+
+    #[test]
+    fn pop_min_drains_in_order() {
+        let mut bitmap = RoaringBitmap::new();
+        assert_eq!(bitmap.pop_min(), None);
+
+        // An array container, a bitset container and a container of one
+        bitmap.add_range(3..10);
+        bitmap.add_range(70_000..80_000);
+        bitmap.add(400_000);
+        let expected: Vec<u32> = bitmap.iter().collect();
+
+        let mut popped = Vec::new();
+        while let Some(value) = bitmap.pop_min() {
+            popped.push(value);
+            assert_eq!(bitmap.len(), expected.len() - popped.len());
+        }
+
+        assert_eq!(popped, expected);
+        assert!(bitmap.is_empty());
+        assert_eq!(bitmap.pop_min(), None);
+    }
+
+    #[test]
     fn remove_slice_emptied_container_keeps_the_others() {
         let mut bitmap = RoaringBitmap::from_slice(&[5, 6, 70_000, 200_000]);
         bitmap.remove_slice(&[5, 6]);
@@ -2090,17 +2148,17 @@ mod test {
                             model.insert(value);
                         }
                         else {
-                            bitmap.remove(value);
-                            model.remove(&value);
+                            assert_eq!(bitmap.remove(value), model.remove(&value));
                         }
 
                         assert_eq!(bitmap.contains(value), model.contains(&value));
                     },
                     10..=13 => {
                         // Remove the minimum, the allocator's pop
-                        if let Some(&min) = model.iter().next() {
-                            assert_eq!(bitmap.min(), Some(min));
-                            bitmap.remove(min);
+                        let min = model.iter().next().copied();
+                        assert_eq!(bitmap.min(), min);
+                        assert_eq!(bitmap.pop_min(), min);
+                        if let Some(min) = min {
                             model.remove(&min);
                         }
                     },
@@ -2127,11 +2185,7 @@ mod test {
                     _ => {
                         // Take, the allocator's reserve of a specific id
                         let value = pick(&mut rng);
-                        assert_eq!(bitmap.contains(value), model.contains(&value));
-                        if bitmap.contains(value) {
-                            bitmap.remove(value);
-                            model.remove(&value);
-                        }
+                        assert_eq!(bitmap.remove(value), model.remove(&value));
                     }
                 }
 

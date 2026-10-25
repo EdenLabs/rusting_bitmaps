@@ -93,6 +93,11 @@ fn build(set: &str) -> RoaringBitmap {
         },
         // 1M contiguous ids, a fresh allocator's free range
         "range" => RoaringBitmap::from_range(0..1_000_000),
+        // exactly the array container limit, 4096 even ids in one container
+        "edge" => {
+            let data: Vec<u32> = (0..4096u32).map(|i| i * 2).collect();
+            RoaringBitmap::from_slice(&data)
+        },
         other => panic!("unknown set {other}")
     }
 }
@@ -106,14 +111,14 @@ fn sample(bitmap: &RoaringBitmap) -> Vec<u32> {
 }
 
 /// Acquire the lowest `BATCH` ids then release them in shuffled order.
-fn run_churn(bitmap: &mut RoaringBitmap, ops: usize) -> u64 {
+fn run_churn(bitmap: &mut RoaringBitmap, ops: usize, fused: bool) -> u64 {
     let mut rng = Rng(7);
     let mut held = [0u32; BATCH];
     let mut acc = 0u64;
 
     for _ in 0..ops / BATCH {
         for slot in held.iter_mut() {
-            let id = pop(bitmap).unwrap();
+            let id = if fused { bitmap.pop_min() } else { pop(bitmap) }.unwrap();
             *slot = id;
             acc += u64::from(id);
         }
@@ -137,13 +142,16 @@ fn pop(bitmap: &mut RoaringBitmap) -> Option<u32> {
     Some(id)
 }
 
-fn run_take(bitmap: &mut RoaringBitmap, ops: usize) -> u64 {
+fn run_take(bitmap: &mut RoaringBitmap, ops: usize, fused: bool) -> u64 {
     let ids = sample(bitmap);
     let mut acc = 0u64;
 
     for i in 0..ops {
         let id = ids[i & 4095];
-        if bitmap.contains(id) {
+        if fused {
+            acc += u64::from(bitmap.remove(id));
+        }
+        else if bitmap.contains(id) {
             bitmap.remove(id);
             acc += 1;
         }
@@ -168,14 +176,29 @@ fn run_contains(bitmap: &mut RoaringBitmap, ops: usize) -> u64 {
     acc
 }
 
-fn run_min(bitmap: &mut RoaringBitmap, ops: usize) -> u64 {
+fn run_min(bitmap: &mut RoaringBitmap, ops: usize, fused: bool) -> u64 {
     let mut acc = 0u64;
 
     for _ in 0..ops {
-        acc += u64::from(bitmap.iter().next().unwrap());
+        acc += u64::from(if fused { bitmap.min() } else { bitmap.iter().next() }.unwrap());
     }
 
     acc
+}
+
+/// Cross the array/bitset threshold back and forth: one add then three more, per op.
+fn run_edge(bitmap: &mut RoaringBitmap, ops: usize) -> u64 {
+    for i in 0..ops as u32 {
+        let new = (i % 4096) * 2 + 1;
+        let old = (i % 4096) * 2;
+
+        bitmap.add(new);
+        bitmap.remove(new);
+        bitmap.remove(old);
+        bitmap.add(old);
+    }
+
+    bitmap.len() as u64
 }
 
 /// Reserve small gaps above everything in the set, as the allocator does for a specific id.
@@ -199,7 +222,7 @@ fn main() {
         let built = LIVE.load(Ordering::Relaxed) - before;
         let len = bitmap.len();
 
-        run_churn(&mut bitmap, 160_000);
+        run_churn(&mut bitmap, 160_000, false);
         let churned = LIVE.load(Ordering::Relaxed) - before;
 
         println!(
@@ -215,10 +238,14 @@ fn main() {
 
     let start = Instant::now();
     let acc = match args[0].as_str() {
-        "churn" => run_churn(&mut bitmap, ops),
-        "take" => run_take(&mut bitmap, ops),
+        "churn" => run_churn(&mut bitmap, ops, false),
+        "churn_pop_min" => run_churn(&mut bitmap, ops, true),
+        "take" => run_take(&mut bitmap, ops, false),
+        "take_remove" => run_take(&mut bitmap, ops, true),
         "contains" => run_contains(&mut bitmap, ops),
-        "min" => run_min(&mut bitmap, ops),
+        "min" => run_min(&mut bitmap, ops, false),
+        "min_api" => run_min(&mut bitmap, ops, true),
+        "edge" => run_edge(&mut bitmap, ops),
         "add_range" => run_add_range(&mut bitmap, ops),
         other => panic!("unknown workload {other}")
     };
