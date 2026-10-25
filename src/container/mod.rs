@@ -242,7 +242,7 @@ impl Container {
                 c.remove(value);
             },
             Container::Bitset(c) => {
-                if c.remove(value) && c.cardinality() < DEFAULT_MAX_SIZE {
+                if c.remove(value) && c.cached_cardinality() < DEFAULT_MAX_SIZE {
                     *self = Container::Array(c.into());
                 }
             },
@@ -340,7 +340,7 @@ impl Container {
     pub fn is_empty(&self) -> bool {
         match self {
             Container::Array(c) => c.cardinality() == 0,
-            Container::Bitset(c) => c.cardinality() == 0,
+            Container::Bitset(c) => c.is_empty(),
             Container::Run(c) => c.is_empty(),
             Container::None => unreachable!()
         }
