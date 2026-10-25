@@ -41,7 +41,7 @@ const CMPISTRM_ARGS: i32 = _SIDD_UWORD_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MAS
 /// Returns the number of elements appended to `out`
 /// 
 /// # Safety
-/// - Assumes `out` contains enough space to hold the output
+/// - Assumes `out` has room for `a.len() + b.len()` elements
 #[cfg(target_feature = "sse4.2")]
 pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     if a.len() < 8 || b.len() < 8 {
@@ -150,7 +150,7 @@ pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 /// Returns the number of elements appended to `out`
 /// 
 /// # Safety
-/// - Assumes `out` contains enough space to hold the output
+/// - Assumes `out` has room for `a.len().min(b.len())` elements
 #[cfg(target_feature = "sse4.2")]
 pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Both sets are empty, there's no possible intersection
@@ -162,6 +162,9 @@ pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     if a.len() < 8 || b.len() < 8 {
         return scalar::and(a, b, out);
     }
+
+    // The result holds at most as many elements as the shorter input
+    let capacity = a.len().min(b.len());
 
     let ptr_a = a.as_ptr();
     let ptr_b = b.as_ptr();
@@ -185,9 +188,10 @@ pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
             let sm16 = _mm_lddqu_si128((SHUFFLE_MASK16.as_ptr() as *const __m128i).add(r as usize));
             let p = _mm_shuffle_epi8(va, sm16);
 
-            _mm_storeu_si128(out.add(count) as *mut __m128i, p);
+            let matched = _popcnt32(r) as usize;
+            store_lanes(p, matched, out.add(count), capacity - count);
 
-            count += _popcnt32(r) as usize;
+            count += matched;
 
             let max_a = ptr_a.add(i_a + 8 - 1);
             let max_b = ptr_b.add(i_b + 8 - 1);
@@ -220,9 +224,10 @@ pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
                 let sm16 = _mm_lddqu_si128((SHUFFLE_MASK16.as_ptr() as *const __m128i).add(r as usize));
                 let p = _mm_shuffle_epi8(va, sm16);
 
-                _mm_storeu_si128(out.add(count) as *mut __m128i, p);
+                let matched = _popcnt32(r) as usize;
+                store_lanes(p, matched, out.add(count), capacity - count);
 
-                count += _popcnt32(r) as usize;
+                count += matched;
 
                 let max_a = ptr_a.add(i_a + 8 - 1);
                 let max_b = ptr_b.add(i_b + 8 - 1);
@@ -392,7 +397,10 @@ pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
 /// Returns the number of elements appended to `out`
 /// 
 /// # Safety
-/// - Assumes `out` contains enough space to hold the output
+/// - Assumes `out` has room for `a.len()` elements
+/// 
+/// # Remarks
+/// - Assumes that `a` and `b` are sorted and free of duplicates
 #[cfg(target_feature = "sse4.2")]
 pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // A is the empty set therefore there are no elements in A not in B
@@ -410,43 +418,45 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         return len;
     }
 
-    let ptr_a = a.as_ptr();
-    let ptr_b = b.as_ptr();
-    
-    let mut len_a = a.len();
-    let mut len_b = b.len();
-    let mut i_a = 0;
-    let mut i_b = 0;
-    let mut count = 0;
-
-    // Handle any leading 0s so we can effectively use the sse instructions
-    // This is necessary other wise it'll terminate the comparison on a 0 byte
-    if *ptr_a == 0 || *ptr_b == 0 {
-        if *ptr_a == *ptr_b {
-            i_a += 1;
-            i_b += 1;
-
-            len_a -= 1;
-            len_b -= 1;
-        }
-        else if *ptr_a == 0 {
-            ptr::write(out.add(count), *ptr_a);
-            i_a += 1;
-            len_a -= 1;
-            count += 1;
-        }
-        else {
-            i_b += 1;
-            len_b -= 1;
-        }
+    // Either input is shorter than a vector, use the scalar algorithm
+    if a.len() < 8 || b.len() < 8 {
+        return scalar::and_not(a, b, out);
     }
 
-    let stop_a = (len_a / 8) * 8;
-    let stop_b = (len_b / 8) * 8;
+    let mut count = 0;
+
+    // The string comparison instructions treat a 0 as the end of the string so a vector holding a
+    // 0 cannot be compared. Sets are sorted and unique so a 0 can only be the first element; peel
+    // it off and run the vector loop over what remains. Peeling shortens the slices, every index
+    // below is relative to the shortened ones.
+    let (a_rem, b_rem) = {
+        if a[0] == 0 && b[0] == 0 {
+            (&a[1..], &b[1..])
+        }
+        else if a[0] == 0 {
+            ptr::write(out, 0);
+            count = 1;
+
+            (&a[1..], b)
+        }
+        else if b[0] == 0 {
+            (a, &b[1..])
+        }
+        else {
+            (a, b)
+        }
+    };
+
+    let ptr_a = a_rem.as_ptr();
+    let ptr_b = b_rem.as_ptr();
+    let stop_a = (a_rem.len() / 8) * 8;
+    let stop_b = (b_rem.len() / 8) * 8;
+    let mut i_a = 0;
+    let mut i_b = 0;
 
     if i_a < stop_a && i_b < stop_b {
-        let mut v_a = _mm_lddqu_si128(ptr_a.add(i_a) as *const __m128i);
-        let mut v_b = _mm_lddqu_si128(ptr_b.add(i_b) as *const __m128i);
+        let mut v_a = _mm_lddqu_si128(ptr_a as *const __m128i);
+        let mut v_b = _mm_lddqu_si128(ptr_b as *const __m128i);
         
         let mut a_in_b_mask = _mm_setzero_si128();
         
@@ -454,10 +464,10 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
             let a_in_b = _mm_cmpistrm(v_b, v_a, CMPISTRM_ARGS);
             a_in_b_mask = _mm_or_si128(a_in_b_mask, a_in_b);
 
-            let a_max = ptr_a.add(i_a + 7);
-            let b_max = ptr_b.add(i_b + 7);
+            let a_max = *ptr_a.add(i_a + 7);
+            let b_max = *ptr_b.add(i_b + 7);
 
-            if *a_max <= *b_max {
+            if a_max <= b_max {
                 let mask_difference = _mm_extract_epi32(a_in_b_mask, 0) ^ 0xFF;
                 let shuffle_mask = _mm_lddqu_si128((SHUFFLE_MASK16.as_ptr() as *const __m128i).offset(mask_difference as isize));
                 let p = _mm_shuffle_epi8(v_a, shuffle_mask);
@@ -476,7 +486,7 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
                 v_a = _mm_lddqu_si128(ptr_a.add(i_a) as *const __m128i);
             }
             
-            if *b_max <= *a_max {
+            if b_max <= a_max {
                 i_b += 8;
                 
                 if i_b == stop_b {
@@ -487,12 +497,14 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
             }
         }
         
-        // Either A or B is at their end, If b is the finished one then finish processing A
+        // Either A or B is at their end, If b is the finished one then finish processing A.
+        // A is part way through a vector, so compare what is left of B to it. The zero padding
+        // ends the string early, which keeps the unused lanes out of the comparison.
         if i_a < stop_a {
             let mut buffer: [u16; 8] = Default::default();
             let buf_ptr = buffer.as_mut_ptr();
 
-            ptr::copy_nonoverlapping(ptr_b.add(i_b), buf_ptr, b.len() - i_b);
+            ptr::copy_nonoverlapping(ptr_b.add(i_b), buf_ptr, b_rem.len() - i_b);
             v_b = _mm_lddqu_si128(buf_ptr as *const __m128i);
 
             let a_in_b = _mm_cmpistrm(v_b, v_a, CMPISTRM_ARGS);
@@ -508,16 +520,16 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
         }
     }
     
-    // Finish out with scalar version for any elements that
-    while i_a < a.len() && i_b < b.len() {
-        let sa = ptr_a.add(i_a);
-        let sb = ptr_b.add(i_b);
+    // Finish the remaining elements with the scalar algorithm
+    while i_a < a_rem.len() && i_b < b_rem.len() {
+        let sa = *ptr_a.add(i_a);
+        let sb = *ptr_b.add(i_b);
 
-        if *sb < *sa {
+        if sb < sa {
             i_b += 1;
         }
-        else if *sa < *sb {
-            *(out.add(count)) = *sa;
+        else if sa < sb {
+            *(out.add(count)) = sa;
             i_a += 1;
             count += 1;
         }
@@ -528,8 +540,8 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     }
     
     // If there's any elements left in A then copy them into the final one
-    if i_a < a.len() {
-        let rem = a.len() - i_a;
+    if i_a < a_rem.len() {
+        let rem = a_rem.len() - i_a;
         ptr::copy_nonoverlapping(ptr_a.add(i_a), out.add(count), rem);
 
         count += rem;
@@ -544,7 +556,7 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 /// Returns the number of elements appended to `out`
 /// 
 /// # Safety
-/// - Assumes `out` contains enough space to hold the output
+/// - Assumes `out` has room for `a.len() + b.len()` elements
 #[cfg(target_feature = "sse4.2")]
 pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Use a scalar algorithm if the length of the two vectors is too short to use simd
@@ -727,6 +739,29 @@ unsafe fn store_xor(old: __m128i, new: __m128i, output: *mut u16) -> usize {
     _mm_storeu_si128(output as *mut __m128i, val);
     
     (8 - _popcnt32(mask)) as usize
+}
+
+/// Write the first `n` lanes of `v` to `dst`, where `room` is the number of elements the caller
+/// owns at `dst`
+/// 
+/// A full 16 byte store writes all 8 lanes, including the `8 - n` after the last wanted one.
+/// That is only allowed when all 8 fit in `room`; otherwise the lanes are spilled to the stack so
+/// that only `n` elements are written.
+/// 
+/// # Safety
+/// - `n <= 8` and `n <= room`
+/// - `dst` is valid for writes of `room.min(8)` elements
+#[cfg(target_feature = "sse4.2")]
+#[inline(always)]
+unsafe fn store_lanes(v: __m128i, n: usize, dst: *mut u16, room: usize) {
+    if room >= 8 {
+        _mm_storeu_si128(dst as *mut __m128i, v);
+    }
+    else {
+        let mut lanes = [0u16; 8];
+        _mm_storeu_si128(lanes.as_mut_ptr() as *mut __m128i, v);
+        ptr::copy_nonoverlapping(lanes.as_ptr(), dst, n);
+    }
 }
 
 #[cfg(target_feature = "sse4.2")]
