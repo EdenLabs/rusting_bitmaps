@@ -215,9 +215,20 @@ impl Container {
         };
     }
 
+    /// Add all values within the non-empty `range`
     pub fn add_range(&mut self, range: Range<u32>) {
         match self {
-            Container::Array(c) => c.add_range(range),
+            Container::Array(c) => {
+                if c.cardinality_with_range(&range) > DEFAULT_MAX_SIZE {
+                    let mut bitset: BitsetContainer = c.into();
+                    bitset.add_range(range);
+
+                    *self = Container::Bitset(bitset);
+                }
+                else {
+                    c.add_range(range);
+                }
+            },
             Container::Bitset(c) => c.add_range(range),
             Container::Run(c) => c.add_range(range),
             Container::None => unreachable!()

@@ -159,56 +159,31 @@ impl RoaringBitmap {
         }
     }
 
-    /// Add a range of values to the bitmap
+    /// Add a range of values to the bitmap. An empty range adds nothing
     pub fn add_range<R: RangeBounds<u32>>(&mut self, range: R) {
         let (min, max) = range.into_bound();
-
-        // Determine keys
-        let min_key = min >> 16;
-        let max_key = max >> 16;
-        let span = (max_key - min_key + 1) as isize;
-        
-        // Determine lengths
-        let prefix_len = array_ops::count_less(&self.keys, min_key as u16) as isize;
-        let suffix_len = array_ops::count_greater(&self.keys, max_key as u16) as isize;
-        let common_len = (self.keys.len() as isize) - prefix_len - suffix_len;
-
-        // Reserve extra space for the new containers
-        let mut len = self.keys.len();
-        if span > common_len {
-            let required = (span - common_len) as usize;
-            self.containers.reserve(required);
-            self.keys.reserve(required);
-
-            len += required;
+        if min >= max {
+            return;
         }
 
-        let mut src: isize = prefix_len + common_len - 1; // isize as this could potentially be -1
-        let mut dst: isize = (len as isize) - suffix_len - 1;
-        for key in (min_key..=max_key).rev() {
-            let container_min = if min_key == key { min & 0xFFFF } else { 0 };
-            let container_max = if max_key == key { max & 0xFFFF } else { 1 << 16 };
+        let last = max - 1;
+        let min_key = min >> 16;
+        let max_key = last >> 16;
 
-            if src >= 0 && self.keys[src as usize] == key as u16 {
-               let container = &mut self.containers[src as usize];
-               container.add_range(container_min..container_max);
+        let mut index = self.keys.partition_point(|&key| u32::from(key) < min_key);
+        for key in min_key..=max_key {
+            let container_min = if key == min_key { min & 0xFFFF } else { 0 };
+            let container_max = if key == max_key { (last & 0xFFFF) + 1 } else { 1 << 16 };
 
-               src -= 1;
+            if index < self.keys.len() && u32::from(self.keys[index]) == key {
+                self.containers[index].add_range(container_min..container_max);
             }
             else {
-                // TODO: Figure out a way to remove this branch
-                let container = Container::from_range(container_min..container_max);
-                if dst > self.keys.len() as isize {
-                    self.containers.push(container);
-                    self.keys.push(key as u16);
-                }
-                else {
-                    self.containers.insert(dst as usize, container);
-                    self.keys.insert(dst as usize, key as u16);
-                }
+                self.containers.insert(index, Container::from_range(container_min..container_max));
+                self.keys.insert(index, key as u16);
             }
 
-            dst -= 1;
+            index += 1;
         }
     }
     
@@ -248,8 +223,8 @@ impl RoaringBitmap {
             self.containers[i].remove(value as u16);
             
             if self.containers[i].is_empty() {
-                self.containers.pop();
-                self.keys.pop();
+                self.containers.remove(i);
+                self.keys.remove(i);
             }
         }
     }
@@ -299,7 +274,8 @@ impl RoaringBitmap {
                 container.remove(*value as u16);
 
                 if container.is_empty() {
-                    self.containers.pop();
+                    self.containers.remove(index);
+                    self.keys.remove(index);
                     c_index = None;
                 }
             }
@@ -1971,6 +1947,203 @@ mod test {
 
         for test in FILE_PATHS.iter() {
             run_test(*test);
+        }
+    }
+
+    #[test]
+    fn add_range_empty_is_noop() {
+        // An empty range adds nothing, whether or not a container exists at its key
+        let mut empty = RoaringBitmap::new();
+        empty.add_range(0..0);
+        empty.add_range(5..5);
+        empty.add_range(65_536..65_536);
+        empty.add_range(10..5);
+        assert!(empty.is_empty());
+        assert_eq!(empty.len(), 0);
+
+        let mut bitmap = RoaringBitmap::from_slice(&[7, 100_000]);
+        bitmap.add_range(0..0);
+        bitmap.add_range(5..5);
+        bitmap.add_range(100_000..100_000);
+        bitmap.add_range(65_536..65_536);
+        assert_eq!(bitmap.iter().collect::<Vec<_>>(), vec![7, 100_000]);
+    }
+
+    #[test]
+    fn add_range_container_boundaries() {
+        // A range ending exactly on a container boundary must not touch the next container
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_range(0..65_536);
+        assert_eq!(bitmap.len(), 65_536);
+        assert_eq!(bitmap.max(), Some(65_535));
+
+        // A range straddling a boundary, over existing containers
+        let mut bitmap = RoaringBitmap::from_slice(&[1, 65_537, 200_000]);
+        bitmap.add_range(65_530..65_540);
+        let expected: Vec<u32> = [1, 200_000].iter().copied()
+            .chain(65_530..65_540)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        assert_eq!(bitmap.iter().collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
+    fn add_range_onto_existing_array() {
+        // A range joining an array container must stay sorted and deduplicated
+        let mut bitmap = RoaringBitmap::from_slice(&[3, 5, 9, 70]);
+        bitmap.add_range(4..10);
+        assert_eq!(bitmap.iter().collect::<Vec<_>>(), vec![3, 4, 5, 6, 7, 8, 9, 70]);
+
+        // and past the array limit becomes a bitset with the right contents
+        let mut bitmap = RoaringBitmap::from_slice(&[1, 3, 5]);
+        bitmap.add_range(1_000..9_000);
+        assert_eq!(bitmap.len(), 8_003);
+        assert!(bitmap.contains(3) && bitmap.contains(1_000) && bitmap.contains(8_999));
+        assert!(!bitmap.contains(999) && !bitmap.contains(9_000));
+    }
+
+    #[test]
+    fn remove_emptied_container_keeps_the_others() {
+        let mut bitmap = RoaringBitmap::from_slice(&[5, 70_000, 200_000]);
+        bitmap.remove(5);
+        assert_eq!(bitmap.iter().collect::<Vec<_>>(), vec![70_000, 200_000]);
+
+        bitmap.remove(70_000);
+        assert_eq!(bitmap.iter().collect::<Vec<_>>(), vec![200_000]);
+        assert!(bitmap.contains(200_000));
+        assert!(!bitmap.contains(70_000));
+
+        bitmap.remove(200_000);
+        assert!(bitmap.is_empty());
+    }
+
+    #[test]
+    fn remove_slice_emptied_container_keeps_the_others() {
+        let mut bitmap = RoaringBitmap::from_slice(&[5, 6, 70_000, 200_000]);
+        bitmap.remove_slice(&[5, 6]);
+        assert_eq!(bitmap.iter().collect::<Vec<_>>(), vec![70_000, 200_000]);
+    }
+
+    /// Random add, remove, pop and range operations against a `BTreeSet`, steering the first
+    /// container across the array/bitset threshold.
+    #[test]
+    fn churn_matches_model() {
+        use std::collections::BTreeSet;
+
+        struct Rng(u64);
+        impl Rng {
+            fn next(&mut self) -> u64 {
+                self.0 ^= self.0 << 13;
+                self.0 ^= self.0 >> 7;
+                self.0 ^= self.0 << 17;
+                self.0
+            }
+
+            fn below(&mut self, n: u64) -> u64 {
+                (self.next() >> 11) % n
+            }
+        }
+
+        fn check(bitmap: &RoaringBitmap, model: &BTreeSet<u32>) {
+            assert_eq!(bitmap.len(), model.len());
+            assert_eq!(bitmap.is_empty(), model.is_empty());
+            assert_eq!(bitmap.min(), model.iter().next().copied());
+            assert_eq!(bitmap.max(), model.iter().next_back().copied());
+            assert!(bitmap.iter().eq(model.iter().copied()));
+        }
+
+        // Keys 0 (hovering around the array/bitset threshold), 2 and 7 (sparse)
+        fn pick(rng: &mut Rng) -> u32 {
+            match rng.below(8) {
+                0..=4 => rng.below(8_192) as u32,
+                5 | 6 => (2 << 16) | rng.below(300) as u32,
+                _ => (7 << 16) | rng.below(65_536) as u32
+            }
+        }
+
+        for seed in 1..=4u64 {
+            let mut rng = Rng(0x2545_F491_4F6C_DD1D ^ seed);
+            let mut bitmap = RoaringBitmap::new();
+            let mut model = BTreeSet::new();
+
+            // Steer the cardinality of the first container up and down across 4096
+            let mut growing = true;
+            let mut peak = 0;
+            let mut trough = usize::MAX;
+            for step in 0..40_000 {
+                if step % 64 == 0 {
+                    let low = model.range(..8_192).count();
+                    peak = peak.max(low);
+                    if peak > 4_096 { trough = trough.min(low); }
+                    if low > 4_400 { growing = false; }
+                    if low < 3_800 { growing = true; }
+                }
+
+                let add_bias = if growing { 7 } else { 3 };
+
+                match rng.below(20) {
+                    0..=9 => {
+                        let value = pick(&mut rng);
+                        if rng.below(10) < add_bias {
+                            bitmap.add(value);
+                            model.insert(value);
+                        }
+                        else {
+                            bitmap.remove(value);
+                            model.remove(&value);
+                        }
+
+                        assert_eq!(bitmap.contains(value), model.contains(&value));
+                    },
+                    10..=13 => {
+                        // Remove the minimum, the allocator's pop
+                        if let Some(&min) = model.iter().next() {
+                            assert_eq!(bitmap.min(), Some(min));
+                            bitmap.remove(min);
+                            model.remove(&min);
+                        }
+                    },
+                    14..=15 => {
+                        let probe = pick(&mut rng);
+                        assert_eq!(bitmap.contains(probe), model.contains(&probe));
+                    },
+                    16..=17 => {
+                        // Small ranges, sometimes empty, sometimes over a container boundary
+                        let start = if rng.below(4) == 0 {
+                            (rng.below(9) as u32 * 65_536).saturating_sub(rng.below(4) as u32 % 3)
+                        }
+                        else {
+                            pick(&mut rng)
+                        };
+                        let start = start.min(10 << 16);
+                        // Keep ranges out of the steered container while it shrinks
+                        let start = if !growing && start < 8_192 { start + (3 << 16) } else { start };
+                        let len = rng.below(40) as u32;
+
+                        bitmap.add_range(start..start + len);
+                        model.extend(start..start + len);
+                    },
+                    _ => {
+                        // Take, the allocator's reserve of a specific id
+                        let value = pick(&mut rng);
+                        assert_eq!(bitmap.contains(value), model.contains(&value));
+                        if bitmap.contains(value) {
+                            bitmap.remove(value);
+                            model.remove(&value);
+                        }
+                    }
+                }
+
+                if step % 1_000 == 0 {
+                    check(&bitmap, &model);
+                }
+            }
+
+            check(&bitmap, &model);
+
+            // The first container went array, bitset and back to array
+            assert!(peak > 4_096 && trough < 4_096, "peak {} trough {}", peak, trough);
         }
     }
 }

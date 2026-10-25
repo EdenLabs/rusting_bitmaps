@@ -126,23 +126,40 @@ impl ArrayContainer {
         }
     }
 
-    /// Add all values within the specified range
+    /// The cardinality after adding every value in `range`
+    pub fn cardinality_with_range(&self, range: &Range<u32>) -> usize {
+        let (lo, hi) = self.range_bounds(range);
+
+        self.array.len() - (hi - lo) + range.len()
+    }
+
+    /// The indices bracketing the elements that lie within `range`
+    fn range_bounds(&self, range: &Range<u32>) -> (usize, usize) {
+        let lo = self.array.partition_point(|&x| u32::from(x) < range.start);
+        let hi = lo + self.array[lo..].partition_point(|&x| u32::from(x) < range.end);
+
+        (lo, hi)
+    }
+
+    /// Add all values within the specified, non-empty range
+    ///
+    /// # Notes
+    /// The caller is responsible for converting to a bitset if the result would not fit in an
+    /// array container, see `Container::add_range`
     pub fn add_range(&mut self, range: Range<u32>) {
         debug_assert!(is_valid_range(range.clone()));
+        debug_assert!(!range.is_empty());
 
-        if range.is_empty() {
-            self.add(range.start as u16);
+        let (lo, hi) = self.range_bounds(&range);
+
+        // The cast is valid since we only store the lower 16 bits inside containers.
+        // The upper 16 are stored as keys in the roaring bitmap
+        let values = range.map(|i| i as u16);
+        if lo == self.array.len() {
+            self.array.extend(values);
         }
         else {
-            // Resize to fit all new elements
-            self.reserve(range.len());
-
-            // Append new elements
-            for i in range {
-                // This is technically valid since we only store the lower 16 bits
-                // inside containers. The upper 16 are stored as keys in the roaring bitmap
-                self.array.push(i as u16);
-            }
+            self.array.splice(lo..hi, values);
         }
     }
 
