@@ -515,6 +515,11 @@ impl Container {
     pub fn serialized_size(&self) -> usize {
         match self {
             Container::Array(c) => ArrayContainer::serialized_size(c.cardinality()),
+            // The format has no tag for the container type, a reader takes a cardinality at or
+            // below the array limit to be an array
+            Container::Bitset(c) if c.cardinality() <= DEFAULT_MAX_SIZE => {
+                ArrayContainer::serialized_size(c.cardinality())
+            },
             Container::Bitset(_c) => BitsetContainer::serialized_size(),
             Container::Run(c) => RunContainer::serialized_size(c.num_runs()),
             _ => unreachable!()
@@ -526,6 +531,9 @@ impl Container {
     pub fn serialize<W: Write>(&self, buf: &mut W) -> io::Result<usize> {
         match self {
             Container::Array(c) => c.serialize(buf),
+            Container::Bitset(c) if c.cardinality() <= DEFAULT_MAX_SIZE => {
+                ArrayContainer::from(c).serialize(buf)
+            },
             Container::Bitset(c) => c.serialize(buf),
             Container::Run(c) => c.serialize(buf),
             _ => unreachable!()

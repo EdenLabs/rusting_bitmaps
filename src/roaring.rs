@@ -22,7 +22,7 @@ use crate::container::{self, *, array_ops};
 /// contained within the bitmap.
 /// 
 /// Generallly the representation selected is as follows
-///  - Less than 4096 elements       : Array
+///  - At most 4096 elements         : Array (a bitset that shrinks stays one a while, see below)
 ///  - Less than `u16::MAX` elements : Bitset
 ///  - More than `u16::MAX` elements : RLE encoded
 /// 
@@ -1832,6 +1832,26 @@ mod test {
             assert_eq!(found, expected);
         }
     } 
+
+    #[test]
+    fn round_trip_serialize_bitset_in_the_retain_margin() {
+        // A bitset that popping brought to 3897 values, which a reader takes for an array
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_range(0..4_097);
+        for _ in 0..200 {
+            bitmap.pop_min();
+        }
+        bitmap.add(100_000);
+
+        let mut output = Vec::new();
+        let num_written = bitmap.serialize(&mut output).unwrap();
+        assert_eq!(num_written, bitmap.serialized_size());
+        assert_eq!(num_written, output.len());
+
+        let deserialized = RoaringBitmap::deserialize(&mut std::io::Cursor::new(&output)).unwrap();
+        assert_eq!(deserialized.len(), bitmap.len());
+        assert!(deserialized.iter().eq(bitmap.iter()));
+    }
 
     #[test]
     fn or() {

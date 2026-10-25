@@ -49,7 +49,22 @@ impl SlackVec {
     /// Reserve room for `additional` more elements after the last
     #[inline]
     pub fn reserve(&mut self, additional: usize) {
+        self.make_room(additional);
         self.buf.reserve(additional);
+    }
+
+    /// A pointer to the first live element, valid for reads and writes up to `capacity()`
+    #[inline]
+    pub fn as_ptr(&self) -> *const u16 {
+        // Derived from the whole allocation, not the live slice, so the spare capacity after
+        // the last element can be written through it
+        unsafe { self.buf.as_ptr().add(self.head) }
+    }
+
+    /// A mutable pointer to the first live element, valid for writes up to `capacity()`
+    #[inline]
+    pub fn as_mut_ptr(&mut self) -> *mut u16 {
+        unsafe { self.buf.as_mut_ptr().add(self.head) }
     }
 
     pub fn shrink_to_fit(&mut self) {
@@ -88,7 +103,7 @@ impl SlackVec {
 
     #[inline]
     pub fn push(&mut self, value: u16) {
-        self.reclaim_if_full();
+        self.make_room(1);
         self.buf.push(value);
     }
 
@@ -106,7 +121,7 @@ impl SlackVec {
             self.buf[self.head + index] = value;
         }
         else {
-            self.reclaim_if_full();
+            self.make_room(1);
             self.buf.insert(self.head + index, value);
         }
     }
@@ -134,10 +149,13 @@ impl SlackVec {
     }
 
     pub fn extend<I: IntoIterator<Item=u16>>(&mut self, values: I) {
+        let values = values.into_iter();
+        self.make_room(values.size_hint().0);
         self.buf.extend(values);
     }
 
     pub fn extend_from_slice(&mut self, values: &[u16]) {
+        self.make_room(values.len());
         self.buf.extend_from_slice(values);
     }
 
@@ -158,6 +176,8 @@ impl SlackVec {
             Unbounded => self.len()
         };
 
+        let values = values.into_iter();
+        self.make_room(values.size_hint().0.saturating_sub(end - start));
         self.buf.splice(self.head + start..self.head + end, values);
     }
 
@@ -171,14 +191,14 @@ impl SlackVec {
         }
     }
 
-    /// Take back the slack rather than grow when the buffer is full
+    /// Take back the slack rather than grow when `additional` more elements would not fit
     ///
     /// Costs a shift of every element, which is what an insert at the front would have cost
-    /// without the slack, and keeps the capacity, and so the memory, from creeping up for
-    /// `push` and `insert`. `extend` and `splice` grow the `Vec` without reclaiming.
+    /// without the slack, and keeps the capacity, and so the memory, from creeping up. Every
+    /// method that adds elements after the last calls it.
     #[inline]
-    fn reclaim_if_full(&mut self) {
-        if self.head > 0 && self.buf.len() == self.buf.capacity() {
+    fn make_room(&mut self, additional: usize) {
+        if self.head > 0 && self.buf.len() + additional > self.buf.capacity() {
             self.close_slack();
         }
     }
@@ -306,6 +326,34 @@ mod test {
 
         assert_eq!(slack.capacity(), capacity);
         assert_eq!(slack.as_slice(), &(192..200).collect::<Vec<u16>>()[..]);
+    }
+
+    #[test]
+    fn pop_and_extend_do_not_grow() {
+        let mut slack = SlackVec::with_capacity(4_000);
+        slack.extend(0..4_000);
+        let capacity = slack.capacity();
+
+        // Pop the smallest values and add a range at the top, repeatedly
+        let mut next = 4_000u32;
+        for round in 0..20 {
+            for _ in 0..3_000 {
+                slack.remove(0);
+            }
+
+            if round % 2 == 0 {
+                slack.extend((next..next + 3_000).map(|v| v as u16));
+            }
+            else {
+                let len = slack.len();
+                slack.splice(len.., (next..next + 3_000).map(|v| v as u16));
+            }
+
+            next += 3_000;
+            assert_eq!(slack.len(), 4_000);
+        }
+
+        assert_eq!(slack.capacity(), capacity);
     }
 
     #[test]
