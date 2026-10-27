@@ -68,6 +68,7 @@ impl BitsetContainer {
     }
 
     /// Set the bit at `index`
+    #[inline]
     pub fn set(&mut self, index: u16) -> bool {
         let word_index = usize::from(index / 64);
         let bit_index = index % 64;

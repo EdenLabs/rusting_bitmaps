@@ -206,6 +206,7 @@ impl Container {
     }
 
     /// Add a value to the underlying container
+    #[inline]
     pub fn add(&mut self, value: u16) {
         match self {
             Container::Array(c) => {

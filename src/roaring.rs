@@ -120,6 +120,7 @@ impl RoaringBitmap {
     }
     
     /// Add a value to the bitmap
+    #[inline]
     pub fn add(&mut self, value: u32) {
         let x_high = (value >> 16) as u16;
 
