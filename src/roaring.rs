@@ -911,12 +911,11 @@ let key_min = min >> 16;
             }
             // Remove any elements in self not shared between the bitmaps
             else if k0 < k1 {
+                // The containers after the drained ones move down to `i0`
                 let iend = array_ops::advance_until(&self.keys, i0, k1);
 
                 self.containers.drain(i0..iend);
                 self.keys.drain(i0..iend);
-
-                i0 = iend;
             }
             // Skip past all elements not in ourself
             else {
@@ -926,12 +925,8 @@ let key_min = min >> 16;
 
         // Other ran out of elements, remove the remainder from self since
         // they obviously don't intersect
-        while i0 < self.keys.len() {
-            self.containers.drain(i0..self.keys.len());
-            self.keys.drain(i0..self.keys.len());
-
-            i0 += 1;
-        }
+        self.containers.truncate(i0);
+        self.keys.truncate(i0);
     }
 
     /// Same as [`and_not`] but operates in place on `self`
@@ -2424,5 +2419,21 @@ mod test {
 
         let read = RoaringBitmap::deserialize(&mut Trickle(Cursor::new(&output))).unwrap();
         assert!(read.iter().eq(bitmap.iter()));
+    }
+
+    #[test]
+    fn inplace_and_keeps_shared_keys_after_unshared_ones() {
+        let mut a = RoaringBitmap::new();
+        let mut b = RoaringBitmap::new();
+        for key in [0, 1, 2, 5, 7] {
+            a.add(key << 16);
+            a.add((key << 16) | 1);
+        }
+        for key in [2, 5, 9] {
+            b.add(key << 16);
+        }
+
+        a.inplace_and(&b);
+        assert!(a.iter().eq([2 << 16, 5 << 16]));
     }
 }
