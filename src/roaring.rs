@@ -1492,7 +1492,8 @@ impl<'a> Iterator for Iter<'a> {
     }
 }
 
-/// The low bits of the values from `first` to `last` that fall in the container with `key`
+/// The half-open range of the low 16 bits of the values from `first` to `last` that fall in the
+/// container with `key`. Its end may be 65 536
 fn key_range(key: u32, first: u32, last: u32) -> Range<u32> {
     let start = if key == first >> 16 { first & 0xFFFF } else { 0 };
     let end = if key == last >> 16 { (last & 0xFFFF) + 1 } else { 1 << 16 };

@@ -723,6 +723,8 @@ impl SetAndNot<RunContainer> for ArrayContainer {
         Container::Array(ArrayContainer::from(result))
     }
 
+    // TODO: Find a way to do this inplace
+    #[inline]
     fn inplace_and_not(self, other: &RunContainer) -> Container {
         SetAndNot::and_not(&self, other)
     }
