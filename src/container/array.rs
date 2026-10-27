@@ -4,6 +4,8 @@ use std::slice::Iter;
 
 use crate::container::*;
 use crate::container::slack::SlackVec;
+use crate::write_counted;
+use crate::container::run::{combine, combined_cardinality, value_intervals};
 
 /// An array container. Elements are sorted numerically and represented as individual values in the array
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -238,12 +240,6 @@ impl ArrayContainer {
         false
     }
 
-    /// Check if the array is full
-    #[inline]
-    pub fn is_full(&self) -> bool {
-        self.array.len() == DEFAULT_MAX_SIZE
-    }
-
     /// Find the element of a given rank from `start_rank`. 
     /// 
     /// # Returns 
@@ -287,7 +283,7 @@ impl ArrayContainer {
     pub fn rank(&self, value: u16) -> usize {
         match self.array.binary_search(&value) {
             Ok(index) => index + 1,
-            Err(index) => if index > 0 { index - 1 } else { 0 }
+            Err(index) => index
         }
     }
 
@@ -344,32 +340,26 @@ impl ArrayContainer {
             let num_bytes = mem::size_of::<u16>() * self.len();
             let byte_slice = slice::from_raw_parts(ptr, num_bytes);
 
-            buf.write(byte_slice)
+            write_counted(buf, byte_slice)
         }
     }
 
     /// Deserialize an array container according to the roaring format spec
     #[cfg(target_endian = "little")]
     pub fn deserialize<R: Read>(cardinality: usize, buf: &mut R) -> io::Result<Self> {
+        // Initialized, as a reader may read the buffer it fills
+        let mut result = ArrayContainer::with_capacity(cardinality);
+        result.array.extend(std::iter::repeat(0).take(cardinality));
+
         unsafe {
-            let mut result = ArrayContainer::with_capacity(cardinality);
-            
             let ptr = result.as_mut_ptr() as *mut u8;
             let num_bytes = mem::size_of::<u16>() * cardinality;
             let bytes_slice = slice::from_raw_parts_mut(ptr, num_bytes);
 
-            let num_read = buf.read(bytes_slice)?;
-            if num_read != num_bytes {
-                return Err(
-                    io::Error::new(io::ErrorKind::UnexpectedEof, 
-                    "Unexpected end of stream"
-                ));
-            }
-
-            result.set_cardinality(cardinality);
-
-            Ok(result)
+            buf.read_exact(bytes_slice)?;
         }
+
+        Ok(result)
     }
 }
 
@@ -451,6 +441,20 @@ impl<'a> From<&'a RunContainer> for ArrayContainer {
 impl SetOr<Self> for ArrayContainer {
     fn or(&self, other: &Self) -> Container {
         let len = self.len() + other.len();
+
+        // The inputs together may exceed an array
+        if len > DEFAULT_MAX_SIZE {
+            let mut bitset = BitsetContainer::new();
+            bitset.set_list(self);
+            bitset.set_list(other);
+
+            if bitset.cardinality() <= DEFAULT_MAX_SIZE {
+                return Container::Array(ArrayContainer::from(bitset));
+            }
+
+            return Container::Bitset(bitset);
+        }
+
         let mut result = ArrayContainer::with_capacity(len);
         let ptr = result.array.as_mut_ptr();
 
@@ -473,15 +477,14 @@ impl SetOr<Self> for ArrayContainer {
         // Contents will end up as an array container, work inplace
         if max_cardinality <= DEFAULT_MAX_SIZE {
             unsafe {
-                // Make sure the contents will fit
-                let required = max_cardinality - self.len();
-                self.reserve(required);
+                // Make sure the result and a copy of self both fit
+                self.reserve(max_cardinality);
 
-                // Offset the contents of self so we can put the result in the beginning of the array
+                // Copy self past the end of the result so no input is written while it is read
                 let start = self.as_mut_ptr();
-                let end = start.add(other.len());
+                let end = start.add(max_cardinality);
 
-                ptr::copy(start, end, self.len());
+                ptr::copy_nonoverlapping(start, end, self.len());
 
                 // Run the optimized union code on the contents
                 let s0 = slice::from_raw_parts(end, self.len());
@@ -501,7 +504,7 @@ impl SetOr<Self> for ArrayContainer {
             bitset.set_list(&other);
 
             // Result is going to be an array, convert back
-            let len = bitset.len();
+            let len = bitset.cardinality();
             if len <= DEFAULT_MAX_SIZE {
                 self.reserve(len);
 
@@ -713,55 +716,13 @@ impl SetAndNot<BitsetContainer> for ArrayContainer {
 
 impl SetAndNot<RunContainer> for ArrayContainer {
     fn and_not(&self, other: &RunContainer) -> Container {
-        if other.is_empty() {
-            return Container::Array(self.clone());
-        }
+        // A subset of the array, so an array too: runs stay confined to deserialized containers
+        let keep = |a: bool, b: bool| a && !b;
+        let result = combine(value_intervals(self), other.intervals(), keep);
 
-        let mut result = ArrayContainer::with_capacity(self.cardinality());
- 
-        let runs = other.deref();
-        let run = runs[0];
-        let mut run_start: usize = usize::from(run.value);
-        let mut run_end: usize = usize::from(run.end());
-        let mut which_run = 0;
-
-        let mut i: isize = 0;
-        while (i as usize) < self.cardinality() {
-            let value = usize::from(self.array[i as usize]);
-
-            if value < run_start {
-                result.push(value as u16);
-            } else if value <= run_end {
-                ()
-            }
-            else {
-                loop {
-                    if which_run + 1 < runs.len() {
-                        which_run += 1;
-
-                        let run = runs[which_run];
-                        run_start = usize::from(run.value);
-                        run_end = usize::from(run.end());
-                    }
-                    else {
-                        run_end = (1 << 16) + 1;
-                        run_start = run_end;
-                    }
-
-                    if value <= run_end {
-                        break;
-                    }
-                }
-
-                i -= 1;
-            }
-
-            i += 1;
-        }
-
-        Container::Array(result)
+        Container::Array(ArrayContainer::from(result))
     }
-    
+
     // TODO: Find a way to do this inplace
     #[inline]
     fn inplace_and_not(self, other: &RunContainer) -> Container {
@@ -771,8 +732,22 @@ impl SetAndNot<RunContainer> for ArrayContainer {
 
 impl SetXor<Self> for ArrayContainer {
     fn xor(&self, other: &Self) -> Container {
+        let req = self.len() + other.len();
+
+        // The inputs together may exceed an array
+        if req > DEFAULT_MAX_SIZE {
+            let mut bitset = BitsetContainer::new();
+            bitset.set_list(self);
+            bitset.flip_list(other);
+
+            if bitset.cardinality() <= DEFAULT_MAX_SIZE {
+                return Container::Array(ArrayContainer::from(bitset));
+            }
+
+            return Container::Bitset(bitset);
+        }
+
         unsafe {
-            let req = self.len() + other.len();
             let mut result = ArrayContainer::with_capacity(req);
 
             let ptr = result.as_mut_ptr();
@@ -784,6 +759,10 @@ impl SetXor<Self> for ArrayContainer {
     }
     
     fn inplace_xor(mut self, other: &Self) -> Container {
+        if self.len() + other.len() > DEFAULT_MAX_SIZE {
+            return SetXor::xor(&self, other);
+        }
+
         // TODO: See if this wouldn't be more optimal using a scalar approach to avoid realloc
         unsafe {
             // Shift the elements of self over to accomodate new contents
@@ -900,29 +879,7 @@ impl Subset<BitsetContainer> for ArrayContainer {
 
 impl Subset<RunContainer> for ArrayContainer {
     fn subset_of(&self, other: &RunContainer) -> bool {
-        if self.len() > other.len() {
-            return false;
-        }
-
-        let mut i_a = 0;
-        let mut i_r = 0;
-        
-        while i_a < self.len() && i_r < other.len() {
-            let (start, end) = other[i_r].range();
-            let value = self[i_a];
-            
-            if value < start {
-                return false;
-            }
-            else if value > end {
-                i_r += 1;
-            }
-            else {
-                i_a += 1;
-            }
-        }
-        
-        i_a == self.len()
+        combined_cardinality(value_intervals(self), other.intervals(), |a, b| a && !b) == 0
     }
 }
 
@@ -930,41 +887,36 @@ impl SetNot for ArrayContainer {
     fn not(&self, range: Range<u32>) -> Container {
         debug_assert!(is_valid_range(range.clone()));
 
-        let start_index = self.rank(range.start as u16).saturating_sub(1);
-        let end_index = self.rank(range.end.saturating_sub(1) as u16);
-
-        let current_values = end_index.saturating_sub(start_index).saturating_sub(1);
-        let span = range.len();
-        let new_values = span - current_values;
-        let change = (new_values as isize) - (current_values as isize);
-        let new_card = ((self.array.len() as isize) + change) as usize;
+        // The values of the array before, inside and after the range
+        let first = self.array.partition_point(|&value| u32::from(value) < range.start);
+        let last = self.array.partition_point(|&value| u32::from(value) < range.end);
+        let inside = last - first;
+        let new_card = self.array.len() - inside + (range.len() - inside);
 
         // Result is going to be a bitset
         if new_card > DEFAULT_MAX_SIZE {
             let mut result = BitsetContainer::from(self);
             result.flip_range(range);
-            
+
             Container::Bitset(result)
         }
         // Result is going to be an array
         else {
             let mut result = ArrayContainer::with_capacity(new_card);
-            result.array.extend_from_slice(&self.array[..start_index]);
+            result.array.extend_from_slice(&self.array[..first]);
 
-            let mut i = start_index;
-            let mut value = self.array[start_index];
-            while u32::from(value) < range.end && i <= end_index {
-                if value != self.array[i] {
-                    result.push(value);
+            let mut present = self.array[first..last].iter().peekable();
+            for value in range {
+                let value = value as u16;
+                if present.peek() == Some(&&value) {
+                    present.next();
                 }
                 else {
-                    i += 1;
+                    result.push(value);
                 }
-
-                value += 1;
             }
 
-            result.array.extend_from_slice(&self.array[(end_index + 1)..]);
+            result.array.extend_from_slice(&self.array[last..]);
 
             Container::Array(result)
         }
@@ -1446,5 +1398,20 @@ mod test {
     #[test]
     fn array_run_subset_of() {
         op_subset_test::<ArrayContainer, RunContainer, u16>();
+    }
+
+    #[test]
+    fn not_flips_exactly_the_range() {
+        let mut array = ArrayContainer::new();
+        for value in [2, 5, 6, 9, 65_535] {
+            array.add(value);
+        }
+
+        let flipped = array.not(4..8);
+        assert!(flipped.iter().eq([2, 4, 7, 9, 65_535]));
+
+        let flipped = array.not(9..(1 << 16));
+        assert_eq!(flipped.cardinality(), 3 + (65_535 - 10));
+        assert!(!flipped.contains(9) && flipped.contains(10) && !flipped.contains(65_535));
     }
 }

@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 use std::ptr;
 
-use crate::IntoBound;
+use crate::{IntoBound, write_counted};
 use crate::container::*;
 
 /// The size of the bitset in 64bit words
@@ -218,14 +218,15 @@ impl BitsetContainer {
     pub fn get_range(&self, range: Range<u32>) -> bool {
         let (min, max) = (range.start, range.end);
 
-        if min == max {
-            return self.get(min as u16);
+        // The empty set is always contained
+        if min >= max {
+            return true;
         }
 
         let first_word = (min >> 6) as usize;
-        let last_word = (max >> 6) as usize;
-        let w0 = !((1 << (min & 0x3F)) - 1);
-        let w1 = (1 << (max & 0x3F)) - 1;
+        let last_word = ((max - 1) >> 6) as usize;
+        let w0 = std::u64::MAX << (min % 64);
+        let w1 = std::u64::MAX >> ((!max + 1) % 64);
 
         // Start and end are the same, check if the range of bits are set
         if first_word == last_word {
@@ -249,18 +250,10 @@ impl BitsetContainer {
         true
     }
 
-    /// Flip a specific bit in the bitset
-    pub fn flip(&mut self, index: u16) {
-        let word_index = index / 64;
-        let bit_index = index % 64;
-
-        self.bitset[word_index as usize] ^= !(1 << bit_index);
-    }
-
     /// Flip all bits in the range [min-max)
     pub fn flip_range(&mut self, range: Range<u32>) {
         if range.start == range.end {
-            return self.flip(range.start as u16);
+            return;
         }
 
         let first_word = (range.start / 64) as usize;
@@ -373,7 +366,9 @@ impl BitsetContainer {
             result += self.bitset[i].count_ones();
         }
 
-        result += (self.bitset[last_word] & (!0 >> (((!start + 1) - len_minus_one - 1) % 64)))
+        // Keep the bits up to the last value of the range in its word
+        let end = start + len_minus_one + 1;
+        result += (self.bitset[last_word] & (!0 >> (end.wrapping_neg() % 64)))
             .count_ones();
 
         result as usize
@@ -407,23 +402,15 @@ impl BitsetContainer {
 
     /// Find the number of values equal to or smaller than `value`
     pub fn rank(&self, value: u16) -> usize {
-        let end = (value / 64) as usize;
-        let mut sum = 0;
+        let word = (value / 64) as usize;
+        let below: u32 = self.bitset[..word].iter()
+            .map(|word| word.count_ones())
+            .sum();
 
-        let iter = self.bitset[0..end].iter()
-            .enumerate();
+        // Shift out the bits above `value` in its word
+        let within = (self.bitset[word] << (63 - value % 64)).count_ones();
 
-        let mut last = 0;
-        for (i, word) in iter {
-            sum += word.count_ones();
-            last = i;
-        }
-
-        let rem = (value as usize) - (last * 64) + 1;
-        let rem_word = self.bitset[last] << ((64 - rem) & 63);
-        sum += rem_word.count_ones();
-
-        sum as usize
+        (below + within) as usize
     }
 
     /// Find the element of a given rank starting at `start_rank`. Returns None if no element is present and updates `start_rank`
@@ -560,7 +547,7 @@ impl BitsetContainer {
             let num_bytes = BITSET_SIZE_IN_WORDS * mem::size_of::<u64>();
             let byte_slice = slice::from_raw_parts(ptr, num_bytes);
 
-            buf.write(byte_slice)
+            write_counted(buf, byte_slice)
         }
     }
 
@@ -573,10 +560,7 @@ impl BitsetContainer {
             let num_bytes = BITSET_SIZE_IN_WORDS * mem::size_of::<u64>();
             let bytes_slice = slice::from_raw_parts_mut(ptr, num_bytes);
 
-            let num_read = buf.read(bytes_slice)?;
-            if num_read != num_bytes {
-                return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
-            }
+            buf.read_exact(bytes_slice)?;
 
             Ok(result)
         }
@@ -625,7 +609,7 @@ impl<'a> From<&'a RunContainer> for BitsetContainer {
         let mut bitset = BitsetContainer::new();
         for run in container.iter_runs() {
             let min = u32::from(run.value);
-            let max = u32::from(run.end() + 1);
+            let max = u32::from(run.end()) + 1;
 
             bitset.set_range(min..max);
         }
@@ -1673,5 +1657,19 @@ mod test {
     #[test]
     fn bitset_run_subset_of() {
         op_subset_test::<BitsetContainer, RunContainer, u16>();
+    }
+
+    #[test]
+    fn get_range_up_to_the_last_value() {
+        let mut a = BitsetContainer::new();
+        a.set_range(0..(1 << 16));
+
+        assert!(a.get_range(10..(1 << 16)));
+        assert!(a.get_range(0..64));
+        assert!(a.get_range(5..5));
+
+        a.unset(65_535);
+        assert!(!a.get_range(10..(1 << 16)));
+        assert!(a.get_range(10..65_535));
     }
 }

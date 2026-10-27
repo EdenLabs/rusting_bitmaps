@@ -317,7 +317,8 @@ impl Container {
                 let max = c.max()
                     .unwrap_or(0) as u32;
 
-                if range.start <= min && range.end >= max {
+                // `range.end` is exclusive, `max` is a member
+                if range.start <= min && range.end > max {
                     return false;
                 }
 
@@ -358,7 +359,8 @@ impl Container {
     /// Check if the container is full
     pub fn is_full(&self) -> bool {
         match self {
-            Container::Array(c) => c.is_full(),
+            // An array holds at most `DEFAULT_MAX_SIZE` of the 65 536 values
+            Container::Array(_) => false,
             Container::Bitset(c) => c.is_full(),
             Container::Run(c) => c.is_full(),
             Container::None => unreachable!()
@@ -644,5 +646,359 @@ mod test {
         fn card(&self) -> usize {
             self.cardinality()
         }
+    }
+
+    #[test]
+    fn run_set_ops_cover_every_value() {
+        use std::iter::once;
+
+        let run = |ranges: &[std::ops::Range<u32>]| {
+            let mut run = RunContainer::new();
+            for range in ranges {
+                run.add_range(range.clone());
+            }
+            Container::Run(run)
+        };
+        let array = |values: &[u16]| {
+            let mut array = ArrayContainer::new();
+            for &value in values {
+                array.add(value);
+            }
+            Container::Array(array)
+        };
+
+        // Array values after the last run are not in the intersection
+        assert!(run(&[0..10]).and(&array(&[5, 100])).iter().eq(once(5)));
+        assert_eq!(run(&[0..10]).and_cardinality(&array(&[5, 100])), 1);
+
+        // Runs that end at the last value of the container
+        let high = run(&[60_000..(1 << 16)]);
+        let edges = run(&[0..10, 65_000..(1 << 16)]);
+        assert!(high.and(&edges).iter().eq(65_000..=65_535));
+        assert_eq!(high.and_cardinality(&edges), 536);
+        assert!(high.or(&edges).iter().eq((0..10).chain(60_000..=65_535)));
+        assert!(high.and_not(&edges).iter().eq(60_000..65_000));
+        assert!(high.xor(&edges).iter().eq((0..10).chain(60_000..65_000)));
+        assert!(high.or(&array(&[5, 65_535])).iter().eq(once(5).chain(60_000..=65_535)));
+        assert!(high.xor(&array(&[5, 65_535])).iter().eq(once(5).chain(60_000..65_535)));
+        assert!(array(&[5, 65_535]).and_not(&high).iter().eq(once(5)));
+        assert!(high.not(50_000..(1 << 16)).iter().eq(50_000..60_000));
+        assert!(edges.subset_of(&run(&[0..(1 << 16)])));
+        assert!(!high.subset_of(&edges));
+        assert!(array(&[3, 65_535]).subset_of(&edges));
+        assert!(!array(&[3, 10]).subset_of(&edges));
+    }
+
+    #[test]
+    fn rank_counts_values_up_to_and_including() {
+        let mut bitset = BitsetContainer::new();
+        let mut array = ArrayContainer::new();
+        for value in [3, 64, 200, 65_535] {
+            bitset.set(value);
+            array.add(value);
+        }
+
+        for (value, rank) in [(0, 0), (3, 1), (4, 1), (63, 1), (64, 2), (127, 2), (128, 2), (65_534, 3), (65_535, 4)] {
+            assert_eq!(bitset.rank(value), rank, "bitset rank of {}", value);
+            assert_eq!(array.rank(value), rank, "array rank of {}", value);
+        }
+    }
+
+    #[test]
+    fn cardinality_range_counts_ranges_from_zero() {
+        let mut bitset = BitsetContainer::new();
+        for value in [0, 63, 64, 99, 100, 65_535] {
+            bitset.set(value);
+        }
+
+        assert_eq!(bitset.cardinality_range(0..100), 4);
+        assert_eq!(bitset.cardinality_range(0..(1 << 16)), 6);
+        assert_eq!(bitset.cardinality_range(64..(1 << 16)), 4);
+    }
+
+    #[test]
+    fn remove_range_keeps_the_last_run_value_outside_the_range() {
+        let mut run = RunContainer::new();
+        run.add_range(0..11);
+        let mut container = Container::Run(run);
+
+        assert!(container.remove_range(0..10));
+        assert!(container.iter().eq(std::iter::once(10)));
+    }
+
+    #[test]
+    fn bitset_flip_of_an_empty_range_changes_nothing() {
+        let mut bitset = BitsetContainer::new();
+        bitset.set(3);
+
+        bitset.flip_range(10..10);
+        assert!(bitset.iter().eq(std::iter::once(3)));
+    }
+
+    /// Random containers of every kind against a set of the values they hold, operation by
+    /// operation. Values cluster at 0, 65 535 and word edges, and runs often touch either end
+    #[test]
+    fn container_ops_match_a_model() {
+        use rand::prelude::*;
+        use std::collections::BTreeSet;
+        use std::panic::{self, AssertUnwindSafe};
+
+        type Model = BTreeSet<u16>;
+
+        fn edge_value(rng: &mut SmallRng) -> u16 {
+            match rng.random_range(0..4) {
+                0 => rng.random_range(0..64),
+                1 => u16::MAX - rng.random_range(0..64),
+                2 => (rng.random_range(0..1024u32) * 64 + rng.random_range(0..2) * 63) as u16,
+                _ => rng.random()
+            }
+        }
+
+        fn array(rng: &mut SmallRng) -> (Container, Model) {
+            let count = rng.random_range(1..=DEFAULT_MAX_SIZE);
+            let mut model = Model::new();
+            while model.len() < count {
+                model.insert(edge_value(rng));
+            }
+
+            let mut array = ArrayContainer::new();
+            for &value in &model {
+                assert!(array.add(value));
+            }
+
+            (Container::Array(array), model)
+        }
+
+        fn bitset(rng: &mut SmallRng) -> (Container, Model) {
+            let count = rng.random_range((DEFAULT_MAX_SIZE - BITSET_RETAIN_MARGIN)..40_000);
+            let mut model = Model::new();
+            while model.len() < count {
+                model.insert(if rng.random_bool(0.5) { edge_value(rng) } else { rng.random() });
+            }
+
+            let mut bitset = BitsetContainer::new();
+            for &value in &model {
+                bitset.add(value);
+            }
+
+            (Container::Bitset(bitset), model)
+        }
+
+        fn run(rng: &mut SmallRng) -> (Container, Model) {
+            let mut model = Model::new();
+            let mut run = RunContainer::new();
+            for _ in 0..rng.random_range(1..12) {
+                let start = match rng.random_range(0..4) {
+                    0 => 0,
+                    1 => u32::from(u16::MAX) - rng.random_range(0..200),
+                    _ => u32::from(edge_value(rng))
+                };
+                let end = (start + rng.random_range(1..3_000)).min(1 << 16);
+                let end = if rng.random_range(0..4) == 0 { 1 << 16 } else { end };
+
+                run.add_range(start..end);
+                model.extend((start..end).map(|value| value as u16));
+            }
+
+            (Container::Run(run), model)
+        }
+
+        fn any(rng: &mut SmallRng, kind: usize) -> (Container, Model) {
+            match kind {
+                0 => array(rng),
+                1 => bitset(rng),
+                _ => run(rng)
+            }
+        }
+
+        fn range(rng: &mut SmallRng) -> std::ops::Range<u32> {
+            let a = u32::from(edge_value(rng));
+            let b = match rng.random_range(0..4) {
+                0 => 1 << 16,
+                1 => a + 1,
+                _ => u32::from(edge_value(rng)) + 1
+            };
+
+            a.min(b - 1)..b.max(a + 1)
+        }
+
+        fn values(container: &Container) -> Vec<u16> {
+            container.iter().collect()
+        }
+
+        fn sorted(model: &Model) -> Vec<u16> {
+            model.iter().copied().collect()
+        }
+
+        const KINDS: [&str; 3] = ["array", "bitset", "run"];
+        let mut failures: Vec<String> = Vec::new();
+        let mut check = |name: String, f: &mut dyn FnMut() -> Result<(), String>| {
+            match panic::catch_unwind(AssertUnwindSafe(|| f())) {
+                Ok(Ok(())) => (),
+                Ok(Err(message)) => failures.push(format!("{}: {}", name, message)),
+                Err(_) => failures.push(format!("{}: panicked", name))
+            }
+        };
+
+        let mut rng = SmallRng::seed_from_u64(0x5eed);
+        for round in 0..40 {
+            for k0 in 0..3 {
+                for k1 in 0..3 {
+                    let (a, ma) = any(&mut rng, k0);
+                    let (b, mb) = any(&mut rng, k1);
+                    let pair = format!("round {} {} {}", round, KINDS[k0], KINDS[k1]);
+
+                    let expected = [
+                        ("or", sorted(&ma.union(&mb).copied().collect())),
+                        ("and", sorted(&ma.intersection(&mb).copied().collect())),
+                        ("and_not", sorted(&ma.difference(&mb).copied().collect())),
+                        ("xor", sorted(&ma.symmetric_difference(&mb).copied().collect()))
+                    ];
+
+                    for (op, expected) in expected.iter() {
+                        let (a, b) = (&a, &b);
+                        check(format!("{} {}", op, pair), &mut || {
+                            let result = match *op {
+                                "or" => a.or(b),
+                                "and" => a.and(b),
+                                "and_not" => a.and_not(b),
+                                _ => a.xor(b)
+                            };
+                            if &values(&result) != expected || result.cardinality() != expected.len() {
+                                return Err(format!("{} values, expected {}", result.cardinality(), expected.len()));
+                            }
+                            Ok(())
+                        });
+
+                        check(format!("inplace_{} {}", op, pair), &mut || {
+                            let mut result = a.clone();
+                            match *op {
+                                "or" => result.inplace_or(b),
+                                "and" => result.inplace_and(b),
+                                "and_not" => result.inplace_and_not(b),
+                                _ => result.inplace_xor(b)
+                            }
+                            if &values(&result) != expected || result.cardinality() != expected.len() {
+                                return Err(format!("{} values, expected {}", result.cardinality(), expected.len()));
+                            }
+                            Ok(())
+                        });
+                    }
+
+                    let and_len = expected[1].1.len();
+                    check(format!("and_cardinality {}", pair), &mut || {
+                        let found = a.and_cardinality(&b);
+                        if found != and_len { Err(format!("{}, expected {}", found, and_len)) } else { Ok(()) }
+                    });
+
+                    let subset = ma.is_subset(&mb);
+                    check(format!("subset_of {}", pair), &mut || {
+                        let found = a.subset_of(&b);
+                        if found != subset { Err(format!("{}, expected {}", found, subset)) } else { Ok(()) }
+                    });
+                    let (b_in_a, a_in_a) = (mb.is_subset(&ma), true);
+                    check(format!("subset_of reversed {}", pair), &mut || {
+                        let found = (b.subset_of(&a), a.subset_of(&a));
+                        if found != (b_in_a, a_in_a) { Err(format!("{:?}, expected {:?}", found, (b_in_a, a_in_a))) } else { Ok(()) }
+                    });
+                }
+            }
+
+            for kind in 0..3 {
+                let (c, model) = any(&mut rng, kind);
+                let name = format!("round {} {}", round, KINDS[kind]);
+                let r = range(&mut rng);
+                let in_range: Model = (r.start..r.end).map(|value| value as u16).collect();
+                let flipped = sorted(&model.symmetric_difference(&in_range).copied().collect());
+                let removed = sorted(&model.difference(&in_range).copied().collect());
+
+                check(format!("not {:?} {}", r, name), &mut || {
+                    let result = c.not(r.clone());
+                    if values(&result) != flipped || result.cardinality() != flipped.len() {
+                        return Err(format!("{} values, expected {}", result.cardinality(), flipped.len()));
+                    }
+                    Ok(())
+                });
+
+                check(format!("inplace_not {:?} {}", r, name), &mut || {
+                    let result = c.clone().inplace_not(r.clone());
+                    if values(&result) != flipped || result.cardinality() != flipped.len() {
+                        return Err(format!("{} values, expected {}", result.cardinality(), flipped.len()));
+                    }
+                    Ok(())
+                });
+
+                check(format!("remove_range {:?} {}", r, name), &mut || {
+                    let mut result = c.clone();
+                    let has_values = result.remove_range(r.clone());
+                    if has_values != !removed.is_empty() {
+                        return Err(format!("returned {}, {} values left", has_values, removed.len()));
+                    }
+                    if has_values && values(&result) != removed {
+                        return Err(format!("{} values, expected {}", result.cardinality(), removed.len()));
+                    }
+                    Ok(())
+                });
+
+                let contained = in_range.is_subset(&model);
+                check(format!("contains_range {:?} {}", r, name), &mut || {
+                    let found = c.contains_range(r.clone());
+                    if found != contained { Err(format!("{}, expected {}", found, contained)) } else { Ok(()) }
+                });
+
+                for _ in 0..20 {
+                    let value = edge_value(&mut rng);
+                    let rank = model.range(..=value).count();
+                    check(format!("rank {} {}", value, name), &mut || {
+                        let found = c.rank(value);
+                        if found != rank { Err(format!("{}, expected {}", found, rank)) } else { Ok(()) }
+                    });
+                    let contains = model.contains(&value);
+                    check(format!("contains {} {}", value, name), &mut || {
+                        if c.contains(value) != contains { Err(format!("expected {}", contains)) } else { Ok(()) }
+                    });
+                }
+
+                let bounds = (model.iter().next().copied(), model.iter().next_back().copied());
+                check(format!("min max cardinality {}", name), &mut || {
+                    let found = (c.min(), c.max());
+                    if found != bounds || c.cardinality() != model.len() {
+                        return Err(format!("{:?} {}, expected {:?} {}", found, c.cardinality(), bounds, model.len()));
+                    }
+                    Ok(())
+                });
+            }
+        }
+
+        let mut kinds: Vec<String> = Vec::new();
+        for failure in &failures {
+            let head = failure.split(':').next().unwrap();
+            let words: Vec<&str> = head.split(' ').collect();
+            let mut key = vec![words[0]];
+            key.extend(words.iter().skip(1).filter(|w| KINDS.contains(*w) || **w == "reversed"));
+            let key = key.join(" ") + ":";
+            if !kinds.iter().any(|k| k.starts_with(&key)) {
+                kinds.push(format!("{} -- e.g. {}", key, failure));
+            }
+        }
+        assert!(failures.is_empty(), "{} failures, by operation:\n{}", failures.len(), kinds.join("\n"));
+    }
+
+    #[test]
+    fn array_and_run_results_are_arrays() {
+        let mut run = RunContainer::new();
+        run.add_range(50..(1 << 16));
+        let run = Container::Run(run);
+
+        let mut array = ArrayContainer::new();
+        for value in 0..100 {
+            array.add(value);
+        }
+        let array = Container::Array(array);
+
+        for result in [run.and(&array), array.and(&run), array.and_not(&run)] {
+            assert!(matches!(result, Container::Array(_)));
+        }
+        assert!(array.and_not(&run).iter().eq(0..50));
     }
 }
