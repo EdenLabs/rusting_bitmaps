@@ -372,7 +372,8 @@ impl RunContainer {
     
     /// Get the rank of a value in the set. The relative position of an element in the set
     pub fn rank(&self, value: u16) -> usize {
-        let mut sum = 0;
+        // A full container ranks 65 536 values, more than a `u16` holds
+        let mut sum = 0_usize;
         for run in self.runs.iter() {
             let start = run.value;
             let length = run.length;
@@ -382,15 +383,15 @@ impl RunContainer {
                 if value < start {
                     break;
                 }
-                
-                return (sum + (value - start) + 1) as usize;
+
+                return sum + usize::from(value - start) + 1;
             }
             else {
-                sum += length + 1;
+                sum += usize::from(length) + 1;
             }
         }
 
-        sum as usize
+        sum
     }
 
     /// Select the element with `rank` starting the search from `start_rank`
@@ -2616,5 +2617,15 @@ mod test {
         let mut a = runs();
         a.remove_range(0..50);
         assert!(a.is_empty());
+    }
+
+    #[test]
+    fn rank_of_a_full_container() {
+        let mut a = RunContainer::new();
+        a.add_range(0..(1 << 16));
+
+        assert_eq!(a.rank(0), 1);
+        assert_eq!(a.rank(65_534), 65_535);
+        assert_eq!(a.rank(65_535), 1 << 16);
     }
 }
