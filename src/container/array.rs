@@ -282,7 +282,7 @@ impl ArrayContainer {
     pub fn rank(&self, value: u16) -> usize {
         match self.array.binary_search(&value) {
             Ok(index) => index + 1,
-            Err(index) => if index > 0 { index - 1 } else { 0 }
+            Err(index) => index
         }
     }
 
@@ -888,41 +888,36 @@ impl SetNot for ArrayContainer {
     fn not(&self, range: Range<u32>) -> Container {
         debug_assert!(is_valid_range(range.clone()));
 
-        let start_index = self.rank(range.start as u16).saturating_sub(1);
-        let end_index = self.rank(range.end.saturating_sub(1) as u16);
-
-        let current_values = end_index.saturating_sub(start_index).saturating_sub(1);
-        let span = range.len();
-        let new_values = span - current_values;
-        let change = (new_values as isize) - (current_values as isize);
-        let new_card = ((self.array.len() as isize) + change) as usize;
+        // The values of the array before, inside and after the range
+        let first = self.array.partition_point(|&value| u32::from(value) < range.start);
+        let last = self.array.partition_point(|&value| u32::from(value) < range.end);
+        let inside = last - first;
+        let new_card = self.array.len() - inside + (range.len() - inside);
 
         // Result is going to be a bitset
         if new_card > DEFAULT_MAX_SIZE {
             let mut result = BitsetContainer::from(self);
             result.flip_range(range);
-            
+
             Container::Bitset(result)
         }
         // Result is going to be an array
         else {
             let mut result = ArrayContainer::with_capacity(new_card);
-            result.array.extend_from_slice(&self.array[..start_index]);
+            result.array.extend_from_slice(&self.array[..first]);
 
-            let mut i = start_index;
-            let mut value = self.array[start_index];
-            while u32::from(value) < range.end && i <= end_index {
-                if value != self.array[i] {
-                    result.push(value);
+            let mut present = self.array[first..last].iter().peekable();
+            for value in range {
+                let value = value as u16;
+                if present.peek() == Some(&&value) {
+                    present.next();
                 }
                 else {
-                    i += 1;
+                    result.push(value);
                 }
-
-                value += 1;
             }
 
-            result.array.extend_from_slice(&self.array[(end_index + 1)..]);
+            result.array.extend_from_slice(&self.array[last..]);
 
             Container::Array(result)
         }
@@ -1404,5 +1399,20 @@ mod test {
     #[test]
     fn array_run_subset_of() {
         op_subset_test::<ArrayContainer, RunContainer, u16>();
+    }
+
+    #[test]
+    fn not_flips_exactly_the_range() {
+        let mut array = ArrayContainer::new();
+        for value in [2, 5, 6, 9, 65_535] {
+            array.add(value);
+        }
+
+        let flipped = array.not(4..8);
+        assert!(flipped.iter().eq([2, 4, 7, 9, 65_535]));
+
+        let flipped = array.not(9..(1 << 16));
+        assert_eq!(flipped.cardinality(), 3 + (65_535 - 10));
+        assert!(!flipped.contains(9) && flipped.contains(10) && !flipped.contains(65_535));
     }
 }

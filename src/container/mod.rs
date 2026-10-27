@@ -687,4 +687,19 @@ mod test {
         assert!(array(&[3, 65_535]).subset_of(&edges));
         assert!(!array(&[3, 10]).subset_of(&edges));
     }
+
+    #[test]
+    fn rank_counts_values_up_to_and_including() {
+        let mut bitset = BitsetContainer::new();
+        let mut array = ArrayContainer::new();
+        for value in [3, 64, 200, 65_535] {
+            bitset.set(value);
+            array.add(value);
+        }
+
+        for (value, rank) in [(0, 0), (3, 1), (4, 1), (63, 1), (64, 2), (127, 2), (128, 2), (65_534, 3), (65_535, 4)] {
+            assert_eq!(bitset.rank(value), rank, "bitset rank of {}", value);
+            assert_eq!(array.rank(value), rank, "array rank of {}", value);
+        }
+    }
 }

@@ -408,23 +408,15 @@ impl BitsetContainer {
 
     /// Find the number of values equal to or smaller than `value`
     pub fn rank(&self, value: u16) -> usize {
-        let end = (value / 64) as usize;
-        let mut sum = 0;
+        let word = (value / 64) as usize;
+        let below: u32 = self.bitset[..word].iter()
+            .map(|word| word.count_ones())
+            .sum();
 
-        let iter = self.bitset[0..end].iter()
-            .enumerate();
+        // Shift out the bits above `value` in its word
+        let within = (self.bitset[word] << (63 - value % 64)).count_ones();
 
-        let mut last = 0;
-        for (i, word) in iter {
-            sum += word.count_ones();
-            last = i;
-        }
-
-        let rem = (value as usize) - (last * 64) + 1;
-        let rem_word = self.bitset[last] << ((64 - rem) & 63);
-        sum += rem_word.count_ones();
-
-        sum as usize
+        (below + within) as usize
     }
 
     /// Find the element of a given rank starting at `start_rank`. Returns None if no element is present and updates `start_rank`
