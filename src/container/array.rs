@@ -102,7 +102,8 @@ impl ArrayContainer {
         self.add_with_limit(value, DEFAULT_MAX_SIZE)
     }
 
-    /// Add a value to the array, returning false if it already holds `array_limit` values
+    /// Add a value to the array. Returns false if the value is absent and the array already holds
+    /// `array_limit` values
     #[inline]
     pub fn add_with_limit(&mut self, value: u16, array_limit: usize) -> bool {
         // The ends need no search. Appending is the common case when building from sorted

@@ -22,18 +22,20 @@ use std::slice;
 /// Default maximum size of an array container before it is converted to another type
 pub const DEFAULT_MAX_SIZE: usize = 4096;
 
-/// How far below `DEFAULT_MAX_SIZE` a bitset container must fall by single-value removals before it
-/// becomes an array again. `remove_range` does not apply it
+/// How far below the array limit a bitset container must fall by single-value removals before it
+/// becomes an array again, at most. `remove_range` does not apply it. [`bitset_retain_min`] gives
+/// the effective threshold for a limit
 ///
 /// Without the margin a container whose cardinality hovers at the limit converts on every
 /// other operation, each conversion costing a pass over the whole container. A bitset in the
 /// margin takes at most `2 * BITSET_RETAIN_MARGIN` bytes more than the array would.
 pub const BITSET_RETAIN_MARGIN: usize = 256;
 
-/// The cardinality below which a removal turns a bitset back into an array, for arrays limited
-/// to `array_limit` values. The margin shrinks to half of a limit smaller than twice the margin,
-/// so a limit from 3 keeps both the hysteresis and a way back to an array; at 1 or 2 a bitset
-/// stays one until it is empty
+/// The cardinality below which a single-value removal turns a bitset back into an array, for
+/// arrays limited to `array_limit` values.
+///
+/// The margin below `array_limit` is [`BITSET_RETAIN_MARGIN`] or half the limit, whichever is
+/// smaller. With a limit of 1 or 2 a bitset stays a bitset until it is empty
 pub fn bitset_retain_min(array_limit: usize) -> usize {
     array_limit - BITSET_RETAIN_MARGIN.min(array_limit / 2)
 }
@@ -172,8 +174,8 @@ impl Container {
         Self::from_range_with_limit(range, DEFAULT_MAX_SIZE)
     }
 
-    /// Create a container with all values in the specified range, as an array of at most
-    /// `array_limit` values
+    /// Create a container with all values in the specified range. It is an array when the range
+    /// holds at most `array_limit` values and a bitset otherwise
     pub fn from_range_with_limit(range: Range<u32>, array_limit: usize) -> Self {
         debug_assert!(!range.is_empty());
 
@@ -221,8 +223,8 @@ impl Container {
         }
     }
 
-    /// Add a value to the underlying container. An array already holding `array_limit` values
-    /// becomes a bitset
+    /// Add a value to the underlying container. An array holding `array_limit` values becomes a
+    /// bitset when a value it lacks is added
     #[inline]
     pub fn add(&mut self, value: u16, array_limit: usize) {
         match self {
@@ -535,8 +537,8 @@ impl Container {
     /// Get an iterator over the runs of consecutive values in the container.
     ///
     /// Each run is yielded as its first and last value, offset by `base`. A run that crosses a
-    /// bitset word is yielded as one segment per word, which the caller merges. Every other
-    /// segment is a maximal run within the container. Only a segment whose last value ends a
+    /// bitset word is yielded as one segment per word, which the caller merges. All other runs
+    /// are yielded whole and are maximal. Only a segment whose last value ends a
     /// bitset word, `last % 64 == 63`, can touch the next one. The last value of a container,
     /// 65 535, also ends a word.
     #[inline]

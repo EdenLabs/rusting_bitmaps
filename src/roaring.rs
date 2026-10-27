@@ -87,13 +87,16 @@ impl RoaringBitmap {
     /// Create a new empty roaring bitmap whose adds keep at most `array_limit` values in an
     /// array container.
     ///
-    /// An add that would grow an array past the limit stores that container as a bitset
-    /// instead, and a removal turns the bitset back into an array once it holds fewer than the
-    /// limit less a margin of at most 256 and at most half the limit (with a limit of 1 or 2 only
-    /// once it is empty). A lower limit trades
-    /// memory for cheaper out of order adds: a bitset takes 8 KiB however few values it holds,
-    /// where an array of the same values takes 2 bytes each. [`new`](Self::new) uses the roaring
-    /// standard of 4 096.
+    /// An add that would grow an array past the limit stores that container as a bitset instead.
+    /// A single-value removal ([`remove`](Self::remove), [`remove_slice`](Self::remove_slice),
+    /// [`pop_min`](Self::pop_min)) turns the bitset back into an array once it holds fewer than
+    /// the limit less a margin of at most 256 and at most half the limit. With a limit of 1 or 2
+    /// the bitset stays until it is empty. [`remove_range`](Self::remove_range) turns it back as
+    /// soon as it holds fewer values than the limit.
+    ///
+    /// A lower limit trades memory for cheaper out of order adds: a bitset takes 8 KiB however
+    /// few values it holds, where an array of the same values takes 2 bytes each.
+    /// [`new`](Self::new) uses the roaring standard of 4 096.
     ///
     /// The limit governs [`add`](Self::add), [`add_slice`](Self::add_slice),
     /// [`add_range`](Self::add_range), [`remove`](Self::remove),
@@ -1264,8 +1267,8 @@ impl RoaringBitmap {
     ///
     /// Each run is maximal. Values on either side of a run are absent from the bitmap.
     ///
-    /// Bitset containers are read a word at a time and run containers a stored run at a time.
-    /// Array containers are read value by value.
+    /// Iterating costs time linear in the values of array containers, the words of bitset
+    /// containers and the stored runs of run containers, not in the values bitsets and runs hold.
     ///
     /// # Examples
     ///
