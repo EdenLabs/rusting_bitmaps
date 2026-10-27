@@ -783,7 +783,8 @@ impl RoaringBitmap {
         let start = self.keys.partition_point(|&key| u32::from(key) < first_key);
         let end = self.keys.partition_point(|&key| u32::from(key) <= last_key);
 
-        let mut result = Self::new();
+        let capacity = self.keys.len() - (end - start) + (last_key - first_key + 1) as usize;
+        let mut result = Self::with_capacity(capacity);
         result.keys.extend_from_slice(&self.keys[..start]);
         result.containers.extend_from_slice(&self.containers[..start]);
 
@@ -1058,34 +1059,34 @@ impl RoaringBitmap {
         };
         let (first_key, last_key) = (first >> 16, last >> 16);
 
-        // Rebuild the key and container lists, moving the containers outside the range and
-        // flipping the ones inside it in place
-        let keys = mem::take(&mut self.keys);
-        let containers = mem::take(&mut self.containers);
-        let mut existing = keys.into_iter().zip(containers).peekable();
+        // Flip the containers of the keys in the range in place and splice the results back
+        let start = self.keys.partition_point(|&key| u32::from(key) < first_key);
+        let end = self.keys.partition_point(|&key| u32::from(key) <= last_key);
 
-        while let Some((key, container)) = existing.next_if(|(key, _)| u32::from(*key) < first_key) {
-            self.keys.push(key);
-            self.containers.push(container);
-        }
+        let span = (last_key - first_key + 1) as usize;
+        let mut keys = Vec::with_capacity(span);
+        let mut containers = Vec::with_capacity(span);
+        {
+            let mut existing = self.keys[start..end].iter()
+                .zip(self.containers.drain(start..end))
+                .peekable();
 
-        for key in first_key..=last_key {
-            let range = key_range(key, first, last);
-            let flipped = match existing.next_if(|(existing, _)| u32::from(*existing) == key) {
-                Some((_, container)) => container.inplace_not(range),
-                None => Container::from_range(range)
-            };
+            for key in first_key..=last_key {
+                let range = key_range(key, first, last);
+                let flipped = match existing.next_if(|(&existing, _)| u32::from(existing) == key) {
+                    Some((_, container)) => container.inplace_not(range),
+                    None => Container::from_range(range)
+                };
 
-            if !flipped.is_empty() {
-                self.keys.push(key as u16);
-                self.containers.push(flipped);
+                if !flipped.is_empty() {
+                    keys.push(key as u16);
+                    containers.push(flipped);
+                }
             }
         }
 
-        for (key, container) in existing {
-            self.keys.push(key);
-            self.containers.push(container);
-        }
+        self.keys.splice(start..end, keys);
+        self.containers.splice(start..start, containers);
     }
 
     /// Compute the cardinality of `or` on `self` and `other` without storing the result
