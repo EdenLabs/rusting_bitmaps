@@ -97,6 +97,12 @@ impl ArrayContainer {
     /// Add a value to the array, returning false if it did not fit
     #[inline]
     pub fn add(&mut self, value: u16) -> bool {
+        self.add_with_limit(value, DEFAULT_MAX_SIZE)
+    }
+
+    /// Add a value to the array, returning false if it already holds `array_limit` values
+    #[inline]
+    pub fn add_with_limit(&mut self, value: u16, array_limit: usize) -> bool {
         // The ends need no search. Appending is the common case when building from sorted
         // input, and inserting at the front is the common case when popping the minimum and releasing
         // values near it
@@ -120,7 +126,7 @@ impl ArrayContainer {
                 true
             },
             Err(index) => {
-                if self.cardinality() < DEFAULT_MAX_SIZE {
+                if self.cardinality() < array_limit {
                     self.array.insert(index, value);
 
                     true
