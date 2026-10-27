@@ -124,7 +124,15 @@ impl RoaringBitmap {
     pub fn add(&mut self, value: u32) {
         let x_high = (value >> 16) as u16;
 
-        match self.keys.binary_search(&x_high) {
+        // Runs of adds tend to stay in the last container or append after it, neither needs a
+        // search
+        let position = match self.keys.last() {
+            Some(&last) if last == x_high => Ok(self.keys.len() - 1),
+            Some(&last) if last < x_high => Err(self.keys.len()),
+            _ => self.keys.binary_search(&x_high)
+        };
+
+        match position {
             Ok(i) => {
                 self.containers[i].add(value as u16)
             },
