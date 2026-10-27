@@ -2814,9 +2814,9 @@ mod test {
         assert!(a.iter().eq([2 << 16, 5 << 16]));
     }
 
-    /// Random bitmaps of array, bitset and run containers against a set of the values they
-    /// hold, operation by operation. Values sit in a few low keys and the two highest keys, and
-    /// cluster at container and word edges
+    /// Random bitmaps of array, bitset and run containers, some with a lowered array limit,
+    /// against a set of the values they hold, operation by operation. Values sit in a few low
+    /// keys and the two highest keys, and cluster at container and word edges
     #[test]
     fn bitmap_ops_match_a_model() {
         use rand::prelude::*;
@@ -2858,7 +2858,9 @@ mod test {
                 }
             }
 
-            let mut bitmap = RoaringBitmap::new();
+            // Limited bitmaps keep their limit through the clones the checks below operate on
+            let limit = [4_096, 1_024, 256, 3][rng.random_range(0..4)];
+            let mut bitmap = RoaringBitmap::with_array_limit(limit);
             for &value in &model {
                 bitmap.add(value);
             }
