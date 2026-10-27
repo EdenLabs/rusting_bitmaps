@@ -146,19 +146,21 @@ impl RoaringBitmap {
     fn add_fetch_container(&mut self, value: u32) -> usize {
         let x_high = (value >> 16) as u16;
 
-        if let Ok(i) = self.get_index(x_high) {
-            self.containers[i].add(value as u16);
+        match self.get_index(x_high) {
+            Ok(i) => {
+                self.containers[i].add(value as u16);
 
-            i
-        }
-        else {
-            let mut array = ArrayContainer::new();
-            array.add(value as u16);
+                i
+            },
+            Err(i) => {
+                let mut array = ArrayContainer::new();
+                array.add(value as u16);
 
-            self.containers.push(Container::Array(array));
-            self.keys.push(x_high);
+                self.containers.insert(i, Container::Array(array));
+                self.keys.insert(i, x_high);
 
-            self.containers.len() - 1
+                i
+            }
         }
     }
 
@@ -511,7 +513,7 @@ impl RoaringBitmap {
 
             if k0 == k1 {
                 let c0 = &self.containers[i0]; // Containers
-                let c1 = &self.containers[i1];
+                let c1 = &other.containers[i1];
 
                 if !c0.subset_of(c1) {
                     return false;
@@ -877,7 +879,7 @@ impl RoaringBitmap {
         let mut i0 = 0;
         let mut i1 = 0;
         let mut k0 = self.keys[i0];
-        let mut k1 = self.keys[i1];
+        let mut k1 = other.keys[i1];
 
         loop {
             if k0 == k1 {
@@ -894,7 +896,7 @@ impl RoaringBitmap {
                 if i1 == len1 { break; }
 
                 k0 = self.keys[i0];
-                k1 = self.keys[i1];
+                k1 = other.keys[i1];
             }
             else if k0 < k1 {
                 i0 += 1;
@@ -914,7 +916,7 @@ impl RoaringBitmap {
 
                 if i1 == len1 { break; }
                 
-                k1 = self.keys[i1];
+                k1 = other.keys[i1];
             }
         }
 
@@ -2223,5 +2225,81 @@ mod test {
             // The first container crossed the array limit in both directions, and the margin
             assert!(peak > 4_096 && trough < 3_840, "peak {} trough {}", peak, trough);
         }
+    }
+
+    #[test]
+    fn inplace_or_with_disjoint_keys() {
+        let mut a = RoaringBitmap::from_slice(&[1, (2 << 16) | 5]);
+        let b = RoaringBitmap::from_slice(&[(1 << 16) | 7, (2 << 16) | 9]);
+        a.inplace_or(&b);
+
+        assert_eq!(a.iter().collect::<Vec<_>>(), vec![1, (1 << 16) | 7, (2 << 16) | 5, (2 << 16) | 9]);
+        assert_eq!(a.len(), 4);
+    }
+
+    #[test]
+    fn inplace_or_into_array_at_the_limit() {
+        // 4 096 values is the array limit, not a full container
+        let even: Vec<u32> = (0..4_096).map(|i| i * 2).collect();
+        let mut a = RoaringBitmap::from_slice(&even);
+        a.inplace_or(&RoaringBitmap::from_slice(&[1]));
+
+        assert!(a.contains(1));
+        assert_eq!(a.len(), 4_097);
+    }
+
+    /// Two disjoint arrays of 3 000 values, whose union of 6 000 must be stored as a bitset
+    fn arrays_past_the_limit() -> (RoaringBitmap, RoaringBitmap) {
+        let a = RoaringBitmap::from_slice(&(0..3_000).map(|i| i * 2).collect::<Vec<_>>());
+        let b = RoaringBitmap::from_slice(&(0..3_000).map(|i| i * 2 + 1).collect::<Vec<_>>());
+
+        (a, b)
+    }
+
+    fn assert_round_trips(bitmap: &RoaringBitmap) {
+        let mut buf = Vec::new();
+        bitmap.serialize(&mut buf).unwrap();
+        let read = RoaringBitmap::deserialize(&mut std::io::Cursor::new(&buf)).unwrap();
+
+        assert!(read.iter().eq(bitmap.iter()));
+    }
+
+    #[test]
+    fn or_past_the_array_limit_round_trips() {
+        let (a, b) = arrays_past_the_limit();
+        let union = a.or(&b);
+
+        assert!(union.iter().eq(0..6_000));
+        assert_round_trips(&union);
+    }
+
+    #[test]
+    fn inplace_or_past_the_array_limit_round_trips() {
+        let (mut a, b) = arrays_past_the_limit();
+        a.inplace_or(&b);
+
+        assert!(a.iter().eq(0..6_000));
+        assert_round_trips(&a);
+    }
+
+    #[test]
+    fn subset_of_compares_matching_containers() {
+        let a = RoaringBitmap::from_slice(&[3, (1 << 16) | 5]);
+        let b = RoaringBitmap::from_slice(&[3, (1 << 16) | 6]);
+
+        assert!(!a.subset_of(&b));
+        assert!(!b.subset_of(&a));
+        assert!(a.subset_of(&RoaringBitmap::from_slice(&[3, 4, (1 << 16) | 5])));
+    }
+
+    #[test]
+    fn add_slice_keeps_keys_sorted() {
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_slice(&[(2 << 16) | 1, 5, (1 << 16) | 3, 6]);
+
+        assert_eq!(bitmap.iter().collect::<Vec<_>>(), vec![5, 6, (1 << 16) | 3, (2 << 16) | 1]);
+        assert!(bitmap.contains(5) && bitmap.contains((1 << 16) | 3) && bitmap.contains((2 << 16) | 1));
+        assert_eq!(bitmap.min(), Some(5));
+        assert_eq!(bitmap.max(), Some((2 << 16) | 1));
     }
 }

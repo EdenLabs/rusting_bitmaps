@@ -238,12 +238,6 @@ impl ArrayContainer {
         false
     }
 
-    /// Check if the array is full
-    #[inline]
-    pub fn is_full(&self) -> bool {
-        self.array.len() == DEFAULT_MAX_SIZE
-    }
-
     /// Find the element of a given rank from `start_rank`. 
     /// 
     /// # Returns 
@@ -451,6 +445,20 @@ impl<'a> From<&'a RunContainer> for ArrayContainer {
 impl SetOr<Self> for ArrayContainer {
     fn or(&self, other: &Self) -> Container {
         let len = self.len() + other.len();
+
+        // The union may outgrow an array
+        if len > DEFAULT_MAX_SIZE {
+            let mut bitset = BitsetContainer::new();
+            bitset.set_list(self);
+            bitset.set_list(other);
+
+            if bitset.cardinality() <= DEFAULT_MAX_SIZE {
+                return Container::Array(ArrayContainer::from(bitset));
+            }
+
+            return Container::Bitset(bitset);
+        }
+
         let mut result = ArrayContainer::with_capacity(len);
         let ptr = result.array.as_mut_ptr();
 
@@ -501,7 +509,7 @@ impl SetOr<Self> for ArrayContainer {
             bitset.set_list(&other);
 
             // Result is going to be an array, convert back
-            let len = bitset.len();
+            let len = bitset.cardinality();
             if len <= DEFAULT_MAX_SIZE {
                 self.reserve(len);
 

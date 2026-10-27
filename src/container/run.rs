@@ -145,7 +145,7 @@ impl RunContainer {
                     }
                 }
 
-                self.runs.push(Rle16::new(value, 0));
+                self.runs.insert(0, Rle16::new(value, 0));
             }
         }
     }
@@ -503,8 +503,8 @@ impl RunContainer {
         }
 
         let mut low = 0;
-        let mut high = self.runs.len() - 1;
-        while low <= high {
+        let mut high = self.runs.len();
+        while low < high {
             let middle = (low + high) >> 1;
             let value = self.runs[middle].value;
 
@@ -512,7 +512,7 @@ impl RunContainer {
                 low = middle + 1;
             }
             else if value > key {
-                high = middle - 1;
+                high = middle;
             }
             else {
                 return SearchResult::ExactMatch(middle);
@@ -2547,5 +2547,18 @@ mod test {
     #[test]
     fn run_bitset_subset_of() {
         op_subset_test::<RunContainer, BitsetContainer, u16>();
+    }
+
+    #[test]
+    fn add_below_the_first_run() {
+        let mut a = RunContainer::new();
+        a.add_range(10..21);
+        a.add(5);
+        a.add(9);
+
+        assert!(a.iter().eq([5, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]));
+        assert!(a.contains(5) && a.contains(9) && !a.contains(4) && !a.contains(6));
+        assert!(!a.remove(0));
+        assert_eq!(a.cardinality(), 13);
     }
 }

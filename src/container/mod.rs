@@ -358,7 +358,8 @@ impl Container {
     /// Check if the container is full
     pub fn is_full(&self) -> bool {
         match self {
-            Container::Array(c) => c.is_full(),
+            // An array holds at most `DEFAULT_MAX_SIZE` of the 65 536 values
+            Container::Array(_) => false,
             Container::Bitset(c) => c.is_full(),
             Container::Run(c) => c.is_full(),
             Container::None => unreachable!()
