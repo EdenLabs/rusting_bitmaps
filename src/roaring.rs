@@ -2496,13 +2496,24 @@ mod test {
             let mut containers = Vec::new();
             for key in keys(rng) {
                 let mut runs = Vec::new();
+                if rng.random_range(0..4) == 0 {
+                    // A full container as two touching runs
+                    let split = rng.random_range(1..(1 << 16));
+                    runs.push((0, (split - 1) as u16));
+                    runs.push((split as u16, ((1 << 16) - split - 1) as u16));
+                    model.extend((key << 16)..=((key << 16) | 0xFFFF));
+                    containers.push((key as u16, runs));
+                    continue;
+                }
+
                 let mut start = if rng.random_bool(0.3) { 0 } else { rng.random_range(0..2_000) };
                 while start < (1 << 16) {
                     let len = rng.random_range(1..3_000).min((1 << 16) - start);
-                    let len = if rng.random_range(0..6) == 0 { (1 << 16) - start } else { len };
+                    let len = if rng.random_range(0..3) == 0 { (1 << 16) - start } else { len };
                     runs.push((start as u16, (len - 1) as u16));
                     model.extend(((key << 16) | start)..=((key << 16) | (start + len - 1)));
-                    start += len + rng.random_range(1..5_000);
+                    // Stored runs may touch, and a full container may be several runs
+                    start += len + if rng.random_range(0..4) == 0 { 0 } else { rng.random_range(1..5_000) };
                 }
                 containers.push((key as u16, runs));
             }
@@ -2563,6 +2574,17 @@ mod test {
             if bitmap.containers.iter().any(|c| c.is_empty()) {
                 return Err("holds an empty container".to_string());
             }
+            if bitmap.containers.iter().any(|c| matches!(c, crate::container::Container::Array(a) if a.len() > crate::container::DEFAULT_MAX_SIZE)) {
+                return Err("holds an array past the standard limit".to_string());
+            }
+
+            // Results must survive the portable format too
+            let mut bytes = Vec::new();
+            bitmap.serialize(&mut bytes).map_err(|e| e.to_string())?;
+            let read = RoaringBitmap::deserialize(&mut Cursor::new(&bytes)).map_err(|e| format!("{:?}", e))?;
+            if !read.iter().eq(model.iter().copied()) {
+                return Err(format!("{} values after a round trip, expected {}", read.cardinality(), model.len()));
+            }
             Ok(())
         }
 
@@ -2577,7 +2599,7 @@ mod test {
         };
 
         let mut rng = SmallRng::seed_from_u64(0xb17_5e7);
-        for round in 0..12 {
+        for round in 0..8 {
             for k0 in 0..2 {
                 for k1 in 0..2 {
                     let (a, ma) = any(&mut rng, k0);
@@ -2674,6 +2696,26 @@ mod test {
                     check(format!("not exclusive {} {}", r, name), &mut || match last.checked_add(1) {
                         Some(end) => same(&bitmap.not(first..end), &flipped),
                         None => same(&bitmap.not(first..), &flipped)
+                    });
+                }
+
+                // Every maximal run of values is contained, and no longer range around it is
+                let mut runs: Vec<(u32, u32)> = Vec::new();
+                for &value in &model {
+                    match runs.last_mut() {
+                        Some(run) if run.1 + 1 == value => run.1 = value,
+                        _ => runs.push((value, value))
+                    }
+                }
+                let crossing = runs.iter().filter(|run| run.0 >> 16 != run.1 >> 16);
+                for &(first, last) in runs.iter().rev().take(40).chain(crossing) {
+                    check(format!("contains_range run {}..={} {}", first, last, name), &mut || {
+                        let longer = (first > 0 && bitmap.contains_range(first - 1..=last))
+                            || (last < u32::MAX && bitmap.contains_range(first..=last + 1));
+                        if !bitmap.contains_range(first..=last) || longer {
+                            return Err("wrong answer".to_string());
+                        }
+                        Ok(())
                     });
                 }
 
