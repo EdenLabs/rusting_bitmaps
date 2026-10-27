@@ -317,7 +317,8 @@ impl Container {
                 let max = c.max()
                     .unwrap_or(0) as u32;
 
-                if range.start <= min && range.end >= max {
+                // `range.end` is exclusive, `max` is a member
+                if range.start <= min && range.end > max {
                     return false;
                 }
 
@@ -713,5 +714,15 @@ mod test {
         assert_eq!(bitset.cardinality_range(0..100), 4);
         assert_eq!(bitset.cardinality_range(0..(1 << 16)), 6);
         assert_eq!(bitset.cardinality_range(64..(1 << 16)), 4);
+    }
+
+    #[test]
+    fn remove_range_keeps_the_last_run_value_outside_the_range() {
+        let mut run = RunContainer::new();
+        run.add_range(0..11);
+        let mut container = Container::Run(run);
+
+        assert!(container.remove_range(0..10));
+        assert!(container.iter().eq(std::iter::once(10)));
     }
 }
