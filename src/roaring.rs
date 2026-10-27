@@ -5,7 +5,7 @@ use std::ops::{RangeBounds, Range};
 use std::fmt;
 use std::mem;
 
-use crate::IntoBound;
+use crate::{IntoBound, inclusive_bounds};
 use crate::container::{self, *, array_ops};
 
 // TODO: Add support for custom allocators
@@ -75,14 +75,11 @@ impl RoaringBitmap {
     
     /// Create a new roaring bitmap with the specified range and step
     pub fn from_range<R: RangeBounds<u32>>(range: R) -> Self {
-        let (min, max) = range.into_bound();
-        let min = u64::from(min);
-        let max = u64::from(max);
-
         // No elements, just return an empty bitmap
-        if max - min == 0 {
-            return Self::new();
-        }
+        let (min, max) = match inclusive_bounds(range) {
+            Some((first, last)) => (u64::from(first), u64::from(last) + 1),
+            None => return Self::new()
+        };
 
         let mut bitmap = Self::new();
 
@@ -96,7 +93,7 @@ impl RoaringBitmap {
             bitmap.containers.push(container);
             bitmap.keys.push(key as u16);
 
-            value += container_max as u64;
+            value = (key + 1) << 16;
         }
 
         bitmap
@@ -166,13 +163,12 @@ impl RoaringBitmap {
 
     /// Add a range of values to the bitmap. An empty or inverted range adds nothing
     pub fn add_range<R: RangeBounds<u32>>(&mut self, range: R) {
-        let (min, max) = range.into_bound();
-        if min >= max {
-            return;
-        }
+        let (min, last) = match inclusive_bounds(range) {
+            Some(bounds) => bounds,
+            None => return
+        };
 
-        let last = max - 1;
-        let min_key = min >> 16;
+let min_key = min >> 16;
         let max_key = last >> 16;
 
         let mut index = self.keys.partition_point(|&key| u32::from(key) < min_key);
@@ -257,13 +253,12 @@ impl RoaringBitmap {
 
     /// Remove a range of values from the bitmap
     pub fn remove_range<R: RangeBounds<u32>>(&mut self, range: R) {
-        let (min, max) = range.into_bound();
-        if min >= max {
-            return;
-        }
+        let (min, last) = match inclusive_bounds(range) {
+            Some(bounds) => bounds,
+            None => return
+        };
 
-        let last = max - 1;
-        let min_key = (min >> 16) as u16;
+let min_key = (min >> 16) as u16;
         let max_key = (last >> 16) as u16;
 
         let mut i = array_ops::count_less(&self.keys, min_key);
@@ -325,21 +320,19 @@ impl RoaringBitmap {
     
     /// Check if the bitmap contains a range of values
     pub fn contains_range<R: RangeBounds<u32>>(&self, range: R) -> bool {
-        let (min, max) = range.into_bound();
-        
         // We always contain the empty set
-        if min >= max {
-            return true;
-        }
+        let (min, last) = match inclusive_bounds(range) {
+            Some(bounds) => bounds,
+            None => return true
+        };
 
         // Do an optimized single value contains if there's only one element in the set
-        if max - min == 1 {
+        if min == last {
             return self.contains(min);
         }
 
         // Do a ranged contains operation
-        let last = max - 1;
-        let key_min = min >> 16;
+let key_min = min >> 16;
         let key_max = last >> 16;
         let key_span = (key_max - key_min) as usize;
 
@@ -2369,5 +2362,31 @@ mod test {
         let mut c = RoaringBitmap::from_range(0..20);
         c.remove_range(8..8);
         assert!(c.iter().eq(0..20));
+    }
+
+    #[test]
+    fn range_apis_reach_u32_max() {
+        let top = u32::MAX - 2..=u32::MAX;
+
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_range(top.clone());
+        assert!(bitmap.iter().eq(top.clone()));
+        assert!(bitmap.contains_range(top.clone()));
+        assert!(bitmap.contains_range(u32::MAX..));
+        assert!(!bitmap.contains_range(u32::MAX - 3..));
+
+        assert!(RoaringBitmap::from_range(top.clone()).iter().eq(top.clone()));
+        assert_eq!(RoaringBitmap::from_range(u32::MAX - 70_000..).cardinality(), 70_001);
+        assert!(RoaringBitmap::from_range(100..200_000).iter().eq(100..200_000));
+
+        bitmap.remove_range(u32::MAX..);
+        assert!(bitmap.iter().eq(u32::MAX - 2..u32::MAX));
+
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_range(u32::MAX - 1..);
+        assert!(bitmap.iter().eq(u32::MAX - 1..=u32::MAX));
+
+        bitmap.remove_range(..);
+        assert!(bitmap.is_empty());
     }
 }

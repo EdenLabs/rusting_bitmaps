@@ -56,6 +56,24 @@ macro_rules! impl_into_bound {
     };
 }
 
+/// The first and last value of a range of `u32` values, or `None` if it holds none. Unlike
+/// [`IntoBound`] this represents ranges that include `u32::MAX`
+fn inclusive_bounds<R: RangeBounds<u32>>(range: R) -> Option<(u32, u32)> {
+    let first = match range.start_bound() {
+        Bound::Excluded(&bound) => bound.checked_add(1)?,
+        Bound::Included(&bound) => bound,
+        Bound::Unbounded => 0
+    };
+
+    let last = match range.end_bound() {
+        Bound::Excluded(&bound) => bound.checked_sub(1)?,
+        Bound::Included(&bound) => bound,
+        Bound::Unbounded => u32::MAX
+    };
+
+    if first <= last { Some((first, last)) } else { None }
+}
+
 impl_into_bound!(u16);
 impl_into_bound!(usize);
 impl_into_bound!(u32);
