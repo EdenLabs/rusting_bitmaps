@@ -481,15 +481,14 @@ impl SetOr<Self> for ArrayContainer {
         // Contents will end up as an array container, work inplace
         if max_cardinality <= DEFAULT_MAX_SIZE {
             unsafe {
-                // Make sure the contents will fit
-                let required = max_cardinality - self.len();
-                self.reserve(required);
+                // Make sure the result and a copy of self both fit
+                self.reserve(max_cardinality);
 
-                // Offset the contents of self so we can put the result in the beginning of the array
+                // Copy self past the end of the result so no input is written while it is read
                 let start = self.as_mut_ptr();
-                let end = start.add(other.len());
+                let end = start.add(max_cardinality);
 
-                ptr::copy(start, end, self.len());
+                ptr::copy_nonoverlapping(start, end, self.len());
 
                 // Run the optimized union code on the contents
                 let s0 = slice::from_raw_parts(end, self.len());
