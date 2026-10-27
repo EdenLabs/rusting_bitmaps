@@ -68,6 +68,7 @@ impl BitsetContainer {
     }
 
     /// Set the bit at `index`
+    #[inline]
     pub fn set(&mut self, index: u16) -> bool {
         let word_index = usize::from(index / 64);
         let bit_index = index % 64;
@@ -585,6 +586,9 @@ impl<'a> From<&'a ArrayContainer> for BitsetContainer {
     fn from(container: &'a ArrayContainer) -> Self {
         let mut bitset = BitsetContainer::new();
         bitset.set_list(&container);
+
+        // The values of an array are distinct, so its length is the cardinality
+        bitset.bitset.cardinality = container.len() as u32;
 
         bitset
     }
@@ -1671,5 +1675,17 @@ mod test {
         a.unset(65_535);
         assert!(!a.get_range(10..(1 << 16)));
         assert!(a.get_range(10..65_535));
+    }
+
+    #[test]
+    fn from_array_knows_its_cardinality() {
+        let mut array = ArrayContainer::new();
+        for value in [3, 64, 65, 4_000] {
+            array.add(value);
+        }
+
+        let bitset = BitsetContainer::from(&array);
+        assert_eq!(bitset.bitset.cardinality, 4);
+        assert_eq!(bitset.count_bits(), 4);
     }
 }

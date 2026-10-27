@@ -1,7 +1,7 @@
 #![deny(arithmetic_overflow)]
 
 use std::io::{self, Read, Write, Seek, SeekFrom};
-use std::ops::{RangeBounds, Range};
+use std::ops::{RangeBounds, Range, RangeInclusive};
 use std::fmt;
 use std::mem;
 
@@ -49,13 +49,23 @@ use crate::container::{self, *, array_ops};
 /// Queries using the normal ops will create a new bitmap for every operation.
 /// 
 /// `cardinality()` (`len()`) queries may lazily evaluate the cardinality of some containers if they are determined to be out of date
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct RoaringBitmap {
     /// List of containers in this roaring bitmap
     containers: Vec<Container>,
 
     /// List of keys corresponding to the containers in the bitmap
-    keys: Vec<u16>
+    keys: Vec<u16>,
+
+    /// The most values an array container holds before an add turns it into a bitset
+    array_limit: usize
+}
+
+impl Default for RoaringBitmap {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RoaringBitmap {
@@ -69,10 +79,67 @@ impl RoaringBitmap {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             containers: Vec::with_capacity(capacity),
-            keys: Vec::with_capacity(capacity)
+            keys: Vec::with_capacity(capacity),
+            array_limit: DEFAULT_MAX_SIZE
         }
     }
-    
+
+    /// Create a new empty roaring bitmap whose adds keep at most `array_limit` values in an
+    /// array container.
+    ///
+    /// An add that would grow an array past the limit stores that container as a bitset instead.
+    /// A single-value removal ([`remove`](Self::remove), [`remove_slice`](Self::remove_slice),
+    /// [`pop_min`](Self::pop_min)) turns the bitset back into an array once it holds fewer than
+    /// the limit less a margin of at most 256 and at most half the limit. With a limit of 1 or 2
+    /// the bitset stays until it is empty. [`remove_range`](Self::remove_range) turns it back as
+    /// soon as it holds fewer values than the limit.
+    ///
+    /// A lower limit trades memory for cheaper out of order adds: a bitset takes 8 KiB however
+    /// few values it holds, where an array of the same values takes 2 bytes each.
+    /// [`new`](Self::new) uses the roaring standard of 4 096.
+    ///
+    /// The limit governs [`add`](Self::add), [`add_slice`](Self::add_slice),
+    /// [`add_range`](Self::add_range), [`remove`](Self::remove),
+    /// [`remove_slice`](Self::remove_slice), [`remove_range`](Self::remove_range) and
+    /// [`pop_min`](Self::pop_min), the containers [`not`](Self::not) and
+    /// [`inplace_not`](Self::inplace_not) create for keys the bitmap lacks, and the bitmap `not`
+    /// returns. It survives [`clear`](Self::clear) and cloning. Every other operation uses the
+    /// standard limit, as does any bitmap it returns, except that a set operation with an empty
+    /// operand may return a clone of the other operand, limit included.
+    /// Serialization writes the standard format, so a deserialized bitmap has the standard limit.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `array_limit` is 0 or above 4 096.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rusting_bitmaps::RoaringBitmap;
+    ///
+    /// // A per-frame dirty set, cleared after every upload
+    /// let mut dirty = RoaringBitmap::with_array_limit(256);
+    /// for row in (0..1_000).rev() {
+    ///     dirty.add(row * 7);
+    /// }
+    ///
+    /// assert_eq!(dirty.len(), 1_000);
+    /// dirty.clear();
+    /// ```
+    pub fn with_array_limit(array_limit: usize) -> Self {
+        assert!(
+            (1..=DEFAULT_MAX_SIZE).contains(&array_limit),
+            "array limit {} is outside 1..={}",
+            array_limit,
+            DEFAULT_MAX_SIZE
+        );
+
+        Self {
+            array_limit,
+            ..Self::new()
+        }
+    }
+
     /// Create a new roaring bitmap with the specified range and step
     pub fn from_range<R: RangeBounds<u32>>(range: R) -> Self {
         // No elements, just return an empty bitmap
@@ -117,12 +184,21 @@ impl RoaringBitmap {
     }
     
     /// Add a value to the bitmap
+    #[inline]
     pub fn add(&mut self, value: u32) {
         let x_high = (value >> 16) as u16;
 
-        match self.keys.binary_search(&x_high) {
+        // Runs of adds tend to stay in the last container or append after it, neither needs a
+        // search
+        let position = match self.keys.last() {
+            Some(&last) if last == x_high => Ok(self.keys.len() - 1),
+            Some(&last) if last < x_high => Err(self.keys.len()),
+            _ => self.keys.binary_search(&x_high)
+        };
+
+        match position {
             Ok(i) => {
-                self.containers[i].add(value as u16)
+                self.containers[i].add(value as u16, self.array_limit)
             },
             Err(i) => {
                 let mut array = ArrayContainer::new();
@@ -145,7 +221,7 @@ impl RoaringBitmap {
 
         match self.get_index(x_high) {
             Ok(i) => {
-                self.containers[i].add(value as u16);
+                self.containers[i].add(value as u16, self.array_limit);
 
                 i
             },
@@ -177,10 +253,11 @@ impl RoaringBitmap {
             let container_max = if key == max_key { (last & 0xFFFF) + 1 } else { 1 << 16 };
 
             if index < self.keys.len() && u32::from(self.keys[index]) == key {
-                self.containers[index].add_range(container_min..container_max);
+                self.containers[index].add_range(container_min..container_max, self.array_limit);
             }
             else {
-                self.containers.insert(index, Container::from_range(container_min..container_max));
+                let range = container_min..container_max;
+                self.containers.insert(index, Container::from_range_with_limit(range, self.array_limit));
                 self.keys.insert(index, key as u16);
             }
 
@@ -205,7 +282,7 @@ impl RoaringBitmap {
             // Check if the upper 16 bits match the previous value, if so the value goes
             // into the same container and we can just append to that one
             if (prev ^ value) >> 16 == 0 {
-                self.containers[c_index].add(value as u16);
+                self.containers[c_index].add(value as u16, self.array_limit);
             }
             else {
                 c_index = self.add_fetch_container(value);
@@ -222,7 +299,7 @@ impl RoaringBitmap {
 
         match self.get_index(x_high) {
             Ok(i) => {
-                let removed = self.containers[i].remove(value as u16);
+                let removed = self.containers[i].remove(value as u16, self.array_limit);
 
                 if removed && self.containers[i].is_empty() {
                     self.containers.remove(i);
@@ -241,7 +318,7 @@ impl RoaringBitmap {
     /// Removing the last value of the lowest container shifts the key and container vectors
     pub fn pop_min(&mut self) -> Option<u32> {
         let key = *self.keys.first()?;
-        let low = self.containers[0].pop_min()?;
+        let low = self.containers[0].pop_min(self.array_limit)?;
 
         if self.containers[0].is_empty() {
             self.containers.remove(0);
@@ -267,7 +344,7 @@ impl RoaringBitmap {
             let container_max = if max_key == self.keys[i] { last & 0xFFFF } else { 0xFFFF };
 
             let has_elements = self.containers[i]
-                .remove_range(container_min..(container_max + 1));
+                .remove_range(container_min..(container_max + 1), self.array_limit);
 
             if has_elements {
                 i += 1;
@@ -296,7 +373,7 @@ impl RoaringBitmap {
             if let Some(index) = c_index {
                 let container = &mut self.containers[index];
 
-                container.remove(*value as u16);
+                container.remove(*value as u16, self.array_limit);
 
                 if container.is_empty() {
                     self.containers.remove(index);
@@ -785,6 +862,7 @@ impl RoaringBitmap {
 
         let capacity = self.keys.len() - (end - start) + (last_key - first_key + 1) as usize;
         let mut result = Self::with_capacity(capacity);
+        result.array_limit = self.array_limit;
         result.keys.extend_from_slice(&self.keys[..start]);
         result.containers.extend_from_slice(&self.containers[..start]);
 
@@ -796,7 +874,7 @@ impl RoaringBitmap {
                 self.containers[index - 1].not(range)
             }
             else {
-                Container::from_range(range)
+                Container::from_range_with_limit(range, self.array_limit)
             };
 
             if !flipped.is_empty() {
@@ -1075,7 +1153,7 @@ impl RoaringBitmap {
                 let range = key_range(key, first, last);
                 let flipped = match existing.next_if(|(&existing, _)| u32::from(existing) == key) {
                     Some((_, container)) => container.inplace_not(range),
-                    None => Container::from_range(range)
+                    None => Container::from_range_with_limit(range, self.array_limit)
                 };
 
                 if !flipped.is_empty() {
@@ -1183,6 +1261,105 @@ impl RoaringBitmap {
             iter,
             index: 0
         }
+    }
+
+    /// Get an iterator over the runs of consecutive values in the bitmap, in ascending order.
+    ///
+    /// Each run is maximal. Values on either side of a run are absent from the bitmap.
+    ///
+    /// Iterating costs time linear in the values of array containers, the words of bitset
+    /// containers and the stored runs of run containers, not in the values bitsets and runs hold.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rusting_bitmaps::RoaringBitmap;
+    ///
+    /// // Coalesce dirty rows into upload ranges
+    /// let mut dirty = RoaringBitmap::new();
+    /// dirty.add_range(10..20);
+    /// dirty.add(20);
+    /// dirty.add(70_000);
+    ///
+    /// let runs: Vec<_> = dirty.iter_runs().collect();
+    /// assert_eq!(runs, vec![10..=20, 70_000..=70_000]);
+    /// ```
+    #[inline]
+    pub fn iter_runs(&self) -> Runs<'_> {
+        let source = match self.containers.first() {
+            Some(container) => container.iter_runs(u32::from(self.keys[0]) << 16),
+            None => container::Runs::empty()
+        };
+
+        Runs {
+            keys: &self.keys,
+            containers: &self.containers,
+            index: 0,
+            source,
+            pending: None
+        }
+    }
+}
+
+/// An iterator over the runs of consecutive values in a bitmap.
+///
+/// See [`iter_runs`](RoaringBitmap::iter_runs) for more information.
+pub struct Runs<'a> {
+    /// The keys of `containers`.
+    keys: &'a [u16],
+    /// The containers of the bitmap.
+    containers: &'a [Container],
+    /// The index of the container `source` reads.
+    index: usize,
+    /// The segments of the current container.
+    source: container::Runs<'a>,
+    /// The first and last value of a segment read past the previous run.
+    pending: Option<(u32, u32)>
+}
+
+impl<'a> Runs<'a> {
+    /// Returns the next segment, moving across containers.
+    ///
+    /// Returns `None` if all containers are read.
+    #[inline]
+    fn next_segment(&mut self) -> Option<(u32, u32)> {
+        loop {
+            if let Some(segment) = self.source.next() {
+                return Some(segment);
+            }
+
+            self.index += 1;
+            let container = self.containers.get(self.index)?;
+            self.source = container.iter_runs(u32::from(self.keys[self.index]) << 16);
+        }
+    }
+}
+
+impl<'a> Iterator for Runs<'a> {
+    type Item = RangeInclusive<u32>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let (first, mut last) = match self.pending.take() {
+            Some(segment) => segment,
+            None => self.next_segment()?
+        };
+
+        // See `Container::iter_runs` for which segments can touch the next. A segment never
+        // follows one ending at `u32::MAX`, so the wrapped successor never matches
+        while last & 63 == 63 {
+            match self.next_segment() {
+                Some((next_first, next_last)) if last.wrapping_add(1) == next_first => {
+                    last = next_last;
+                },
+                next => {
+                    self.pending = next;
+                    break;
+                }
+            }
+        }
+
+        Some(first..=last)
     }
 }
 
@@ -1504,6 +1681,7 @@ fn key_range(key: u32, first: u32, last: u32) -> Range<u32> {
 #[cfg(test)]
 mod test {
     use crate::RoaringBitmap;
+    use crate::container::{Container, DEFAULT_MAX_SIZE};
     use crate::test::*;
 
     impl TestShim<u32> for RoaringBitmap {
@@ -2271,6 +2449,105 @@ mod test {
         assert_eq!(bitmap.max(), Some((2 << 16) | 1));
     }
 
+    /// The maximal runs of `bitmap`, from a walk over its values
+    fn runs_by_value(bitmap: &RoaringBitmap) -> Vec<std::ops::RangeInclusive<u32>> {
+        let mut runs = Vec::new();
+        let mut iter = bitmap.iter();
+        if let Some(first) = iter.next() {
+            let (mut start, mut end) = (first, first);
+            for value in iter {
+                if value == end + 1 {
+                    end = value;
+                }
+                else {
+                    runs.push(start..=end);
+                    start = value;
+                    end = value;
+                }
+            }
+
+            runs.push(start..=end);
+        }
+
+        runs
+    }
+
+    #[test]
+    fn iter_runs_matches_the_values() {
+        use crate::container::{Container, RunContainer};
+
+        assert_eq!(RoaringBitmap::new().iter_runs().count(), 0);
+
+        // Runs across bitset words, across containers, and up to the last value
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_range(60..70);
+        bitmap.add_range(127..129);
+        bitmap.add_range(65_000..70_000);
+        bitmap.add_range(130_000..140_000);
+        bitmap.add_range((3 << 16) - 1..(3 << 16) + 1);
+        bitmap.add(u32::MAX);
+        assert!(bitmap.iter_runs().eq(runs_by_value(&bitmap)));
+        assert_eq!(bitmap.iter_runs().nth(2), Some(65_000..=69_999));
+
+        let full = RoaringBitmap::from_range(0..u32::MAX);
+        let mut full_with_max = full.clone();
+        full_with_max.add(u32::MAX);
+        assert!(full.iter_runs().eq([0..=u32::MAX - 1]));
+        assert!(full_with_max.iter_runs().eq([0..=u32::MAX]));
+
+        // A run container next to an array, touching across the key boundary
+        let mut run = RunContainer::new();
+        run.add_range(0..10);
+        run.add_range(20..30);
+        let mut bitmap = RoaringBitmap::from_slice(&[65_534, 65_535]);
+        bitmap.keys.push(1);
+        bitmap.containers.push(Container::Run(run));
+        assert!(bitmap.iter_runs().eq([65_534..=65_545, 65_556..=65_565]));
+
+        // Array segments ending a word, and a run container ending its key before a key gap
+        let mut run = RunContainer::new();
+        run.add_range(65_000..65_536);
+        let mut bitmap = RoaringBitmap::from_slice(&[63, 65, 127, 129]);
+        bitmap.keys.push(1);
+        bitmap.containers.push(Container::Run(run));
+        bitmap.add(3 << 16);
+        assert!(bitmap.iter_runs().eq(runs_by_value(&bitmap)));
+        assert!(bitmap.iter_runs().eq([63..=63, 65..=65, 127..=127, 129..=129,
+            130_536..=131_071, 196_608..=196_608]));
+
+        let mut rng = 0x2545_F491_4F6C_DD1D_u64;
+        let mut next = move |n: u64| {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            ((rng >> 11) % n) as u32
+        };
+
+        for case in 0..400 {
+            let mut bitmap = RoaringBitmap::new();
+            let span = 1 + next(300_000);
+            match case % 3 {
+                // Sparse arrays
+                0 => for _ in 0..next(5_000) {
+                    bitmap.add(next(span as u64));
+                },
+                // Dense bitsets with gaps
+                1 => for value in 0..span {
+                    if next(4) != 0 {
+                        bitmap.add(value);
+                    }
+                },
+                // Short ranges
+                _ => for _ in 0..next(500) {
+                    let start = next(span as u64);
+                    bitmap.add_range(start..start + 1 + next(200));
+                }
+            }
+
+            assert!(bitmap.iter_runs().eq(runs_by_value(&bitmap)), "case {}", case);
+        }
+    }
+
     #[test]
     fn contains_range_across_containers() {
         let mut full = RoaringBitmap::from_range(0..(4 << 16));
@@ -2305,6 +2582,109 @@ mod test {
         let mut c = RoaringBitmap::from_range(0..20);
         c.remove_range(8..8);
         assert!(c.iter().eq(0..20));
+    }
+
+    #[test]
+    fn array_limit_bounds_array_growth() {
+        let values: Vec<u32> = (0..300).rev().map(|i| i * 3).collect();
+
+        let mut limited = RoaringBitmap::with_array_limit(256);
+        for value in &values[..256] {
+            limited.add(*value);
+        }
+        assert!(matches!(limited.containers[0], Container::Array(_)));
+
+        limited.add(values[256]);
+        assert!(matches!(limited.containers[0], Container::Bitset(_)));
+
+        let mut slice = RoaringBitmap::with_array_limit(256);
+        slice.add_slice(&values);
+        assert!(matches!(slice.containers[0], Container::Bitset(_)));
+
+        let mut range = RoaringBitmap::with_array_limit(256);
+        range.add_range(0..300);
+        assert!(matches!(range.containers[0], Container::Bitset(_)));
+
+        let mut grown = RoaringBitmap::with_array_limit(256);
+        grown.add_range(0..200);
+        assert!(matches!(grown.containers[0], Container::Array(_)));
+        grown.add_range(1_000..1_100);
+        assert!(matches!(grown.containers[0], Container::Bitset(_)));
+
+        // The default limit keeps the same values in an array
+        let default = RoaringBitmap::from_slice(&values);
+        assert!(matches!(default.containers[0], Container::Array(_)));
+        assert!(slice.iter().eq(default.iter()));
+    }
+
+    #[test]
+    fn array_limit_serializes_as_the_standard_format() {
+        let values: Vec<u32> = (0..300).map(|i| i * 3).chain((1 << 16)..(1 << 16) + 5_000).collect();
+
+        let mut limited = RoaringBitmap::with_array_limit(256);
+        limited.add_slice(&values);
+        let default = RoaringBitmap::from_slice(&values);
+
+        let mut limited_bytes = Vec::new();
+        limited.serialize(&mut limited_bytes).unwrap();
+        let mut default_bytes = Vec::new();
+        default.serialize(&mut default_bytes).unwrap();
+        assert_eq!(limited_bytes, default_bytes);
+
+        let read = RoaringBitmap::deserialize(&mut std::io::Cursor::new(&limited_bytes)).unwrap();
+        assert!(read.iter().eq(values.iter().copied()));
+        assert_eq!(read.array_limit, DEFAULT_MAX_SIZE);
+    }
+
+    #[test]
+    #[should_panic]
+    fn array_limit_of_zero_panics() {
+        RoaringBitmap::with_array_limit(0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn array_limit_above_the_standard_panics() {
+        RoaringBitmap::with_array_limit(DEFAULT_MAX_SIZE + 1);
+    }
+
+    #[test]
+    fn array_limit_keeps_a_margin_on_removal() {
+        let mut bitmap = RoaringBitmap::with_array_limit(256);
+        bitmap.add_range(0..300);
+        assert!(matches!(bitmap.containers[0], Container::Bitset(_)));
+
+        // Down to half the limit the bitset stays, so a set hovering near the limit does not
+        // convert on every update
+        for value in 0..172 {
+            bitmap.remove(value);
+        }
+        assert_eq!(bitmap.len(), 128);
+        assert!(matches!(bitmap.containers[0], Container::Bitset(_)));
+
+        bitmap.remove(172);
+        assert!(matches!(bitmap.containers[0], Container::Array(_)));
+        assert!(bitmap.iter().eq(173..300));
+
+        let mut popped = RoaringBitmap::with_array_limit(256);
+        popped.add_range(0..300);
+        for _ in 0..173 {
+            popped.pop_min();
+        }
+        assert!(matches!(popped.containers[0], Container::Array(_)));
+        assert!(popped.iter().eq(173..300));
+    }
+
+    #[test]
+    fn array_limit_governs_remove_range() {
+        let mut bitmap = RoaringBitmap::with_array_limit(256);
+        bitmap.add_range(0..1_000);
+        bitmap.remove_range(500..501);
+        assert!(matches!(bitmap.containers[0], Container::Bitset(_)));
+
+        bitmap.remove_range(0..800);
+        assert!(matches!(bitmap.containers[0], Container::Array(_)));
+        assert!(bitmap.iter().eq(800..1_000));
     }
 
     #[test]
@@ -2439,9 +2819,9 @@ mod test {
         assert!(a.iter().eq([2 << 16, 5 << 16]));
     }
 
-    /// Random bitmaps of array, bitset and run containers against a set of the values they
-    /// hold, operation by operation. Values sit in a few low keys and the two highest keys, and
-    /// cluster at container and word edges
+    /// Random bitmaps of array, bitset and run containers, some with a lowered array limit,
+    /// against a set of the values they hold, operation by operation. Values sit in a few low
+    /// keys and the two highest keys, and cluster at container and word edges
     #[test]
     fn bitmap_ops_match_a_model() {
         use rand::prelude::*;
@@ -2483,7 +2863,9 @@ mod test {
                 }
             }
 
-            let mut bitmap = RoaringBitmap::new();
+            // Limited bitmaps keep their limit through the clones the checks below operate on
+            let limit = [4_096, 1_024, 256, 3][rng.random_range(0..4)];
+            let mut bitmap = RoaringBitmap::with_array_limit(limit);
             for &value in &model {
                 bitmap.add(value);
             }
@@ -2806,6 +3188,18 @@ mod test {
             }
         }
         assert!(failures.is_empty(), "{} failures, by operation:\n{}", failures.len(), kinds.join("\n"));
+    }
+
+    #[test]
+    fn array_limit_governs_not_and_inplace_not() {
+        let flipped = RoaringBitmap::with_array_limit(256).not(0..1_000);
+        assert!(matches!(flipped.containers[0], Container::Bitset(_)));
+        assert_eq!(flipped.array_limit, 256);
+
+        let mut flipped = RoaringBitmap::with_array_limit(256);
+        flipped.inplace_not(0..1_000);
+        assert!(matches!(flipped.containers[0], Container::Bitset(_)));
+        assert!(flipped.iter().eq(0..1_000));
     }
 
     #[test]
