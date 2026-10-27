@@ -723,11 +723,15 @@ impl SetAndNot<BitsetContainer> for ArrayContainer {
 
 impl SetAndNot<RunContainer> for ArrayContainer {
     fn and_not(&self, other: &RunContainer) -> Container {
+        // A subset of the array, so an array too: runs stay confined to deserialized containers
         let keep = |a: bool, b: bool| a && !b;
+        let result = combine(value_intervals(self), other.intervals(), keep);
 
-        combine(value_intervals(self), other.intervals(), keep).into_efficient_container()
+        Container::Array(ArrayContainer::from(result))
     }
 
+    // TODO: Find a way to do this inplace
+    #[inline]
     fn inplace_and_not(self, other: &RunContainer) -> Container {
         SetAndNot::and_not(&self, other)
     }

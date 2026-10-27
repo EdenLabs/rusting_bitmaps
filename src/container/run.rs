@@ -336,14 +336,8 @@ impl RunContainer {
     
     /// Check whether the container is full
     pub fn is_full(&self) -> bool {
-        if self.runs.is_empty() {
-            return false;
-        }
-
-        let run = self.runs[0];
-        let len = self.runs.len();
-
-        len == 1 && run.value == 0 && run.length == std::u16::MAX
+        // Stored runs may touch, so a full container can hold more than one
+        self.cardinality() == 1 << 16
     }
 
     /// Get the minimum value of this container
@@ -780,7 +774,10 @@ impl SetAnd<Self> for RunContainer {
 
 impl SetAnd<ArrayContainer> for RunContainer {
     fn and(&self, other: &ArrayContainer) -> Container {
-        combine(self.intervals(), value_intervals(other), |a, b| a && b).into_efficient_container()
+        // A subset of the array, so an array too: runs stay confined to deserialized containers
+        let result = combine(self.intervals(), value_intervals(other), |a, b| a && b);
+
+        Container::Array(ArrayContainer::from(result))
     }
 
     fn and_cardinality(&self, other: &ArrayContainer) -> usize {
@@ -1065,7 +1062,7 @@ pub(crate) fn value_intervals(values: &[u16]) -> impl Iterator<Item = Range<u32>
 
 /// Walk two ascending lists of half-open intervals together and call `emit` with each maximal
 /// interval whose values satisfy `keep(in_a, in_b)`. Intervals within a list are disjoint but may
-/// touch. Ends are `u32` so that 65 536 can close an interval
+/// touch, and all lie within `0..=65_536`. Ends are `u32` so that 65 536 can close an interval
 fn sweep<A, B, K, E>(a: A, b: B, keep: K, mut emit: E)
     where A: Iterator<Item = Range<u32>>,
           B: Iterator<Item = Range<u32>>,

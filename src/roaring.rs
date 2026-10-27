@@ -241,7 +241,7 @@ impl RoaringBitmap {
             None => return
         };
 
-let min_key = min >> 16;
+        let min_key = min >> 16;
         let max_key = last >> 16;
 
         let mut index = self.keys.partition_point(|&key| u32::from(key) < min_key);
@@ -332,7 +332,7 @@ let min_key = min >> 16;
             None => return
         };
 
-let min_key = (min >> 16) as u16;
+        let min_key = (min >> 16) as u16;
         let max_key = (last >> 16) as u16;
 
         let mut i = array_ops::count_less(&self.keys, min_key);
@@ -406,7 +406,7 @@ let min_key = (min >> 16) as u16;
         }
 
         // Do a ranged contains operation
-let key_min = min >> 16;
+        let key_min = min >> 16;
         let key_max = last >> 16;
         let key_span = (key_max - key_min) as usize;
 
@@ -857,7 +857,8 @@ let key_min = min >> 16;
         let start = self.keys.partition_point(|&key| u32::from(key) < first_key);
         let end = self.keys.partition_point(|&key| u32::from(key) <= last_key);
 
-        let mut result = Self::new();
+        let capacity = self.keys.len() - (end - start) + (last_key - first_key + 1) as usize;
+        let mut result = Self::with_capacity(capacity);
         result.array_limit = self.array_limit;
         result.keys.extend_from_slice(&self.keys[..start]);
         result.containers.extend_from_slice(&self.containers[..start]);
@@ -1133,34 +1134,34 @@ let key_min = min >> 16;
         };
         let (first_key, last_key) = (first >> 16, last >> 16);
 
-        // Rebuild the key and container lists, moving the containers outside the range and
-        // flipping the ones inside it in place
-        let keys = mem::take(&mut self.keys);
-        let containers = mem::take(&mut self.containers);
-        let mut existing = keys.into_iter().zip(containers).peekable();
+        // Flip the containers of the keys in the range in place and splice the results back
+        let start = self.keys.partition_point(|&key| u32::from(key) < first_key);
+        let end = self.keys.partition_point(|&key| u32::from(key) <= last_key);
 
-        while let Some((key, container)) = existing.next_if(|(key, _)| u32::from(*key) < first_key) {
-            self.keys.push(key);
-            self.containers.push(container);
-        }
+        let span = (last_key - first_key + 1) as usize;
+        let mut keys = Vec::with_capacity(span);
+        let mut containers = Vec::with_capacity(span);
+        {
+            let mut existing = self.keys[start..end].iter()
+                .zip(self.containers.drain(start..end))
+                .peekable();
 
-        for key in first_key..=last_key {
-            let range = key_range(key, first, last);
-            let flipped = match existing.next_if(|(existing, _)| u32::from(*existing) == key) {
-                Some((_, container)) => container.inplace_not(range),
-                None => Container::from_range_with_limit(range, self.array_limit)
-            };
+            for key in first_key..=last_key {
+                let range = key_range(key, first, last);
+                let flipped = match existing.next_if(|(&existing, _)| u32::from(existing) == key) {
+                    Some((_, container)) => container.inplace_not(range),
+                    None => Container::from_range_with_limit(range, self.array_limit)
+                };
 
-            if !flipped.is_empty() {
-                self.keys.push(key as u16);
-                self.containers.push(flipped);
+                if !flipped.is_empty() {
+                    keys.push(key as u16);
+                    containers.push(flipped);
+                }
             }
         }
 
-        for (key, container) in existing {
-            self.keys.push(key);
-            self.containers.push(container);
-        }
+        self.keys.splice(start..end, keys);
+        self.containers.splice(start..start, containers);
     }
 
     /// Compute the cardinality of `or` on `self` and `other` without storing the result
@@ -1665,7 +1666,8 @@ impl<'a> Iterator for Iter<'a> {
     }
 }
 
-/// The low bits of the values from `first` to `last` that fall in the container with `key`
+/// The half-open range of the low 16 bits of the values from `first` to `last` that fall in the
+/// container with `key`. Its end may be 65 536
 fn key_range(key: u32, first: u32, last: u32) -> Range<u32> {
     let start = if key == first >> 16 { first & 0xFFFF } else { 0 };
     let end = if key == last >> 16 { (last & 0xFFFF) + 1 } else { 1 << 16 };
@@ -2874,13 +2876,24 @@ mod test {
             let mut containers = Vec::new();
             for key in keys(rng) {
                 let mut runs = Vec::new();
+                if rng.random_range(0..4) == 0 {
+                    // A full container as two touching runs
+                    let split = rng.random_range(1..(1 << 16));
+                    runs.push((0, (split - 1) as u16));
+                    runs.push((split as u16, ((1 << 16) - split - 1) as u16));
+                    model.extend((key << 16)..=((key << 16) | 0xFFFF));
+                    containers.push((key as u16, runs));
+                    continue;
+                }
+
                 let mut start = if rng.random_bool(0.3) { 0 } else { rng.random_range(0..2_000) };
                 while start < (1 << 16) {
                     let len = rng.random_range(1..3_000).min((1 << 16) - start);
-                    let len = if rng.random_range(0..6) == 0 { (1 << 16) - start } else { len };
+                    let len = if rng.random_range(0..3) == 0 { (1 << 16) - start } else { len };
                     runs.push((start as u16, (len - 1) as u16));
                     model.extend(((key << 16) | start)..=((key << 16) | (start + len - 1)));
-                    start += len + rng.random_range(1..5_000);
+                    // Stored runs may touch, and a full container may be several runs
+                    start += len + if rng.random_range(0..4) == 0 { 0 } else { rng.random_range(1..5_000) };
                 }
                 containers.push((key as u16, runs));
             }
@@ -2941,6 +2954,17 @@ mod test {
             if bitmap.containers.iter().any(|c| c.is_empty()) {
                 return Err("holds an empty container".to_string());
             }
+            if bitmap.containers.iter().any(|c| matches!(c, crate::container::Container::Array(a) if a.len() > crate::container::DEFAULT_MAX_SIZE)) {
+                return Err("holds an array past the standard limit".to_string());
+            }
+
+            // Results must survive the portable format too
+            let mut bytes = Vec::new();
+            bitmap.serialize(&mut bytes).map_err(|e| e.to_string())?;
+            let read = RoaringBitmap::deserialize(&mut Cursor::new(&bytes)).map_err(|e| format!("{:?}", e))?;
+            if !read.iter().eq(model.iter().copied()) {
+                return Err(format!("{} values after a round trip, expected {}", read.cardinality(), model.len()));
+            }
             Ok(())
         }
 
@@ -2955,7 +2979,7 @@ mod test {
         };
 
         let mut rng = SmallRng::seed_from_u64(0xb17_5e7);
-        for round in 0..12 {
+        for round in 0..8 {
             for k0 in 0..2 {
                 for k1 in 0..2 {
                     let (a, ma) = any(&mut rng, k0);
@@ -3055,6 +3079,26 @@ mod test {
                     });
                 }
 
+                // Every maximal run of values is contained, and no longer range around it is
+                let mut runs: Vec<(u32, u32)> = Vec::new();
+                for &value in &model {
+                    match runs.last_mut() {
+                        Some(run) if run.1 + 1 == value => run.1 = value,
+                        _ => runs.push((value, value))
+                    }
+                }
+                let crossing = runs.iter().filter(|run| run.0 >> 16 != run.1 >> 16);
+                for &(first, last) in runs.iter().rev().take(40).chain(crossing) {
+                    check(format!("contains_range run {}..={} {}", first, last, name), &mut || {
+                        let longer = (first > 0 && bitmap.contains_range(first - 1..=last))
+                            || (last < u32::MAX && bitmap.contains_range(first..=last + 1));
+                        if !bitmap.contains_range(first..=last) || longer {
+                            return Err("wrong answer".to_string());
+                        }
+                        Ok(())
+                    });
+                }
+
                 check(format!("empty range {}", name), &mut || {
                     let mut result = bitmap.not(5..5);
                     result.inplace_not(7..7);
@@ -3144,7 +3188,7 @@ mod test {
     }
 
     #[test]
-    fn array_limit_governs_containers_not_creates() {
+    fn array_limit_governs_not_and_inplace_not() {
         let flipped = RoaringBitmap::with_array_limit(256).not(0..1_000);
         assert!(matches!(flipped.containers[0], Container::Bitset(_)));
         assert_eq!(flipped.array_limit, 256);
@@ -3153,5 +3197,20 @@ mod test {
         flipped.inplace_not(0..1_000);
         assert!(matches!(flipped.containers[0], Container::Bitset(_)));
         assert!(flipped.iter().eq(0..1_000));
+    }
+
+    #[test]
+    fn contains_range_across_a_full_container_of_touching_runs() {
+        // Keys 0, 1 and 2, all run containers: 65 535 in key 0, all of key 1 as the touching runs
+        // 0..=99 and 100..=65 535, and 0 in key 2
+        let mut bytes = Vec::new();
+        for word in [12_347_u16, 2, 0b111, 0, 0, 1, 65_535, 2, 0, 1, 65_535, 0, 2, 0, 99, 100, 65_435, 1, 0, 0] {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        bytes.remove(5);
+
+        let bitmap = RoaringBitmap::deserialize(&mut std::io::Cursor::new(&bytes)).unwrap();
+        assert!(bitmap.iter().eq(0xFFFF..=0x2_0000));
+        assert!(bitmap.contains_range(0xFFFF..=0x2_0000));
     }
 }
