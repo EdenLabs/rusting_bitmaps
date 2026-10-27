@@ -4,6 +4,7 @@ use std::slice::Iter;
 
 use crate::container::*;
 use crate::container::slack::SlackVec;
+use crate::write_counted;
 use crate::container::run::{combine, combined_cardinality, value_intervals};
 
 /// An array container. Elements are sorted numerically and represented as individual values in the array
@@ -339,32 +340,26 @@ impl ArrayContainer {
             let num_bytes = mem::size_of::<u16>() * self.len();
             let byte_slice = slice::from_raw_parts(ptr, num_bytes);
 
-            buf.write(byte_slice)
+            write_counted(buf, byte_slice)
         }
     }
 
     /// Deserialize an array container according to the roaring format spec
     #[cfg(target_endian = "little")]
     pub fn deserialize<R: Read>(cardinality: usize, buf: &mut R) -> io::Result<Self> {
+        // Initialized, as a reader may read the buffer it fills
+        let mut result = ArrayContainer::with_capacity(cardinality);
+        result.array.extend(std::iter::repeat(0).take(cardinality));
+
         unsafe {
-            let mut result = ArrayContainer::with_capacity(cardinality);
-            
             let ptr = result.as_mut_ptr() as *mut u8;
             let num_bytes = mem::size_of::<u16>() * cardinality;
             let bytes_slice = slice::from_raw_parts_mut(ptr, num_bytes);
 
-            let num_read = buf.read(bytes_slice)?;
-            if num_read != num_bytes {
-                return Err(
-                    io::Error::new(io::ErrorKind::UnexpectedEof, 
-                    "Unexpected end of stream"
-                ));
-            }
-
-            result.set_cardinality(cardinality);
-
-            Ok(result)
+            buf.read_exact(bytes_slice)?;
         }
+
+        Ok(result)
     }
 }
 

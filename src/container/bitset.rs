@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 use std::ptr;
 
-use crate::IntoBound;
+use crate::{IntoBound, write_counted};
 use crate::container::*;
 
 /// The size of the bitset in 64bit words
@@ -547,7 +547,7 @@ impl BitsetContainer {
             let num_bytes = BITSET_SIZE_IN_WORDS * mem::size_of::<u64>();
             let byte_slice = slice::from_raw_parts(ptr, num_bytes);
 
-            buf.write(byte_slice)
+            write_counted(buf, byte_slice)
         }
     }
 
@@ -560,10 +560,7 @@ impl BitsetContainer {
             let num_bytes = BITSET_SIZE_IN_WORDS * mem::size_of::<u64>();
             let bytes_slice = slice::from_raw_parts_mut(ptr, num_bytes);
 
-            let num_read = buf.read(bytes_slice)?;
-            if num_read != num_bytes {
-                return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
-            }
+            buf.read_exact(bytes_slice)?;
 
             Ok(result)
         }

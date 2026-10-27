@@ -2,6 +2,7 @@ use std::ops::{Deref, DerefMut};
 use std::iter;
 
 use crate::container::*;
+use crate::write_counted;
 
 /// A RLE word storing the value and the length of that run
 /// 
@@ -565,13 +566,13 @@ impl RunContainer {
     pub fn serialize<W: Write>(&self, buf: &mut W) -> io::Result<usize> {
         let mut num_written = 0;
 
-        num_written += buf.write(&(self.num_runs() as u16).to_le_bytes())?;
+        num_written += write_counted(buf, &(self.num_runs() as u16).to_le_bytes())?;
 
         unsafe {
             let ptr = self.as_ptr() as *const u8;
             let num_bytes = self.num_runs() * mem::size_of::<Rle16>();
             let slice = slice::from_raw_parts(ptr, num_bytes);
-            num_written += buf.write(slice)?;
+            num_written += write_counted(buf, slice)?;
         }
 
         Ok(num_written)

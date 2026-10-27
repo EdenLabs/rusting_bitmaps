@@ -5,7 +5,7 @@ use std::ops::{RangeBounds, Range};
 use std::fmt;
 use std::mem;
 
-use crate::inclusive_bounds;
+use crate::{inclusive_bounds, write_counted};
 use crate::container::{self, *, array_ops};
 
 // TODO: Add support for custom allocators
@@ -1248,7 +1248,7 @@ impl RoaringBitmap {
             let len       = self.containers.len();
             let len_bytes = (Self::SERIAL_COOKIE | (((len - 1) << 16) as u32)).to_le_bytes();
 
-            bytes_written += buf.write(&len_bytes)?;
+            bytes_written += write_counted(buf, &len_bytes)?;
 
             let s = (len + 7) / 8;
             let mut bitmap: Vec<u8> = vec![0; s];
@@ -1259,7 +1259,7 @@ impl RoaringBitmap {
                 }
             }
 
-            bytes_written += buf.write(&bitmap)?;
+            bytes_written += write_counted(buf, &bitmap)?;
 
             if (len as u32) < Self::NO_OFFSET_THRESHOLD {
                 start_offset = 4 + 4 * len + s;
@@ -1269,8 +1269,8 @@ impl RoaringBitmap {
             }
         }
         else {
-            bytes_written += buf.write(&Self::SERIAL_COOKIE_NO_RUNCONTAINER.to_le_bytes())?;
-            bytes_written += buf.write(&(self.containers.len() as u32).to_le_bytes())?;
+            bytes_written += write_counted(buf, &Self::SERIAL_COOKIE_NO_RUNCONTAINER.to_le_bytes())?;
+            bytes_written += write_counted(buf, &(self.containers.len() as u32).to_le_bytes())?;
 
             let len = self.containers.len();
             start_offset = 4 + 4 + 4 * len + 4 * len;
@@ -1281,14 +1281,14 @@ impl RoaringBitmap {
 
         // Write the keys and cardinality
         for (key, c) in pass {
-            bytes_written += buf.write(&key.to_le_bytes())?;
-            bytes_written += buf.write(&((c.cardinality() - 1) as u16).to_le_bytes())?;
+            bytes_written += write_counted(buf, &key.to_le_bytes())?;
+            bytes_written += write_counted(buf, &((c.cardinality() - 1) as u16).to_le_bytes())?;
         }
 
         // Write the container offsets if there's no run containers or we're above the no offset threshold
         if !has_run || (self.containers.len() as u32) >= Self::NO_OFFSET_THRESHOLD {
             for c in self.containers.iter() {
-                bytes_written += buf.write(&(start_offset as u32).to_le_bytes())?;
+                bytes_written += write_counted(buf, &(start_offset as u32).to_le_bytes())?;
                 start_offset  += c.serialized_size();
             }
         }
@@ -1343,18 +1343,13 @@ impl RoaringBitmap {
 
         // Read out the bitmap if present
         let mut bitmap: Vec<u8> = Vec::new();
-        
+
         let has_run = (cookie & 0xFFFF) == Self::SERIAL_COOKIE;
         if has_run {
-            let s = ((size + 7) / 8) as usize;
+            // Initialized, as a reader may read the buffer it fills
+            bitmap.resize(((size + 7) / 8) as usize, 0);
 
-            // Reserve the space for the data to be deserialized into
-            unsafe {
-                bitmap.reserve_exact(s);
-                bitmap.set_len(s);
-            }
-
-            buf.read(&mut bitmap)
+            buf.read_exact(&mut bitmap)
                 .map_err(DeserializeError::IoError)?;
         }
 
@@ -2376,5 +2371,58 @@ mod test {
         assert!(top.not(u32::MAX - 1..).iter().eq(std::iter::once(u32::MAX - 1)));
         top.inplace_not(u32::MAX - 1..=u32::MAX);
         assert!(top.iter().eq(std::iter::once(u32::MAX - 1)));
+    }
+
+    #[test]
+    fn serialize_round_trips_through_byte_at_a_time_streams() {
+        use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+
+        // Takes at most one byte per call, as a pipe or socket may
+        struct Trickle<T>(T);
+
+        impl<T: Write> Write for Trickle<T> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.write(&buf[..buf.len().min(1)])
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.0.flush()
+            }
+        }
+
+        impl<T: Read> Read for Trickle<T> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let len = buf.len().min(1);
+                self.0.read(&mut buf[..len])
+            }
+        }
+
+        impl<T: Seek> Seek for Trickle<T> {
+            fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+                self.0.seek(position)
+            }
+        }
+
+        // A bitmap with a run container: cookie with one container, the run flag, key 0 with
+        // cardinality 6, and one run of 10..=15
+        let mut runs = Vec::new();
+        for word in [12_347_u16, 0, 1, 0, 5, 1, 10, 5] {
+            runs.extend_from_slice(&word.to_le_bytes());
+        }
+        runs.remove(5);
+
+        let mut bitmap = RoaringBitmap::deserialize(&mut Trickle(Cursor::new(&runs))).unwrap();
+        assert!(bitmap.iter().eq(10..16));
+
+        bitmap.add_range(1 << 16..(1 << 16) + 5_000);
+        bitmap.add_range(3 << 16..(3 << 16) + 50);
+
+        let mut output = Vec::new();
+        let num_written = bitmap.serialize(&mut Trickle(&mut output)).unwrap();
+        assert_eq!(num_written, bitmap.serialized_size());
+        assert_eq!(output.len(), num_written);
+
+        let read = RoaringBitmap::deserialize(&mut Trickle(Cursor::new(&output))).unwrap();
+        assert!(read.iter().eq(bitmap.iter()));
     }
 }

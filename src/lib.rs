@@ -74,6 +74,13 @@ fn inclusive_bounds<R: RangeBounds<u32>>(range: R) -> Option<(u32, u32)> {
     if first <= last { Some((first, last)) } else { None }
 }
 
+/// Write all of `bytes` to `buf` and return how many that was
+fn write_counted<W: std::io::Write>(buf: &mut W, bytes: &[u8]) -> std::io::Result<usize> {
+    buf.write_all(bytes)?;
+
+    Ok(bytes.len())
+}
+
 impl_into_bound!(u16);
 impl_into_bound!(usize);
 impl_into_bound!(u32);
