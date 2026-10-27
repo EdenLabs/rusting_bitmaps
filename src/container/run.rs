@@ -2561,4 +2561,14 @@ mod test {
         assert!(!a.remove(0));
         assert_eq!(a.cardinality(), 13);
     }
+
+    #[test]
+    fn iter_runs_merges_touching_runs() {
+        // Stored runs are disjoint but nothing keeps them from touching
+        let mut a = RunContainer::new();
+        a.runs.extend_from_slice(&[Rle16::new(20, 9), Rle16::new(30, 9), Rle16::new(50, 0)]);
+
+        let runs: Vec<_> = Container::Run(a).iter_runs(1 << 16).collect();
+        assert_eq!(runs, vec![(65_556, 65_575), (65_586, 65_586)]);
+    }
 }

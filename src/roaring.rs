@@ -1,7 +1,7 @@
 #![deny(arithmetic_overflow)]
 
 use std::io::{self, Read, Write, Seek, SeekFrom};
-use std::ops::{RangeBounds, Range};
+use std::ops::{RangeBounds, Range, RangeInclusive};
 use std::fmt;
 use std::mem;
 
@@ -1247,6 +1247,104 @@ impl RoaringBitmap {
             index: 0
         }
     }
+
+    /// Get an iterator over the runs of consecutive values in the bitmap, in ascending order.
+    ///
+    /// Each run is maximal. Values on either side of a run are absent from the bitmap. The
+    /// cost scales with the number of runs and stored containers, not with the cardinality.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rusting_bitmaps::RoaringBitmap;
+    ///
+    /// // Coalesce dirty rows into upload ranges
+    /// let mut dirty = RoaringBitmap::new();
+    /// dirty.add_range(10..20);
+    /// dirty.add(20);
+    /// dirty.add(70_000);
+    ///
+    /// let runs: Vec<_> = dirty.iter_runs().collect();
+    /// assert_eq!(runs, vec![10..=20, 70_000..=70_000]);
+    /// ```
+    #[inline]
+    pub fn iter_runs(&self) -> Runs<'_> {
+        let source = match self.containers.first() {
+            Some(container) => container.iter_runs(u32::from(self.keys[0]) << 16),
+            None => container::Runs::empty()
+        };
+
+        Runs {
+            keys: &self.keys,
+            containers: &self.containers,
+            index: 0,
+            source,
+            pending: None
+        }
+    }
+}
+
+/// An iterator over the runs of consecutive values in a bitmap.
+///
+/// See [`iter_runs`](RoaringBitmap::iter_runs) for more information.
+pub struct Runs<'a> {
+    /// The keys of `containers`.
+    keys: &'a [u16],
+    /// The containers of the bitmap.
+    containers: &'a [Container],
+    /// The index of the container `source` reads.
+    index: usize,
+    /// The segments of the current container.
+    source: container::Runs<'a>,
+    /// The first and last value of a segment read past the previous run.
+    pending: Option<(u32, u32)>
+}
+
+impl<'a> Runs<'a> {
+    /// Returns the next segment, moving across containers.
+    ///
+    /// Returns `None` if all containers are read.
+    #[inline]
+    fn next_segment(&mut self) -> Option<(u32, u32)> {
+        loop {
+            if let Some(segment) = self.source.next() {
+                return Some(segment);
+            }
+
+            self.index += 1;
+            let container = self.containers.get(self.index)?;
+            self.source = container.iter_runs(u32::from(self.keys[self.index]) << 16);
+        }
+    }
+}
+
+impl<'a> Iterator for Runs<'a> {
+    type Item = RangeInclusive<u32>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let (first, mut last) = match self.pending.take() {
+            Some(segment) => segment,
+            None => self.next_segment()?
+        };
+
+        // Runs that touch across bitset words and containers arrive as separate segments. Only
+        // a segment ending a bitset word or a container can touch the next. A segment never
+        // follows one ending at `u32::MAX`, so the wrapped successor never matches
+        while last & 63 == 63 {
+            match self.next_segment() {
+                Some((next_first, next_last)) if last.wrapping_add(1) == next_first => {
+                    last = next_last;
+                },
+                next => {
+                    self.pending = next;
+                    break;
+                }
+            }
+        }
+
+        Some(first..=last)
+    }
 }
 
 // Serialization
@@ -2301,5 +2399,93 @@ mod test {
         assert!(bitmap.contains(5) && bitmap.contains((1 << 16) | 3) && bitmap.contains((2 << 16) | 1));
         assert_eq!(bitmap.min(), Some(5));
         assert_eq!(bitmap.max(), Some((2 << 16) | 1));
+    }
+
+    /// The maximal runs of `bitmap`, from a walk over its values
+    fn runs_by_value(bitmap: &RoaringBitmap) -> Vec<std::ops::RangeInclusive<u32>> {
+        let mut runs = Vec::new();
+        let mut iter = bitmap.iter();
+        if let Some(first) = iter.next() {
+            let (mut start, mut end) = (first, first);
+            for value in iter {
+                if value == end + 1 {
+                    end = value;
+                }
+                else {
+                    runs.push(start..=end);
+                    start = value;
+                    end = value;
+                }
+            }
+
+            runs.push(start..=end);
+        }
+
+        runs
+    }
+
+    #[test]
+    fn iter_runs_matches_the_values() {
+        use crate::container::{Container, RunContainer};
+
+        assert_eq!(RoaringBitmap::new().iter_runs().count(), 0);
+
+        // Runs across bitset words, across containers, and up to the last value
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_range(60..70);
+        bitmap.add_range(127..129);
+        bitmap.add_range(65_000..70_000);
+        bitmap.add_range(130_000..140_000);
+        bitmap.add_range((3 << 16) - 1..(3 << 16) + 1);
+        bitmap.add(u32::MAX);
+        assert!(bitmap.iter_runs().eq(runs_by_value(&bitmap)));
+        assert_eq!(bitmap.iter_runs().nth(2), Some(65_000..=69_999));
+
+        let full = RoaringBitmap::from_range(0..u32::MAX);
+        let mut full_with_max = full.clone();
+        full_with_max.add(u32::MAX);
+        assert!(full.iter_runs().eq([0..=u32::MAX - 1]));
+        assert!(full_with_max.iter_runs().eq([0..=u32::MAX]));
+
+        // A run container next to an array, touching across the key boundary
+        let mut run = RunContainer::new();
+        run.add_range(0..10);
+        run.add_range(20..30);
+        let mut bitmap = RoaringBitmap::from_slice(&[65_534, 65_535]);
+        bitmap.keys.push(1);
+        bitmap.containers.push(Container::Run(run));
+        assert!(bitmap.iter_runs().eq([65_534..=65_545, 65_556..=65_565]));
+
+        let mut rng = 0x2545_F491_4F6C_DD1D_u64;
+        let mut next = move |n: u64| {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            ((rng >> 11) % n) as u32
+        };
+
+        for case in 0..400 {
+            let mut bitmap = RoaringBitmap::new();
+            let span = 1 + next(300_000);
+            match case % 3 {
+                // Sparse arrays
+                0 => for _ in 0..next(5_000) {
+                    bitmap.add(next(span as u64));
+                },
+                // Dense bitsets with gaps
+                1 => for value in 0..span {
+                    if next(4) != 0 {
+                        bitmap.add(value);
+                    }
+                },
+                // Short ranges
+                _ => for _ in 0..next(500) {
+                    let start = next(span as u64);
+                    bitmap.add_range(start..start + 1 + next(200));
+                }
+            }
+
+            assert!(bitmap.iter_runs().eq(runs_by_value(&bitmap)), "case {}", case);
+        }
     }
 }

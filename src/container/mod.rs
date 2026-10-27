@@ -8,6 +8,8 @@ pub use self::array::ArrayContainer;
 pub use self::bitset::BitsetContainer;
 pub use self::run::RunContainer;
 
+use self::run::Rle16;
+
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::iter::Iterator;
@@ -509,6 +511,27 @@ impl Container {
             iter
         }
     }
+
+    /// Get an iterator over the runs of consecutive values in the container.
+    ///
+    /// Each run is yielded as its first and last value, offset by `base`. A run that crosses a
+    /// bitset word is yielded as one segment per word, which the caller merges. Every other
+    /// segment is a maximal run within the container. Only a segment whose last value ends a
+    /// bitset word, `last % 64 == 63`, can touch the next one.
+    #[inline]
+    pub fn iter_runs(&self, base: u32) -> Runs<'_> {
+        let runs = match self {
+            Container::Array(c) => ContainerRuns::Array { values: c, index: 0 },
+            Container::Bitset(c) => ContainerRuns::Bitset { words: c, index: 0, word: c[0] },
+            Container::Run(c) => ContainerRuns::Run(c.iter_runs()),
+            Container::None => unreachable!()
+        };
+
+        Runs {
+            base,
+            runs
+        }
+    }
 }
 
 impl Container {
@@ -575,6 +598,104 @@ impl<'a> Iterator for Iter<'a> {
             ContainerIter::Bitset(c) => c.next(),
             ContainerIter::Run(c) => c.next()
         }
+    }
+}
+
+/// The run sources of the container types.
+enum ContainerRuns<'a> {
+    /// Sorted values, of which `index` is the next unread.
+    Array {
+        values  : &'a [u16],
+        index   : usize
+    },
+    /// Bitset words, of which `word` holds the unread bits of `words[index]`.
+    Bitset {
+        words   : &'a [u64],
+        index   : usize,
+        word    : u64
+    },
+    /// Stored runs.
+    Run(slice::Iter<'a, Rle16>)
+}
+
+/// An iterator over the runs of consecutive values in a container.
+///
+/// See [`Container::iter_runs`] for the items.
+pub struct Runs<'a> {
+    /// The value added to each run.
+    base: u32,
+    /// The run source.
+    runs: ContainerRuns<'a>
+}
+
+impl<'a> Runs<'a> {
+    /// Create an iterator over no runs.
+    pub fn empty() -> Self {
+        Runs {
+            base: 0,
+            runs: ContainerRuns::Run([].iter())
+        }
+    }
+}
+
+impl<'a> Iterator for Runs<'a> {
+    type Item = (u32, u32);
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let (first, last) = match &mut self.runs {
+            ContainerRuns::Array { values, index } => {
+                let start = *index;
+                let first = *values.get(start)?;
+
+                // Values are sorted and unique, so a run of `n` values spans `n - 1`
+                let mut end = start + 1;
+                while end < values.len() && usize::from(values[end] - first) == end - start {
+                    end += 1;
+                }
+
+                *index = end;
+
+                (u32::from(first), u32::from(values[end - 1]))
+            },
+            ContainerRuns::Bitset { words, index, word } => {
+                while *word == 0 {
+                    *index += 1;
+                    *word = *words.get(*index)?;
+                }
+
+                let start = word.trailing_zeros();
+                let len = (!(*word >> start)).trailing_zeros();
+                if start + len == 64 {
+                    *word = 0;
+                }
+                else {
+                    *word &= !(((1_u64 << len) - 1) << start);
+                }
+
+                let offset = (*index as u32) * 64 + start;
+
+                (offset, offset + len - 1)
+            },
+            ContainerRuns::Run(runs) => {
+                let run = runs.next()?;
+                let mut last = run.end();
+
+                // Stored runs are disjoint but may touch
+                while let Some(next) = runs.as_slice().first() {
+                    if u32::from(next.value) != u32::from(last) + 1 {
+                        break;
+                    }
+
+                    last = next.end();
+                    runs.next();
+                }
+
+                (u32::from(run.value), u32::from(last))
+            }
+        };
+
+        Some((self.base + first, self.base + last))
     }
 }
 
