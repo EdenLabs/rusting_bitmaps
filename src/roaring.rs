@@ -258,14 +258,18 @@ impl RoaringBitmap {
     /// Remove a range of values from the bitmap
     pub fn remove_range<R: RangeBounds<u32>>(&mut self, range: R) {
         let (min, max) = range.into_bound();
-        
+        if min >= max {
+            return;
+        }
+
+        let last = max - 1;
         let min_key = (min >> 16) as u16;
-        let max_key = (max >> 16) as u16;
+        let max_key = (last >> 16) as u16;
 
         let mut i = array_ops::count_less(&self.keys, min_key);
         while i < self.keys.len() && self.keys[i] <= max_key {
             let container_min = if min_key == self.keys[i] { min & 0xFFFF } else { 0 };
-            let container_max = if max_key == self.keys[i] { max & 0xFFFF } else { 0xFFFF };
+            let container_max = if max_key == self.keys[i] { last & 0xFFFF } else { 0xFFFF };
 
             let has_elements = self.containers[i]
                 .remove_range(container_min..(container_max + 1));
@@ -2349,5 +2353,21 @@ mod test {
         let partial = RoaringBitmap::from_range(0..(1 << 16) + 100);
         assert!(partial.contains_range(10..(1 << 16) + 50));
         assert!(!partial.contains_range(10..(1 << 16) + 200));
+    }
+
+    #[test]
+    fn remove_range_keeps_the_end() {
+        let mut a = RoaringBitmap::from_range(0..20);
+        a.remove_range(0..10);
+        assert!(a.iter().eq(10..20));
+
+        // A range ending on a container boundary leaves the next container alone
+        let mut b = RoaringBitmap::from_range(0..(2 << 16));
+        b.remove_range(5..(1 << 16));
+        assert!(b.iter().eq((0..5).chain((1 << 16)..(2 << 16))));
+
+        let mut c = RoaringBitmap::from_range(0..20);
+        c.remove_range(8..8);
+        assert!(c.iter().eq(0..20));
     }
 }
