@@ -98,7 +98,7 @@ fn build(set: &str) -> RoaringBitmap {
             let data: Vec<u32> = (0..4096u32).map(|i| i * 2).collect();
             RoaringBitmap::from_slice(&data)
         },
-        other => panic!("unknown set {other}")
+        other => panic!("unknown set {}", other)
     }
 }
 
@@ -249,7 +249,7 @@ fn main() {
         "min_api" => run_min(&mut bitmap, ops, true),
         "edge" => run_edge(&mut bitmap, ops),
         "add_range" => run_add_range(&mut bitmap, ops),
-        other => panic!("unknown workload {other}")
+        other => panic!("unknown workload {}", other)
     };
     let elapsed = start.elapsed();
     black_box(acc);
