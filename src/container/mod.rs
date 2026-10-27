@@ -8,6 +8,8 @@ pub use self::array::ArrayContainer;
 pub use self::bitset::BitsetContainer;
 pub use self::run::RunContainer;
 
+use self::run::Rle16;
+
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::iter::Iterator;
@@ -20,13 +22,23 @@ use std::slice;
 /// Default maximum size of an array container before it is converted to another type
 pub const DEFAULT_MAX_SIZE: usize = 4096;
 
-/// How far below `DEFAULT_MAX_SIZE` a bitset container must fall by single-value removals before it
-/// becomes an array again. `remove_range` does not apply it
+/// How far below the array limit a bitset container must fall by single-value removals before it
+/// becomes an array again, at most. `remove_range` does not apply it. [`bitset_retain_min`] gives
+/// the effective threshold for a limit
 ///
 /// Without the margin a container whose cardinality hovers at the limit converts on every
 /// other operation, each conversion costing a pass over the whole container. A bitset in the
 /// margin takes at most `2 * BITSET_RETAIN_MARGIN` bytes more than the array would.
 pub const BITSET_RETAIN_MARGIN: usize = 256;
+
+/// The cardinality below which a single-value removal turns a bitset back into an array, for
+/// arrays limited to `array_limit` values.
+///
+/// The margin below `array_limit` is [`BITSET_RETAIN_MARGIN`] or half the limit, whichever is
+/// smaller. With a limit of 1 or 2 a bitset stays a bitset until it is empty
+pub fn bitset_retain_min(array_limit: usize) -> usize {
+    array_limit - BITSET_RETAIN_MARGIN.min(array_limit / 2)
+}
 
 /// The set union operation
 pub(crate) trait SetOr<T> {
@@ -157,23 +169,31 @@ impl Container {
     }
 
     /// Create a container with all values in the specified range
+    #[inline]
     pub fn from_range(range: Range<u32>) -> Self {
+        Self::from_range_with_limit(range, DEFAULT_MAX_SIZE)
+    }
+
+    /// Create a container with all values in the specified range. It is an array when the range
+    /// holds at most `array_limit` values and a bitset otherwise
+    pub fn from_range_with_limit(range: Range<u32>, array_limit: usize) -> Self {
         debug_assert!(!range.is_empty());
 
         let size = range.len();
 
         // Result is an array
-        if size < DEFAULT_MAX_SIZE {
+        if size <= array_limit {
             let mut container = ArrayContainer::with_capacity(size);
             container.add_range(range);
-            
+
             Container::Array(container)
         }
         // Result is a bitset
         else {
             let mut container = BitsetContainer::new();
             container.set_range(range);
-            container.into_efficient_container()
+
+            Container::Bitset(container)
         }
     }
 
@@ -203,11 +223,13 @@ impl Container {
         }
     }
 
-    /// Add a value to the underlying container
-    pub fn add(&mut self, value: u16) {
+    /// Add a value to the underlying container. An array holding `array_limit` values becomes a
+    /// bitset when a value it lacks is added
+    #[inline]
+    pub fn add(&mut self, value: u16, array_limit: usize) {
         match self {
             Container::Array(c) => {
-                if !c.add(value) {
+                if !c.add_with_limit(value, array_limit) {
                     let mut bitset: BitsetContainer = c.into();
                     bitset.add(value);
 
@@ -224,12 +246,12 @@ impl Container {
         };
     }
 
-    /// Add all values within the non-empty `range`. An array that would exceed `DEFAULT_MAX_SIZE`
+    /// Add all values within the non-empty `range`. An array that would exceed `array_limit`
     /// becomes a bitset
-    pub fn add_range(&mut self, range: Range<u32>) {
+    pub fn add_range(&mut self, range: Range<u32>, array_limit: usize) {
         match self {
             Container::Array(c) => {
-                if c.cardinality_with_range(&range) > DEFAULT_MAX_SIZE {
+                if c.cardinality_with_range(&range) > array_limit {
                     let mut bitset: BitsetContainer = c.into();
                     bitset.add_range(range);
 
@@ -246,15 +268,15 @@ impl Container {
     }
     
     /// Remove a value from the underlying container, returning whether it was present. A bitset
-    /// becomes an array once its cardinality falls below `DEFAULT_MAX_SIZE - BITSET_RETAIN_MARGIN`
-    pub fn remove(&mut self, value: u16) -> bool {
+    /// becomes an array once its cardinality falls below [`bitset_retain_min`] of `array_limit`
+    pub fn remove(&mut self, value: u16, array_limit: usize) -> bool {
         match self {
             Container::Array(c) => {
                 c.remove(value)
             },
             Container::Bitset(c) => {
                 let removed = c.remove(value);
-                if removed && c.cached_cardinality() < DEFAULT_MAX_SIZE - BITSET_RETAIN_MARGIN {
+                if removed && c.cached_cardinality() < bitset_retain_min(array_limit) {
                     *self = Container::Array(c.into());
                 }
 
@@ -270,23 +292,24 @@ impl Container {
     /// Remove and return the smallest value in the container, `None` if it is empty
     ///
     /// Constant time for an array. The other containers find the minimum then remove it
-    pub fn pop_min(&mut self) -> Option<u16> {
+    pub fn pop_min(&mut self, array_limit: usize) -> Option<u16> {
         match self {
             Container::Array(c) => c.pop_min(),
             _ => {
                 let min = self.min()?;
-                self.remove(min);
+                self.remove(min, array_limit);
 
                 Some(min)
             }
         }
     }
 
-    /// Remove all elements within [min-max)
+    /// Remove all elements within [min-max). A bitset left with fewer than `array_limit` values
+    /// becomes an array
     /// 
     /// # Returns
     /// Returns true if the container still has elements, returns false otherwise
-    pub fn remove_range(&mut self, range: Range<u32>) -> bool {
+    pub fn remove_range(&mut self, range: Range<u32>, array_limit: usize) -> bool {
         match self {
             Container::Array(c) => {
                 c.remove_range(range);
@@ -299,7 +322,7 @@ impl Container {
                     false
                 }
                 else {
-                    if c.cardinality() < DEFAULT_MAX_SIZE {
+                    if c.cardinality() < array_limit {
                         *self = Container::Array(c.into());
                     }
 
@@ -510,6 +533,28 @@ impl Container {
             iter
         }
     }
+
+    /// Get an iterator over the runs of consecutive values in the container.
+    ///
+    /// Each run is yielded as its first and last value, offset by `base`. A run that crosses a
+    /// bitset word is yielded as one segment per word, which the caller merges. All other runs
+    /// are yielded whole and are maximal. Only a segment whose last value ends a
+    /// bitset word, `last % 64 == 63`, can touch the next one. The last value of a container,
+    /// 65 535, also ends a word.
+    #[inline]
+    pub fn iter_runs(&self, base: u32) -> Runs<'_> {
+        let runs = match self {
+            Container::Array(c) => ContainerRuns::Array { values: c, index: 0 },
+            Container::Bitset(c) => ContainerRuns::Bitset { words: c, index: 0, word: c[0] },
+            Container::Run(c) => ContainerRuns::Run(c.iter_runs()),
+            Container::None => unreachable!()
+        };
+
+        Runs {
+            base,
+            runs
+        }
+    }
 }
 
 impl Container {
@@ -579,6 +624,104 @@ impl<'a> Iterator for Iter<'a> {
     }
 }
 
+/// The run sources of the container types.
+enum ContainerRuns<'a> {
+    /// Sorted values, of which `index` is the next unread.
+    Array {
+        values  : &'a [u16],
+        index   : usize
+    },
+    /// Bitset words, of which `word` holds the unread bits of `words[index]`.
+    Bitset {
+        words   : &'a [u64],
+        index   : usize,
+        word    : u64
+    },
+    /// Stored runs.
+    Run(slice::Iter<'a, Rle16>)
+}
+
+/// An iterator over the runs of consecutive values in a container.
+///
+/// See [`Container::iter_runs`] for the items.
+pub struct Runs<'a> {
+    /// The value added to each run.
+    base: u32,
+    /// The run source.
+    runs: ContainerRuns<'a>
+}
+
+impl<'a> Runs<'a> {
+    /// Create an iterator over no runs.
+    pub fn empty() -> Self {
+        Runs {
+            base: 0,
+            runs: ContainerRuns::Run([].iter())
+        }
+    }
+}
+
+impl<'a> Iterator for Runs<'a> {
+    type Item = (u32, u32);
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let (first, last) = match &mut self.runs {
+            ContainerRuns::Array { values, index } => {
+                let start = *index;
+                let first = *values.get(start)?;
+
+                // Values are sorted and unique, so a run of `n` values spans `n - 1`
+                let mut end = start + 1;
+                while end < values.len() && usize::from(values[end] - first) == end - start {
+                    end += 1;
+                }
+
+                *index = end;
+
+                (u32::from(first), u32::from(values[end - 1]))
+            },
+            ContainerRuns::Bitset { words, index, word } => {
+                while *word == 0 {
+                    *index += 1;
+                    *word = *words.get(*index)?;
+                }
+
+                let start = word.trailing_zeros();
+                let len = (!(*word >> start)).trailing_zeros();
+                if start + len == 64 {
+                    *word = 0;
+                }
+                else {
+                    *word &= !(((1_u64 << len) - 1) << start);
+                }
+
+                let offset = (*index as u32) * 64 + start;
+
+                (offset, offset + len - 1)
+            },
+            ContainerRuns::Run(runs) => {
+                let run = runs.next()?;
+                let mut last = run.end();
+
+                // Stored runs are disjoint but may touch
+                while let Some(next) = runs.as_slice().first() {
+                    if u32::from(next.value) != u32::from(last) + 1 {
+                        break;
+                    }
+
+                    last = next.end();
+                    runs.next();
+                }
+
+                (u32::from(run.value), u32::from(last))
+            }
+        };
+
+        Some((self.base + first, self.base + last))
+    }
+}
+
 fn is_valid_range(range: Range<u32>) -> bool {
     let valid_len = range.len() <= (1 << 16);
     let valid_bounds = range.start <= (1 << 16) && range.end <= (1 << 16);
@@ -597,32 +740,32 @@ mod test {
 
         let mut container = Container::new();
         for value in 0..DEFAULT_MAX_SIZE as u16 {
-            container.add(value);
+            container.add(value, DEFAULT_MAX_SIZE);
         }
         assert!(!is_bitset(&container));
 
         // One past the array limit
-        container.add(DEFAULT_MAX_SIZE as u16);
+        container.add(DEFAULT_MAX_SIZE as u16, DEFAULT_MAX_SIZE);
         assert!(is_bitset(&container));
 
         // Removing down to exactly the margin edge keeps the bitset
         for value in 0..=(BITSET_RETAIN_MARGIN as u16) {
-            assert!(container.remove(value));
+            assert!(container.remove(value, DEFAULT_MAX_SIZE));
         }
         assert_eq!(container.cardinality(), DEFAULT_MAX_SIZE - BITSET_RETAIN_MARGIN);
         assert!(is_bitset(&container));
 
         // and one below the margin converts, without losing anything
-        assert!(container.remove(BITSET_RETAIN_MARGIN as u16 + 1));
+        assert!(container.remove(BITSET_RETAIN_MARGIN as u16 + 1, DEFAULT_MAX_SIZE));
         assert!(!is_bitset(&container));
         assert_eq!(container.cardinality(), DEFAULT_MAX_SIZE - BITSET_RETAIN_MARGIN - 1);
         assert_eq!(container.min(), Some(BITSET_RETAIN_MARGIN as u16 + 2));
         assert_eq!(container.max(), Some(DEFAULT_MAX_SIZE as u16));
-        assert!(!container.remove(0));
+        assert!(!container.remove(0, DEFAULT_MAX_SIZE));
 
         // An array fills to the limit before it becomes a bitset again
         for value in 0..=(BITSET_RETAIN_MARGIN as u16 + 1) {
-            container.add(value);
+            container.add(value, DEFAULT_MAX_SIZE);
         }
         assert_eq!(container.cardinality(), DEFAULT_MAX_SIZE + 1);
         assert!(is_bitset(&container));
@@ -633,7 +776,7 @@ mod test {
             let mut result = Self::new();
 
             for value in data.iter() {
-                result.add(*value);
+                result.add(*value, DEFAULT_MAX_SIZE);
             }
 
             result
@@ -646,6 +789,16 @@ mod test {
         fn card(&self) -> usize {
             self.cardinality()
         }
+    }
+
+    #[test]
+    fn bitset_retain_min_keeps_a_margin_below_the_limit() {
+        assert_eq!(bitset_retain_min(DEFAULT_MAX_SIZE), DEFAULT_MAX_SIZE - BITSET_RETAIN_MARGIN);
+        assert_eq!(bitset_retain_min(1_024), 1_024 - BITSET_RETAIN_MARGIN);
+        assert_eq!(bitset_retain_min(512), 256);
+        assert_eq!(bitset_retain_min(256), 128);
+        assert_eq!(bitset_retain_min(3), 2);
+        assert_eq!(bitset_retain_min(1), 1);
     }
 
     #[test]
@@ -722,7 +875,7 @@ mod test {
         run.add_range(0..11);
         let mut container = Container::Run(run);
 
-        assert!(container.remove_range(0..10));
+        assert!(container.remove_range(0..10, DEFAULT_MAX_SIZE));
         assert!(container.iter().eq(std::iter::once(10)));
     }
 
@@ -930,7 +1083,7 @@ mod test {
 
                 check(format!("remove_range {:?} {}", r, name), &mut || {
                     let mut result = c.clone();
-                    let has_values = result.remove_range(r.clone());
+                    let has_values = result.remove_range(r.clone(), DEFAULT_MAX_SIZE);
                     if has_values != !removed.is_empty() {
                         return Err(format!("returned {}, {} values left", has_values, removed.len()));
                     }
