@@ -218,14 +218,15 @@ impl BitsetContainer {
     pub fn get_range(&self, range: Range<u32>) -> bool {
         let (min, max) = (range.start, range.end);
 
-        if min == max {
-            return self.get(min as u16);
+        // The empty set is always contained
+        if min >= max {
+            return true;
         }
 
         let first_word = (min >> 6) as usize;
-        let last_word = (max >> 6) as usize;
-        let w0 = !((1 << (min & 0x3F)) - 1);
-        let w1 = (1 << (max & 0x3F)) - 1;
+        let last_word = ((max - 1) >> 6) as usize;
+        let w0 = std::u64::MAX << (min % 64);
+        let w1 = std::u64::MAX >> ((!max + 1) % 64);
 
         // Start and end are the same, check if the range of bits are set
         if first_word == last_word {
@@ -1673,5 +1674,19 @@ mod test {
     #[test]
     fn bitset_run_subset_of() {
         op_subset_test::<BitsetContainer, RunContainer, u16>();
+    }
+
+    #[test]
+    fn get_range_up_to_the_last_value() {
+        let mut a = BitsetContainer::new();
+        a.set_range(0..(1 << 16));
+
+        assert!(a.get_range(10..(1 << 16)));
+        assert!(a.get_range(0..64));
+        assert!(a.get_range(5..5));
+
+        a.unset(65_535);
+        assert!(!a.get_range(10..(1 << 16)));
+        assert!(a.get_range(10..65_535));
     }
 }
