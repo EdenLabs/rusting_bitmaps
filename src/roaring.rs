@@ -2436,4 +2436,331 @@ mod test {
         a.inplace_and(&b);
         assert!(a.iter().eq([2 << 16, 5 << 16]));
     }
+
+    /// Random bitmaps of array, bitset and run containers against a set of the values they
+    /// hold, operation by operation. Values sit in a few low keys and the two highest keys, and
+    /// cluster at container and word edges
+    #[test]
+    fn bitmap_ops_match_a_model() {
+        use rand::prelude::*;
+        use std::collections::BTreeSet;
+        use std::io::Cursor;
+        use std::panic::{self, AssertUnwindSafe};
+
+        type Model = BTreeSet<u32>;
+        const KEYS: [u32; 6] = [0, 1, 2, 3, 0xFFFE, 0xFFFF];
+
+        fn edge_low(rng: &mut SmallRng) -> u32 {
+            match rng.random_range(0..4) {
+                0 => rng.random_range(0..64),
+                1 => 0xFFFF - rng.random_range(0..64),
+                2 => rng.random_range(0..1024) * 64 + rng.random_range(0..2) * 63,
+                _ => rng.random_range(0..(1 << 16))
+            }
+        }
+
+        fn edge_value(rng: &mut SmallRng) -> u32 {
+            (KEYS[rng.random_range(0..KEYS.len())] << 16) | edge_low(rng)
+        }
+
+        fn keys(rng: &mut SmallRng) -> Vec<u32> {
+            KEYS.iter().copied().filter(|_| rng.random_bool(0.6)).collect()
+        }
+
+        // Up to 4 096 values per key make arrays, more make bitsets
+        fn sets(rng: &mut SmallRng) -> (RoaringBitmap, Model) {
+            let mut model = Model::new();
+            for key in keys(rng) {
+                let count = match rng.random_range(0..3) {
+                    0 => rng.random_range(1..100),
+                    1 => rng.random_range(3_800..4_400),
+                    _ => rng.random_range(4_000..30_000)
+                };
+                for _ in 0..count {
+                    model.insert((key << 16) | if rng.random_bool(0.3) { edge_low(rng) } else { rng.random_range(0..(1 << 16)) });
+                }
+            }
+
+            let mut bitmap = RoaringBitmap::new();
+            for &value in &model {
+                bitmap.add(value);
+            }
+
+            (bitmap, model)
+        }
+
+        // Run containers only come from deserializing, so write the portable format by hand
+        fn runs(rng: &mut SmallRng) -> (RoaringBitmap, Model) {
+            let mut model = Model::new();
+            let mut containers = Vec::new();
+            for key in keys(rng) {
+                let mut runs = Vec::new();
+                let mut start = if rng.random_bool(0.3) { 0 } else { rng.random_range(0..2_000) };
+                while start < (1 << 16) {
+                    let len = rng.random_range(1..3_000).min((1 << 16) - start);
+                    let len = if rng.random_range(0..6) == 0 { (1 << 16) - start } else { len };
+                    runs.push((start as u16, (len - 1) as u16));
+                    model.extend(((key << 16) | start)..=((key << 16) | (start + len - 1)));
+                    start += len + rng.random_range(1..5_000);
+                }
+                containers.push((key as u16, runs));
+            }
+
+            let mut bytes = Vec::new();
+            if containers.is_empty() {
+                bytes.extend_from_slice(&12_346_u32.to_le_bytes());
+                bytes.extend_from_slice(&0_u32.to_le_bytes());
+            }
+            else {
+                let n = containers.len();
+                bytes.extend_from_slice(&(12_347 | ((n as u32 - 1) << 16)).to_le_bytes());
+                bytes.extend((0..(n + 7) / 8).map(|i| if i == n / 8 { (1_u16 << (n % 8)) as u8 - 1 } else { 0xFF }));
+                for (key, runs) in &containers {
+                    let card: u32 = runs.iter().map(|&(_, len)| u32::from(len) + 1).sum();
+                    bytes.extend_from_slice(&key.to_le_bytes());
+                    bytes.extend_from_slice(&((card - 1) as u16).to_le_bytes());
+                }
+                if n >= 4 {
+                    bytes.extend(std::iter::repeat(0).take(4 * n));
+                }
+                for (_, runs) in &containers {
+                    bytes.extend_from_slice(&(runs.len() as u16).to_le_bytes());
+                    for &(value, len) in runs {
+                        bytes.extend_from_slice(&value.to_le_bytes());
+                        bytes.extend_from_slice(&len.to_le_bytes());
+                    }
+                }
+            }
+
+            (RoaringBitmap::deserialize(&mut Cursor::new(&bytes)).unwrap(), model)
+        }
+
+        fn any(rng: &mut SmallRng, kind: usize) -> (RoaringBitmap, Model) {
+            match kind {
+                0 => sets(rng),
+                _ => runs(rng)
+            }
+        }
+
+        // First and last value, possibly crossing keys or reaching u32::MAX
+        fn range(rng: &mut SmallRng) -> (u32, u32) {
+            let first = if rng.random_range(0..5) == 0 { u32::MAX - rng.random_range(0..70_000) } else { edge_value(rng) };
+            let len = match rng.random_range(0..4) {
+                0 => 0,
+                1 => 0x1_0000 - (first & 0xFFFF) - 1,
+                2 => rng.random_range(0..200_000),
+                _ => rng.random_range(0..100)
+            };
+
+            (first, first.saturating_add(len))
+        }
+
+        fn same(bitmap: &RoaringBitmap, model: &Model) -> Result<(), String> {
+            if !bitmap.iter().eq(model.iter().copied()) || bitmap.cardinality() != model.len() {
+                return Err(format!("{} values, expected {}", bitmap.cardinality(), model.len()));
+            }
+            if bitmap.containers.iter().any(|c| c.is_empty()) {
+                return Err("holds an empty container".to_string());
+            }
+            Ok(())
+        }
+
+        const KINDS: [&str; 2] = ["sets", "runs"];
+        let mut failures: Vec<String> = Vec::new();
+        let mut check = |name: String, f: &mut dyn FnMut() -> Result<(), String>| {
+            match panic::catch_unwind(AssertUnwindSafe(|| f())) {
+                Ok(Ok(())) => (),
+                Ok(Err(message)) => failures.push(format!("{}: {}", name, message)),
+                Err(_) => failures.push(format!("{}: panicked", name))
+            }
+        };
+
+        let mut rng = SmallRng::seed_from_u64(0xb17_5e7);
+        for round in 0..12 {
+            for k0 in 0..2 {
+                for k1 in 0..2 {
+                    let (a, ma) = any(&mut rng, k0);
+                    let (b, mb) = any(&mut rng, k1);
+                    let pair = format!("round {} {} {}", round, KINDS[k0], KINDS[k1]);
+
+                    let expected: [(&str, Model); 4] = [
+                        ("or", ma.union(&mb).copied().collect()),
+                        ("and", ma.intersection(&mb).copied().collect()),
+                        ("and_not", ma.difference(&mb).copied().collect()),
+                        ("xor", ma.symmetric_difference(&mb).copied().collect())
+                    ];
+
+                    for (op, expected) in expected.iter() {
+                        let (a, b) = (&a, &b);
+                        check(format!("{} {}", op, pair), &mut || {
+                            let result = match *op {
+                                "or" => a.or(b),
+                                "and" => a.and(b),
+                                "and_not" => a.and_not(b),
+                                _ => a.xor(b)
+                            };
+                            same(&result, expected)
+                        });
+
+                        check(format!("inplace_{} {}", op, pair), &mut || {
+                            let mut result = a.clone();
+                            match *op {
+                                "or" => result.inplace_or(b),
+                                "and" => result.inplace_and(b),
+                                "and_not" => result.inplace_and_not(b),
+                                _ => result.inplace_xor(b)
+                            }
+                            same(&result, expected)
+                        });
+
+                        check(format!("{}_cardinality {}", op, pair), &mut || {
+                            let found = match *op {
+                                "or" => a.or_cardinality(b),
+                                "and" => a.and_cardinality(b),
+                                "and_not" => a.and_not_cardinality(b),
+                                _ => a.xor_cardinality(b)
+                            };
+                            if found != expected.len() { Err(format!("{}, expected {}", found, expected.len())) } else { Ok(()) }
+                        });
+                    }
+
+                    let subsets = (ma.is_subset(&mb), mb.is_subset(&ma));
+                    check(format!("subset_of {}", pair), &mut || {
+                        let found = (a.subset_of(&b), b.subset_of(&a));
+                        if found != subsets { Err(format!("{:?}, expected {:?}", found, subsets)) } else { Ok(()) }
+                    });
+                }
+            }
+
+            for kind in 0..2 {
+                let (bitmap, model) = any(&mut rng, kind);
+                let name = format!("round {} {}", round, KINDS[kind]);
+
+                for _ in 0..3 {
+                    let (first, last) = range(&mut rng);
+                    let in_range: Model = (first..=last).collect();
+                    let r = format!("{}..={}", first, last);
+
+                    let flipped: Model = model.symmetric_difference(&in_range).copied().collect();
+                    check(format!("not {} {}", r, name), &mut || same(&bitmap.not(first..=last), &flipped));
+                    check(format!("inplace_not {} {}", r, name), &mut || {
+                        let mut result = bitmap.clone();
+                        result.inplace_not(first..=last);
+                        same(&result, &flipped)
+                    });
+
+                    let added: Model = model.union(&in_range).copied().collect();
+                    check(format!("add_range {} {}", r, name), &mut || {
+                        let mut result = bitmap.clone();
+                        result.add_range(first..=last);
+                        same(&result, &added)
+                    });
+
+                    let removed: Model = model.difference(&in_range).copied().collect();
+                    check(format!("remove_range {} {}", r, name), &mut || {
+                        let mut result = bitmap.clone();
+                        result.remove_range(first..=last);
+                        same(&result, &removed)
+                    });
+
+                    let contained = in_range.is_subset(&model);
+                    check(format!("contains_range {} {}", r, name), &mut || {
+                        let found = bitmap.contains_range(first..=last);
+                        if found != contained { Err(format!("{}, expected {}", found, contained)) } else { Ok(()) }
+                    });
+
+                    // The exclusive form of the same range
+                    check(format!("not exclusive {} {}", r, name), &mut || match last.checked_add(1) {
+                        Some(end) => same(&bitmap.not(first..end), &flipped),
+                        None => same(&bitmap.not(first..), &flipped)
+                    });
+                }
+
+                check(format!("empty range {}", name), &mut || {
+                    let mut result = bitmap.not(5..5);
+                    result.inplace_not(7..7);
+                    result.add_range(9..9);
+                    result.remove_range(11..11);
+                    if !bitmap.contains_range(13..13) { return Err("does not contain the empty range".to_string()); }
+                    same(&result, &model)
+                });
+
+                for _ in 0..20 {
+                    let value = edge_value(&mut rng);
+                    let rank = model.range(..=value).count();
+                    check(format!("rank {} {}", value, name), &mut || {
+                        let found = bitmap.rank(value);
+                        if found != rank { Err(format!("{}, expected {}", found, rank)) } else { Ok(()) }
+                    });
+
+                    let contains = model.contains(&value);
+                    check(format!("contains {} {}", value, name), &mut || {
+                        if bitmap.contains(value) != contains { Err(format!("expected {}", contains)) } else { Ok(()) }
+                    });
+
+                    let mut without = model.clone();
+                    let was_present = without.remove(&value);
+                    check(format!("remove {} {}", value, name), &mut || {
+                        let mut result = bitmap.clone();
+                        if result.remove(value) != was_present { return Err(format!("returned {}", !was_present)); }
+                        same(&result, &without)
+                    });
+                }
+
+                if !model.is_empty() {
+                    for _ in 0..10 {
+                        let rank = rng.random_range(0..model.len());
+                        let expected = model.iter().nth(rank).copied();
+                        check(format!("select {} {}", rank, name), &mut || {
+                            let found = bitmap.select(rank as u32);
+                            if found != expected { Err(format!("{:?}, expected {:?}", found, expected)) } else { Ok(()) }
+                        });
+                    }
+                }
+
+                let bounds = (model.iter().next().copied(), model.iter().next_back().copied());
+                check(format!("min max {}", name), &mut || {
+                    let found = (bitmap.min(), bitmap.max());
+                    if found != bounds { Err(format!("{:?}, expected {:?}", found, bounds)) } else { Ok(()) }
+                });
+
+                check(format!("pop_min {}", name), &mut || {
+                    let mut result = bitmap.clone();
+                    let mut rest = model.clone();
+                    for _ in 0..50 {
+                        let expected = rest.iter().next().copied();
+                        if let Some(value) = expected {
+                            rest.remove(&value);
+                        }
+                        let found = result.pop_min();
+                        if found != expected { return Err(format!("{:?}, expected {:?}", found, expected)); }
+                    }
+                    same(&result, &rest)
+                });
+
+                check(format!("serialize {}", name), &mut || {
+                    let mut bytes = Vec::new();
+                    let written = bitmap.serialize(&mut bytes).map_err(|e| e.to_string())?;
+                    if written != bytes.len() || written != bitmap.serialized_size() {
+                        return Err(format!("wrote {}, {} bytes, size {}", written, bytes.len(), bitmap.serialized_size()));
+                    }
+                    let read = RoaringBitmap::deserialize(&mut Cursor::new(&bytes)).map_err(|e| format!("{:?}", e))?;
+                    same(&read, &model)
+                });
+            }
+        }
+
+        let mut kinds: Vec<String> = Vec::new();
+        for failure in &failures {
+            let head = failure.split(':').next().unwrap();
+            let words: Vec<&str> = head.split(' ').collect();
+            let mut key = vec![words[0]];
+            key.extend(words.iter().skip(1).filter(|w| KINDS.contains(*w) || **w == "exclusive"));
+            let key = key.join(" ") + ":";
+            if !kinds.iter().any(|k| k.starts_with(&key)) {
+                kinds.push(format!("{} -- e.g. {}", key, failure));
+            }
+        }
+        assert!(failures.is_empty(), "{} failures, by operation:\n{}", failures.len(), kinds.join("\n"));
+    }
 }
