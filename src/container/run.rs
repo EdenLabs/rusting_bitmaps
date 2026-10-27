@@ -153,26 +153,26 @@ impl RunContainer {
     /// Add all values in the range [min-max) to the run container
     pub fn add_range(&mut self, range: Range<u32>) {
         let min = range.start;
-        let max = range.end;
+        let last = range.end - 1;
 
         let runs_min = self.rle_count_less(min);
-        let runs_max = self.rle_count_greater(max);
+        let runs_max = self.rle_count_greater(last);
 
         let common = self.runs.len() - runs_min - runs_max;
         if common == 0 {
             self.runs.insert(
                 runs_min,
-                Rle16::new(min as u16, (max - min - 1) as u16)
+                Rle16::new(min as u16, (last - min) as u16)
             );
         }
         else {
-            let common_min = self.runs[runs_min].value;
-            let common_max = self.runs[runs_min + common - 1].end();
-            let result_min = common_min.min(min as u16);
-            let result_max = common_max.max(max as u16);
+            let common_min = u32::from(self.runs[runs_min].value);
+            let common_max = u32::from(self.runs[runs_min + common - 1].end());
+            let result_min = common_min.min(min);
+            let result_max = common_max.max(last);
 
-            self.runs[runs_min] = Rle16::new(result_min, result_max - result_min);
-            self.runs.splice((runs_min + 1)..runs_max, iter::empty());
+            self.runs[runs_min] = Rle16::new(result_min as u16, (result_max - result_min) as u16);
+            self.runs.splice((runs_min + 1)..(runs_min + common), iter::empty());
         }
     }
     
@@ -222,62 +222,51 @@ impl RunContainer {
         let min = range.start as u16;
         let max = (range.end - 1) as u16;
 
-        let mut si0 = None;
-        let mut si1 = None;
-
-        // Update the left-most run
-        match self.find_run(min) {
-            SearchResult::ExactMatch(mut index) => {
-                let run = self.runs[index as usize];
+        // Trim the run holding `min`, then drop the runs from `first` up to `end`
+        let first = match self.find_run(min) {
+            SearchResult::ExactMatch(index) => {
+                let run = self.runs[index];
                 if min > run.value && max < run.end() {
                     // Split into two runs
 
                     // Right interval
-                    self.runs.insert(index as usize + 1, Rle16::new(max + 1, run.end() - (max + 1)));
+                    self.runs.insert(index + 1, Rle16::new(max + 1, run.end() - (max + 1)));
 
                     // Left interval
-                    self.runs[index as usize].length = (min - 1) - run.value;
+                    self.runs[index].length = (min - 1) - run.value;
                     return;
                 }
 
                 if min > run.value {
-                    self.runs[index as usize].length = (min - 1) - run.value;
-                    index += 1;
+                    self.runs[index].length = (min - 1) - run.value;
+                    index + 1
                 }
-
-                si0 = Some(index);
-            },
-            SearchResult::PossibleMatch(index) => {
-                si0 = Some(index);
-            },
-            _ => ()
-        }
-
-        // Update the right-most run
-        match self.find_run(max) {
-            SearchResult::ExactMatch(mut index) => {
-                let run_max = self.runs[index as usize].end();
-                if run_max > max {
-                    self.runs[index as usize] = Rle16::new(max + 1, run_max - (max + 1));
-                    index = index.checked_sub(1)
-                        .unwrap_or(0);
+                else {
+                    index
                 }
-
-                si1 = Some(index);
             },
-            SearchResult::PossibleMatch(index) => {
-                si1 = Some(index);                
+            SearchResult::PossibleMatch(index) => index + 1,
+            SearchResult::NoMatch => 0
+        };
+
+        // Trim the run holding `max`
+        let end = match self.find_run(max) {
+            SearchResult::ExactMatch(index) => {
+                let run_end = self.runs[index].end();
+                if run_end > max {
+                    self.runs[index] = Rle16::new(max + 1, run_end - (max + 1));
+                    index
+                }
+                else {
+                    index + 1
+                }
             },
-            _ => ()
-        }
+            SearchResult::PossibleMatch(index) => index + 1,
+            SearchResult::NoMatch => 0
+        };
 
-        if let (Some(si0), Some(si1)) = (si0, si1) {
-            let start = si0 + 1;
-            let end = start + (si1 + 1);
-
-            if end < self.runs.len() {
-                self.runs.splice(start..end, iter::empty());
-            }
+        if first < end {
+            self.runs.drain(first..end);
         }
     }
     
@@ -300,63 +289,25 @@ impl RunContainer {
     
     /// Check if the container contains all the values in [min-max)
     pub fn contains_range(&self, range: Range<u32>) -> bool {
-        let mut count = 0;
-        let index;
-
         let min = range.start as u16;
-        let max = (range.end - 1) as u16;
+        let last = (range.end - 1) as u16;
 
-        match self.binary_search(min) {
-            SearchResult::ExactMatch(i) => {
-                index = i;
-            },
-            SearchResult::PossibleMatch(i) => {
-                let v = self.runs[i];
-
-                if min - v.value > v.length {
-                    return false;
-                }
-                else {
-                    index = i;
-                }
-            },
-            SearchResult::NoMatch => {
-                return false;
-            }
+        let mut index = match self.find_run(min) {
+            SearchResult::ExactMatch(i) => i,
+            _ => return false
         };
 
-        for run in &self.runs[index..self.runs.len()] {
-            let stop = run.value + run.length;
-            if run.value >= max {
-                break;
-            }
-
-            if stop >= max {
-                if max > run.value {
-                    count += max - run.value;
-                }
-
-                break;
-            }
-
-            let min_length = {
-                if stop > min { 
-                    stop - min 
-                }
-                else {
-                    0
-                }
-            };
-
-            if min_length < run.length {
-                count += min_length;
-            }
-            else {
-                count += run.length;
+        // Stored runs may touch, a range can span several of them
+        let mut end = self.runs[index].end();
+        while end < last {
+            index += 1;
+            match self.runs.get(index) {
+                Some(run) if run.value == end + 1 => end = run.end(),
+                _ => return false
             }
         }
 
-        count >= max - min - 1
+        true
     }
     
     /// The cardinality of the run container
@@ -421,7 +372,8 @@ impl RunContainer {
     
     /// Get the rank of a value in the set. The relative position of an element in the set
     pub fn rank(&self, value: u16) -> usize {
-        let mut sum = 0;
+        // A full container ranks 65 536 values, more than a `u16` holds
+        let mut sum = 0_usize;
         for run in self.runs.iter() {
             let start = run.value;
             let length = run.length;
@@ -431,15 +383,15 @@ impl RunContainer {
                 if value < start {
                     break;
                 }
-                
-                return (sum + (value - start) + 1) as usize;
+
+                return sum + usize::from(value - start) + 1;
             }
             else {
-                sum += length + 1;
+                sum += usize::from(length) + 1;
             }
         }
 
-        sum as usize
+        sum
     }
 
     /// Select the element with `rank` starting the search from `start_rank`
@@ -556,13 +508,9 @@ impl RunContainer {
 
     /// Get the number of runs before `value` 
     fn rle_count_less(&self, value: u32) -> usize {
-        if self.runs.is_empty() {
-            return 0;
-        }
-
         let mut low = 0;
-        let mut high = self.runs.len() - 1;
-        while low <= high {
+        let mut high = self.runs.len();
+        while low < high {
             let middle = (low + high) >> 1;
             let min_value = u32::from(self.runs[middle].value);
             let max_value = min_value + u32::from(self.runs[middle].length);
@@ -571,7 +519,7 @@ impl RunContainer {
                 low = middle + 1;
             }
             else if value < min_value {
-                high = middle - 1;
+                high = middle;
             }
             else {
                 return middle;
@@ -583,13 +531,9 @@ impl RunContainer {
 
     /// Get the number of runs after `value`
     fn rle_count_greater(&self, value: u32) -> usize {
-        if self.runs.is_empty() {
-            return 0;
-        }
-
         let mut low = 0;
-        let mut high = self.runs.len() - 1;
-        while low <= high {
+        let mut high = self.runs.len();
+        while low < high {
             let middle = (low + high) >> 1;
             let min_value = u32::from(self.runs[middle].value);
             let max_value = min_value + u32::from(self.runs[middle].length);
@@ -598,7 +542,7 @@ impl RunContainer {
                 low = middle + 1;
             }
             else if value + 1 < min_value {
-                high = middle - 1;
+                high = middle;
             }
             else {
                 return self.runs.len() - (middle + 1);
@@ -640,16 +584,15 @@ impl RunContainer {
 
         let num_runs    = u16::from_le_bytes(bytes) as usize;
         let mut result  = Self::with_capacity(num_runs);
+        result.runs.resize(num_runs, Rle16::new(0, 0));
 
+        // `Rle16` is two `u16` with no padding, any bytes are a valid run
         unsafe {
             let num_bytes = num_runs * mem::size_of::<Rle16>();
-            let ptr = result.as_mut_ptr() as *mut u8;
+            let ptr = result.runs.as_mut_ptr() as *mut u8;
             let slice = slice::from_raw_parts_mut(ptr, num_bytes);
 
-            let num_read = buf.read(slice)?;
-            if num_read != num_bytes {
-                return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
-            }
+            buf.read_exact(slice)?;
         }
 
         Ok(result)
@@ -2579,5 +2522,121 @@ mod test {
 
         let runs: Vec<_> = Container::Run(a).iter_runs(1 << 16).collect();
         assert_eq!(runs, vec![(65_556, 65_575), (65_586, 65_586)]);
+    }
+
+    #[test]
+    fn deserialize_reads_every_run() {
+        let mut a = RunContainer::new();
+        a.add_range(10..21);
+        a.add_range(40..50);
+
+        let mut buf = Vec::new();
+        a.serialize(&mut buf).unwrap();
+        let read = RunContainer::deserialize(&mut std::io::Cursor::new(&buf)).unwrap();
+
+        assert_eq!(read.num_runs(), 2);
+        assert!(read.iter().eq(a.iter()));
+
+        // A truncated buffer is an error
+        let short = &buf[..buf.len() - 1];
+        assert!(RunContainer::deserialize(&mut std::io::Cursor::new(short)).is_err());
+    }
+
+    #[test]
+    fn add_range_below_the_first_run() {
+        let mut a = RunContainer::new();
+        a.add_range(10..21);
+        a.add_range(0..5);
+
+        assert!(a.iter().eq((0..5).chain(10..21)));
+    }
+
+    #[test]
+    fn add_range_merges_overlapping_runs() {
+        let mut a = RunContainer::new();
+        a.add_range(0..10);
+        a.add_range(20..30);
+        a.add_range(30..40);
+        assert!(a.iter().eq((0..10).chain(20..40)));
+
+        // The exclusive end stays out, a run starting just past it stays separate
+        a.add_range(50..60);
+        a.add_range(45..49);
+        assert!(a.iter().eq((0..10).chain(20..40).chain(45..49).chain(50..60)));
+
+        // One range covering several runs
+        a.add_range(5..55);
+        assert!(a.iter().eq(0..60));
+        assert_eq!(a.num_runs(), 1);
+
+        // A range ending at the end of the container
+        a.add_range(65_000..(1 << 16));
+        assert!(a.iter().eq((0..60).chain(65_000..=65_535)));
+    }
+
+    #[test]
+    fn contains_range_needs_every_value() {
+        let mut a = RunContainer::new();
+        a.add_range(0..10);
+        a.add_range(20..30);
+
+        assert!(a.contains_range(0..10));
+        assert!(a.contains_range(22..25));
+        assert!(!a.contains_range(0..11));
+        assert!(!a.contains_range(5..25));
+        assert!(!a.contains_range(10..20));
+        assert!(!a.contains_range(25..31));
+
+        // Touching stored runs hold a range across them
+        let mut b = RunContainer::new();
+        b.runs.extend_from_slice(&[super::Rle16::new(0, 9), super::Rle16::new(10, 9)]);
+        assert!(b.contains_range(5..20));
+        assert!(!b.contains_range(5..21));
+    }
+
+    #[test]
+    fn remove_range_across_runs() {
+        let runs = || {
+            let mut a = RunContainer::new();
+            a.add_range(0..10);
+            a.add_range(20..30);
+            a.add_range(40..50);
+            a
+        };
+
+        // Trims the runs at both ends and drops the one between
+        let mut a = runs();
+        a.remove_range(5..45);
+        assert!(a.iter().eq((0..5).chain(45..50)));
+
+        // Starts and ends in gaps
+        let mut a = runs();
+        a.remove_range(15..35);
+        assert!(a.iter().eq((0..10).chain(40..50)));
+
+        // Splits one run
+        let mut a = runs();
+        a.remove_range(22..25);
+        assert!(a.iter().eq((0..10).chain(20..22).chain(25..30).chain(40..50)));
+
+        // Removes the last runs
+        let mut a = runs();
+        a.remove_range(25..(1 << 16));
+        assert!(a.iter().eq((0..10).chain(20..25)));
+
+        // Removes every run
+        let mut a = runs();
+        a.remove_range(0..50);
+        assert!(a.is_empty());
+    }
+
+    #[test]
+    fn rank_of_a_full_container() {
+        let mut a = RunContainer::new();
+        a.add_range(0..(1 << 16));
+
+        assert_eq!(a.rank(0), 1);
+        assert_eq!(a.rank(65_534), 65_535);
+        assert_eq!(a.rank(65_535), 1 << 16);
     }
 }

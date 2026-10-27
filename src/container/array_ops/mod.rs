@@ -13,6 +13,7 @@ mod differential;
 ///  - `out` must have room for `a.len() + b.len()` elements. The sse4.2 implementation may write to any of
 ///    those elements, including ones past the returned count, so room for only the result is not
 ///    enough. The contents of `out` past the returned count are unspecified
+///  - Those elements of `out` must not overlap `a` or `b`
 pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
     #[cfg(target_feature = "sse4.2")]
@@ -28,6 +29,7 @@ pub unsafe fn or(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 ///  - `out` must have room for `a.len().min(b.len())` elements. The sse4.2 implementation may write to any of
 ///    those elements, including ones past the returned count, so room for only the result is not
 ///    enough. The contents of `out` past the returned count are unspecified
+///  - Those elements of `out` must not overlap `a` or `b`
 pub unsafe fn and(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
     #[cfg(target_feature = "sse4.2")]
@@ -52,6 +54,7 @@ pub fn and_cardinality(a: &[u16], b: &[u16]) -> usize {
 ///  - `out` must have room for `a.len()` elements. The sse4.2 implementation may write to any of
 ///    those elements, including ones past the returned count, so room for only the result is not
 ///    enough. The contents of `out` past the returned count are unspecified
+///  - Those elements of `out` must not overlap `a` or `b`
 pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
     #[cfg(target_feature = "sse4.2")]
@@ -67,6 +70,7 @@ pub unsafe fn and_not(a: &[u16], b: &[u16], out: *mut u16) -> usize {
 ///  - `out` must have room for `a.len() + b.len()` elements. The sse4.2 implementation may write to any of
 ///    those elements, including ones past the returned count, so room for only the result is not
 ///    enough. The contents of `out` past the returned count are unspecified
+///  - Those elements of `out` must not overlap `a` or `b`
 pub unsafe fn xor(a: &[u16], b: &[u16], out: *mut u16) -> usize {
     // Conditionally compile in/out the optimial version of the algorithm
     #[cfg(target_feature = "sse4.2")]
