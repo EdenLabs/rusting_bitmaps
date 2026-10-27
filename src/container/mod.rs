@@ -517,7 +517,8 @@ impl Container {
     /// Each run is yielded as its first and last value, offset by `base`. A run that crosses a
     /// bitset word is yielded as one segment per word, which the caller merges. Every other
     /// segment is a maximal run within the container. Only a segment whose last value ends a
-    /// bitset word, `last % 64 == 63`, can touch the next one.
+    /// bitset word, `last % 64 == 63`, can touch the next one. The last value of a container,
+    /// 65 535, also ends a word.
     #[inline]
     pub fn iter_runs(&self, base: u32) -> Runs<'_> {
         let runs = match self {

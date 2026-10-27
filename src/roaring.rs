@@ -1250,8 +1250,10 @@ impl RoaringBitmap {
 
     /// Get an iterator over the runs of consecutive values in the bitmap, in ascending order.
     ///
-    /// Each run is maximal. Values on either side of a run are absent from the bitmap. The
-    /// cost scales with the number of runs and stored containers, not with the cardinality.
+    /// Each run is maximal. Values on either side of a run are absent from the bitmap.
+    ///
+    /// Bitset containers are read a word at a time and run containers a stored run at a time.
+    /// Array containers are read value by value.
     ///
     /// # Examples
     ///
@@ -1328,8 +1330,7 @@ impl<'a> Iterator for Runs<'a> {
             None => self.next_segment()?
         };
 
-        // Runs that touch across bitset words and containers arrive as separate segments. Only
-        // a segment ending a bitset word or a container can touch the next. A segment never
+        // See `Container::iter_runs` for which segments can touch the next. A segment never
         // follows one ending at `u32::MAX`, so the wrapped successor never matches
         while last & 63 == 63 {
             match self.next_segment() {
@@ -2455,6 +2456,17 @@ mod test {
         bitmap.keys.push(1);
         bitmap.containers.push(Container::Run(run));
         assert!(bitmap.iter_runs().eq([65_534..=65_545, 65_556..=65_565]));
+
+        // Array segments ending a word, and a run container ending its key before a key gap
+        let mut run = RunContainer::new();
+        run.add_range(65_000..65_536);
+        let mut bitmap = RoaringBitmap::from_slice(&[63, 65, 127, 129]);
+        bitmap.keys.push(1);
+        bitmap.containers.push(Container::Run(run));
+        bitmap.add(3 << 16);
+        assert!(bitmap.iter_runs().eq(runs_by_value(&bitmap)));
+        assert!(bitmap.iter_runs().eq([63..=63, 65..=65, 127..=127, 129..=129,
+            130_536..=131_071, 196_608..=196_608]));
 
         let mut rng = 0x2545_F491_4F6C_DD1D_u64;
         let mut next = move |n: u64| {
