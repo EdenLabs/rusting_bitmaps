@@ -153,26 +153,26 @@ impl RunContainer {
     /// Add all values in the range [min-max) to the run container
     pub fn add_range(&mut self, range: Range<u32>) {
         let min = range.start;
-        let max = range.end;
+        let last = range.end - 1;
 
         let runs_min = self.rle_count_less(min);
-        let runs_max = self.rle_count_greater(max);
+        let runs_max = self.rle_count_greater(last);
 
         let common = self.runs.len() - runs_min - runs_max;
         if common == 0 {
             self.runs.insert(
                 runs_min,
-                Rle16::new(min as u16, (max - min - 1) as u16)
+                Rle16::new(min as u16, (last - min) as u16)
             );
         }
         else {
-            let common_min = self.runs[runs_min].value;
-            let common_max = self.runs[runs_min + common - 1].end();
-            let result_min = common_min.min(min as u16);
-            let result_max = common_max.max(max as u16);
+            let common_min = u32::from(self.runs[runs_min].value);
+            let common_max = u32::from(self.runs[runs_min + common - 1].end());
+            let result_min = common_min.min(min);
+            let result_max = common_max.max(last);
 
-            self.runs[runs_min] = Rle16::new(result_min, result_max - result_min);
-            self.runs.splice((runs_min + 1)..runs_max, iter::empty());
+            self.runs[runs_min] = Rle16::new(result_min as u16, (result_max - result_min) as u16);
+            self.runs.splice((runs_min + 1)..(runs_min + common), iter::empty());
         }
     }
     
@@ -556,13 +556,9 @@ impl RunContainer {
 
     /// Get the number of runs before `value` 
     fn rle_count_less(&self, value: u32) -> usize {
-        if self.runs.is_empty() {
-            return 0;
-        }
-
         let mut low = 0;
-        let mut high = self.runs.len() - 1;
-        while low <= high {
+        let mut high = self.runs.len();
+        while low < high {
             let middle = (low + high) >> 1;
             let min_value = u32::from(self.runs[middle].value);
             let max_value = min_value + u32::from(self.runs[middle].length);
@@ -571,7 +567,7 @@ impl RunContainer {
                 low = middle + 1;
             }
             else if value < min_value {
-                high = middle - 1;
+                high = middle;
             }
             else {
                 return middle;
@@ -583,13 +579,9 @@ impl RunContainer {
 
     /// Get the number of runs after `value`
     fn rle_count_greater(&self, value: u32) -> usize {
-        if self.runs.is_empty() {
-            return 0;
-        }
-
         let mut low = 0;
-        let mut high = self.runs.len() - 1;
-        while low <= high {
+        let mut high = self.runs.len();
+        while low < high {
             let middle = (low + high) >> 1;
             let min_value = u32::from(self.runs[middle].value);
             let max_value = min_value + u32::from(self.runs[middle].length);
@@ -598,7 +590,7 @@ impl RunContainer {
                 low = middle + 1;
             }
             else if value + 1 < min_value {
-                high = middle - 1;
+                high = middle;
             }
             else {
                 return self.runs.len() - (middle + 1);
@@ -2585,5 +2577,37 @@ mod test {
         // A truncated buffer is an error
         let short = &buf[..buf.len() - 1];
         assert!(RunContainer::deserialize(&mut std::io::Cursor::new(short)).is_err());
+    }
+
+    #[test]
+    fn add_range_below_the_first_run() {
+        let mut a = RunContainer::new();
+        a.add_range(10..21);
+        a.add_range(0..5);
+
+        assert!(a.iter().eq((0..5).chain(10..21)));
+    }
+
+    #[test]
+    fn add_range_merges_overlapping_runs() {
+        let mut a = RunContainer::new();
+        a.add_range(0..10);
+        a.add_range(20..30);
+        a.add_range(30..40);
+        assert!(a.iter().eq((0..10).chain(20..40)));
+
+        // The exclusive end stays out, a run starting just past it stays separate
+        a.add_range(50..60);
+        a.add_range(45..49);
+        assert!(a.iter().eq((0..10).chain(20..40).chain(45..49).chain(50..60)));
+
+        // One range covering several runs
+        a.add_range(5..55);
+        assert!(a.iter().eq(0..60));
+        assert_eq!(a.num_runs(), 1);
+
+        // A range ending at the end of the container
+        a.add_range(65_000..(1 << 16));
+        assert!(a.iter().eq((0..60).chain(65_000..=65_535)));
     }
 }
