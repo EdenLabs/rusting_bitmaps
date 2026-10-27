@@ -725,4 +725,13 @@ mod test {
         assert!(container.remove_range(0..10));
         assert!(container.iter().eq(std::iter::once(10)));
     }
+
+    #[test]
+    fn bitset_flip_of_an_empty_range_changes_nothing() {
+        let mut bitset = BitsetContainer::new();
+        bitset.set(3);
+
+        bitset.flip_range(10..10);
+        assert!(bitset.iter().eq(std::iter::once(3)));
+    }
 }

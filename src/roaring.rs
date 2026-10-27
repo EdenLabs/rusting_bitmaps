@@ -5,7 +5,7 @@ use std::ops::{RangeBounds, Range};
 use std::fmt;
 use std::mem;
 
-use crate::{IntoBound, inclusive_bounds};
+use crate::inclusive_bounds;
 use crate::container::{self, *, array_ops};
 
 // TODO: Add support for custom allocators
@@ -774,84 +774,40 @@ let key_min = min >> 16;
 
     /// Negate all elements within `range` in this bitmap
     pub fn not<R: RangeBounds<u32>>(&self, range: R) -> Self {
-        let (min, max) = range.into_bound();
-        if min == max {
-            return Self::new();
-        }
+        let (first, last) = match inclusive_bounds(range) {
+            Some(bounds) => bounds,
+            None => return self.clone()
+        };
+        let (first_key, last_key) = (first >> 16, last >> 16);
 
-        let mut start_high = min >> 16;
-        let start_low = min & 0xFFFF;
-
-        let mut end_high = max >> 16;
-        let end_low = max & 0xFFFF;
+        let start = self.keys.partition_point(|&key| u32::from(key) < first_key);
+        let end = self.keys.partition_point(|&key| u32::from(key) <= last_key);
 
         let mut result = Self::new();
+        result.keys.extend_from_slice(&self.keys[..start]);
+        result.containers.extend_from_slice(&self.containers[..start]);
 
-        // Append all preceding elements that are not to be flipped
-        let end = array_ops::advance_until(&self.keys, 0, start_high as u16);
-        result.containers.extend_from_slice(&self.containers[..end]);
-        result.keys.extend_from_slice(&self.keys[..end]);
-
-        // Range occupies the same container, just flip that
-        if start_high == end_high {
-            result.append_flipped(self, start_high as u16, start_low..end_low);
-        }
-        // Else flip a cross container range
-        else {
-            // Handle a partial start container
-            if start_low > 0 {
-                result.append_flipped(self, start_high as u16, start_low..(1 << 16));
-
-                start_high += 1;
+        let mut index = start;
+        for key in first_key..=last_key {
+            let range = key_range(key, first, last);
+            let flipped = if index < end && u32::from(self.keys[index]) == key {
+                index += 1;
+                self.containers[index - 1].not(range)
             }
-
-            if end_low != 0xFFFF {
-                end_high -= 1;
-            }
-
-            // Handle all containers in the middle of the range skipping the last container
-            for bound in start_high..=end_high {
-                result.append_flipped(self, bound as u16, 0..(1 << 16));
-            }
-
-            // Handle a partial final container
-            if end_low != 0xFFFF {
-                end_high += 1;
-
-                result.append_flipped(self, end_high as u16, 0..end_low);
-            }
-        }
-
-        // Append any remaining containers
-        if let Ok(mut i_last) = self.get_index(end_high as u16) {
-            i_last += 1; // Increment to get the next container after the last flipped one
-
-            if i_last < self.containers.len() {
-                result.containers.extend_from_slice(&self.containers[i_last..]);
-                result.keys.extend_from_slice(&self.keys[i_last..]);
-            }
-        }
-
-        result
-    }
-
-    /// Insert the negation of the container within `range` with the given key.
-    /// Creates a new full container if no container is found
-    fn append_flipped(&mut self, other: &Self, key: u16, range: Range<u32>) {
-        if let Ok(i) = other.get_index(key) {
-            let unflipped = &other.containers[i];
-            let flipped = unflipped.not(range);
+            else {
+                Container::from_range(range)
+            };
 
             if !flipped.is_empty() {
-                self.containers.push(flipped);
-                self.keys.push(key);
+                result.keys.push(key as u16);
+                result.containers.push(flipped);
             }
         }
-        else {
-            let c = Container::from_range(range);
-            self.containers.push(c);
-            self.keys.push(key);
-        }
+
+        result.keys.extend_from_slice(&self.keys[end..]);
+        result.containers.extend_from_slice(&self.containers[end..]);
+
+        result
     }
 
     /// Same as [`or`] but operates in place on `self`
@@ -1098,55 +1054,42 @@ let key_min = min >> 16;
     }
 
     /// Same as [`not`] but operates in place on `self`
-    /// 
+    ///
     /// [`not`]: RoaringBitmap::not
     pub fn inplace_not<R: RangeBounds<u32>>(&mut self, range: R) {
-        let (min, max) = range.into_bound();
-        let mut high_start = (min >> 16) as u16;
-        let mut high_end = (max >> 16) as u16;
-        let low_start = min & 0xFFFF;
-        let low_end = max & 0xFFFF;
+        let (first, last) = match inclusive_bounds(range) {
+            Some(bounds) => bounds,
+            None => return
+        };
+        let (first_key, last_key) = (first >> 16, last >> 16);
 
-        // Keys are the same, just do it in place
-        if high_start == high_end {
-            self.inplace_flip(high_start, low_start..low_end);
+        // Rebuild the key and container lists, moving the containers outside the range and
+        // flipping the ones inside it in place
+        let keys = mem::take(&mut self.keys);
+        let containers = mem::take(&mut self.containers);
+        let mut existing = keys.into_iter().zip(containers).peekable();
+
+        while let Some((key, container)) = existing.next_if(|(key, _)| u32::from(*key) < first_key) {
+            self.keys.push(key);
+            self.containers.push(container);
         }
-        else {
-            // First container is a partial one, flip in place
-            if low_start > 0 {
-                self.inplace_flip(high_start, low_start..(1 << 16));
-                high_start += 1;
-            }
 
-            if low_end != 0xFFFF {
-                high_end -= 1;
-            }
+        for key in first_key..=last_key {
+            let range = key_range(key, first, last);
+            let flipped = match existing.next_if(|(existing, _)| u32::from(*existing) == key) {
+                Some((_, container)) => container.inplace_not(range),
+                None => Container::from_range(range)
+            };
 
-            for bound in high_start..=high_end {
-                self.inplace_flip(bound, 0..(1 << 16));
-            }
-
-            // End is a partial container, flip in place
-            if low_end != 0xFFFF {
-                self.inplace_flip(high_end + 1, 0..low_end);
+            if !flipped.is_empty() {
+                self.keys.push(key as u16);
+                self.containers.push(flipped);
             }
         }
-    }
 
-    fn inplace_flip(&mut self, key: u16, range: Range<u32>) {
-        match self.get_index(key) {
-            Ok(index) => {
-                // Swap the container at `index` for `None`
-                let c = mem::replace(&mut self.containers[index], Container::None);
-
-                // Operate on the container and swap back into the slot at `index`
-                let c = c.inplace_not(range);
-                self.containers[index] = c;
-            },
-            Err(index) => {
-                self.keys.insert(index, key);
-                self.containers.insert(index, Container::from_range(range));
-            }
+        for (key, container) in existing {
+            self.keys.push(key);
+            self.containers.push(container);
         }
     }
 
@@ -1556,6 +1499,14 @@ impl<'a> Iterator for Iter<'a> {
             (u32::from(key) << 16) | u32::from(low)
         })
     }
+}
+
+/// The low bits of the values from `first` to `last` that fall in the container with `key`
+fn key_range(key: u32, first: u32, last: u32) -> Range<u32> {
+    let start = if key == first >> 16 { first & 0xFFFF } else { 0 };
+    let end = if key == last >> 16 { (last & 0xFFFF) + 1 } else { 1 << 16 };
+
+    start..end
 }
 
 #[cfg(test)]
@@ -2388,5 +2339,42 @@ mod test {
 
         bitmap.remove_range(..);
         assert!(bitmap.is_empty());
+    }
+
+    #[test]
+    fn not_flips_only_the_range() {
+        let mut bitmap = RoaringBitmap::new();
+        for value in [1, (1 << 16) | 5, (3 << 16) | 7] {
+            bitmap.add(value);
+        }
+
+        let expected: Vec<u32> = std::iter::once(1)
+            .chain((1 << 16)..(2 << 16)).filter(|&v| v != (1 << 16) | 5)
+            .chain(std::iter::once((3 << 16) | 7))
+            .collect();
+
+        // The end key is absent from the bitmap, the containers after it stay
+        let not = bitmap.not((1 << 16)..(2 << 16));
+        assert!(not.iter().eq(expected.iter().cloned()));
+
+        let mut inplace = bitmap.clone();
+        inplace.inplace_not((1 << 16)..(2 << 16));
+        assert!(inplace.iter().eq(expected.iter().cloned()));
+
+        // An empty range changes nothing
+        assert!(bitmap.not(5..5).iter().eq(bitmap.iter()));
+
+        // Flipping a container's only values removes it
+        let mut inplace = bitmap.clone();
+        inplace.inplace_not(1..2);
+        assert_eq!(inplace.keys, [1, 3]);
+        assert!(bitmap.not(1..2).iter().eq(bitmap.iter().skip(1)));
+
+        // Ranges that reach u32::MAX
+        let mut top = RoaringBitmap::new();
+        top.add(u32::MAX);
+        assert!(top.not(u32::MAX - 1..).iter().eq(std::iter::once(u32::MAX - 1)));
+        top.inplace_not(u32::MAX - 1..=u32::MAX);
+        assert!(top.iter().eq(std::iter::once(u32::MAX - 1)));
     }
 }

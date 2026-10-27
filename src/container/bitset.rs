@@ -250,18 +250,10 @@ impl BitsetContainer {
         true
     }
 
-    /// Flip a specific bit in the bitset
-    pub fn flip(&mut self, index: u16) {
-        let word_index = index / 64;
-        let bit_index = index % 64;
-
-        self.bitset[word_index as usize] ^= !(1 << bit_index);
-    }
-
-    /// Flip all bits in the range [min-max)
+/// Flip all bits in the range [min-max)
     pub fn flip_range(&mut self, range: Range<u32>) {
         if range.start == range.end {
-            return self.flip(range.start as u16);
+            return;
         }
 
         let first_word = (range.start / 64) as usize;
