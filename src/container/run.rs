@@ -640,16 +640,15 @@ impl RunContainer {
 
         let num_runs    = u16::from_le_bytes(bytes) as usize;
         let mut result  = Self::with_capacity(num_runs);
+        result.runs.resize(num_runs, Rle16::new(0, 0));
 
+        // `Rle16` is two `u16` with no padding, any bytes are a valid run
         unsafe {
             let num_bytes = num_runs * mem::size_of::<Rle16>();
-            let ptr = result.as_mut_ptr() as *mut u8;
+            let ptr = result.runs.as_mut_ptr() as *mut u8;
             let slice = slice::from_raw_parts_mut(ptr, num_bytes);
 
-            let num_read = buf.read(slice)?;
-            if num_read != num_bytes {
-                return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
-            }
+            buf.read_exact(slice)?;
         }
 
         Ok(result)
@@ -2568,5 +2567,23 @@ mod test {
         a.remove_range(0..5);
 
         assert!(a.iter().eq(10..21));
+    }
+
+    #[test]
+    fn deserialize_reads_every_run() {
+        let mut a = RunContainer::new();
+        a.add_range(10..21);
+        a.add_range(40..50);
+
+        let mut buf = Vec::new();
+        a.serialize(&mut buf).unwrap();
+        let read = RunContainer::deserialize(&mut std::io::Cursor::new(&buf)).unwrap();
+
+        assert_eq!(read.num_runs(), 2);
+        assert!(read.iter().eq(a.iter()));
+
+        // A truncated buffer is an error
+        let short = &buf[..buf.len() - 1];
+        assert!(RunContainer::deserialize(&mut std::io::Cursor::new(short)).is_err());
     }
 }
