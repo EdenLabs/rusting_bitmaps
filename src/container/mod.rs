@@ -983,4 +983,22 @@ mod test {
         }
         assert!(failures.is_empty(), "{} failures, by operation:\n{}", failures.len(), kinds.join("\n"));
     }
+
+    #[test]
+    fn array_and_run_results_are_arrays() {
+        let mut run = RunContainer::new();
+        run.add_range(50..(1 << 16));
+        let run = Container::Run(run);
+
+        let mut array = ArrayContainer::new();
+        for value in 0..100 {
+            array.add(value);
+        }
+        let array = Container::Array(array);
+
+        for result in [run.and(&array), array.and(&run), array.and_not(&run)] {
+            assert!(matches!(result, Container::Array(_)));
+        }
+        assert!(array.and_not(&run).iter().eq(0..50));
+    }
 }

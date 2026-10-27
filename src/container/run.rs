@@ -774,7 +774,10 @@ impl SetAnd<Self> for RunContainer {
 
 impl SetAnd<ArrayContainer> for RunContainer {
     fn and(&self, other: &ArrayContainer) -> Container {
-        combine(self.intervals(), value_intervals(other), |a, b| a && b).into_efficient_container()
+        // A subset of the array, so an array too: runs stay confined to deserialized containers
+        let result = combine(self.intervals(), value_intervals(other), |a, b| a && b);
+
+        Container::Array(ArrayContainer::from(result))
     }
 
     fn and_cardinality(&self, other: &ArrayContainer) -> usize {
