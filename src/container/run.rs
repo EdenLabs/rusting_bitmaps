@@ -530,8 +530,8 @@ impl RunContainer {
     /// Find the run containing `key`
     fn find_run(&self, key: u16) -> SearchResult {
         let mut low = 0;
-        let mut high = self.runs.len() - 1;
-        while low <= high {
+        let mut high = self.runs.len();
+        while low < high {
             let middle = (low + high) >> 1;
             let min = self.runs[middle].value;
             let max = self.runs[middle].end();
@@ -539,7 +539,7 @@ impl RunContainer {
                 low = middle + 1;
             }
             else if key < min {
-                high = middle - 1;
+                high = middle;
             }
             else {
                 return SearchResult::ExactMatch(middle);
@@ -2560,5 +2560,13 @@ mod test {
         assert!(a.contains(5) && a.contains(9) && !a.contains(4) && !a.contains(6));
         assert!(!a.remove(0));
         assert_eq!(a.cardinality(), 13);
+    }
+    #[test]
+    fn remove_range_below_the_first_run() {
+        let mut a = RunContainer::new();
+        a.add_range(10..21);
+        a.remove_range(0..5);
+
+        assert!(a.iter().eq(10..21));
     }
 }

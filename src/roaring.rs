@@ -1069,6 +1069,7 @@ impl RoaringBitmap {
 
                 if is_empty {
                     self.containers.remove(i0);
+                    self.keys.remove(i0);
 
                     len0 -= 1;
                 }
@@ -2280,6 +2281,33 @@ mod test {
 
         assert!(a.iter().eq(0..6_000));
         assert_round_trips(&a);
+    }
+
+    #[test]
+    fn xor_past_the_array_limit_round_trips() {
+        let (a, b) = arrays_past_the_limit();
+        let difference = a.xor(&b);
+
+        assert!(difference.iter().eq(0..6_000));
+        assert_round_trips(&difference);
+    }
+
+    #[test]
+    fn inplace_xor_past_the_array_limit_round_trips() {
+        let (mut a, b) = arrays_past_the_limit();
+        a.inplace_xor(&b);
+
+        assert!(a.iter().eq(0..6_000));
+        assert_round_trips(&a);
+    }
+
+    #[test]
+    fn inplace_xor_drops_the_key_of_an_emptied_container() {
+        let mut a = RoaringBitmap::from_slice(&[1]);
+        let b = RoaringBitmap::from_slice(&[1, (1 << 16) | 1]);
+        a.inplace_xor(&b);
+
+        assert!(a.iter().eq([(1 << 16) | 1]));
     }
 
     #[test]

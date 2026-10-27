@@ -446,7 +446,7 @@ impl SetOr<Self> for ArrayContainer {
     fn or(&self, other: &Self) -> Container {
         let len = self.len() + other.len();
 
-        // The union may outgrow an array
+        // The inputs together may exceed an array
         if len > DEFAULT_MAX_SIZE {
             let mut bitset = BitsetContainer::new();
             bitset.set_list(self);
@@ -779,8 +779,22 @@ impl SetAndNot<RunContainer> for ArrayContainer {
 
 impl SetXor<Self> for ArrayContainer {
     fn xor(&self, other: &Self) -> Container {
+        let req = self.len() + other.len();
+
+        // The inputs together may exceed an array
+        if req > DEFAULT_MAX_SIZE {
+            let mut bitset = BitsetContainer::new();
+            bitset.set_list(self);
+            bitset.flip_list(other);
+
+            if bitset.cardinality() <= DEFAULT_MAX_SIZE {
+                return Container::Array(ArrayContainer::from(bitset));
+            }
+
+            return Container::Bitset(bitset);
+        }
+
         unsafe {
-            let req = self.len() + other.len();
             let mut result = ArrayContainer::with_capacity(req);
 
             let ptr = result.as_mut_ptr();
@@ -792,6 +806,10 @@ impl SetXor<Self> for ArrayContainer {
     }
     
     fn inplace_xor(mut self, other: &Self) -> Container {
+        if self.len() + other.len() > DEFAULT_MAX_SIZE {
+            return SetXor::xor(&self, other);
+        }
+
         // TODO: See if this wouldn't be more optimal using a scalar approach to avoid realloc
         unsafe {
             // Shift the elements of self over to accomodate new contents
