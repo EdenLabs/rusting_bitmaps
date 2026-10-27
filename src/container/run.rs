@@ -1,8 +1,8 @@
 use std::ops::{Deref, DerefMut};
 use std::iter;
-use std::ptr;
 
 use crate::container::*;
+use crate::write_counted;
 
 /// A RLE word storing the value and the length of that run
 /// 
@@ -33,15 +33,11 @@ impl Rle16 {
         self.value + self.length
     }
 
-    /// Get the start and end value of the run
-    #[inline]
-    pub fn range(self) -> (u16, u16) {
-        (self.value, self.value + self.length + 1)
-    }
-    
+    /// The values of the run as a half-open range. The end is `u32` so that a run ending at
+    /// 65 535 can be represented
     #[inline]
     pub fn into_range(self) -> Range<u32> {
-        u32::from(self.value)..u32::from(self.value + self.length + 1)
+        u32::from(self.value)..(u32::from(self.value) + u32::from(self.length) + 1)
     }
 }
 
@@ -448,6 +444,12 @@ impl RunContainer {
         self.runs.iter()
     }
 
+    /// The runs as ascending half-open ranges
+    #[inline]
+    pub(crate) fn intervals(&self) -> impl Iterator<Item = Range<u32>> + '_ {
+        self.runs.iter().map(|run| run.into_range())
+    }
+
     /// Perform a binary search for a given key in the set
     fn binary_search(&self, key: u16) -> SearchResult {
         if self.runs.is_empty() {
@@ -564,13 +566,13 @@ impl RunContainer {
     pub fn serialize<W: Write>(&self, buf: &mut W) -> io::Result<usize> {
         let mut num_written = 0;
 
-        num_written += buf.write(&(self.num_runs() as u16).to_le_bytes())?;
+        num_written += write_counted(buf, &(self.num_runs() as u16).to_le_bytes())?;
 
         unsafe {
             let ptr = self.as_ptr() as *const u8;
             let num_bytes = self.num_runs() * mem::size_of::<Rle16>();
             let slice = slice::from_raw_parts(ptr, num_bytes);
-            num_written += buf.write(slice)?;
+            num_written += write_counted(buf, slice)?;
         }
 
         Ok(num_written)
@@ -719,280 +721,21 @@ impl DerefMut for RunContainer {
 
 impl SetOr<Self> for RunContainer {
     fn or(&self, other: &Self) -> Container {
-        // If one of the containers is empty or completely full
-        // just append the other one as it represents the full set
-        if self.is_empty() || other.is_full() {
-            return Container::Run(other.clone());
-        }
-        
-        if other.is_empty() || self.is_full() {
-            return Container::Run(self.clone());
-        }
-
-        let mut result = RunContainer::with_capacity(self.num_runs() + other.num_runs());
-        let mut i_a = 0;
-        let mut i_b = 0;
-        let mut prev;
-
-        let mut run_a = self.runs[i_a];
-        let mut run_b = other.runs[i_b];
-        
-        if run_a.value <= run_b.value {
-            result.runs.push(run_a);
-            
-            prev = run_a;
-            i_a += 1;
-        }
-        else {
-            result.runs.push(run_b);
-            
-            prev = run_b;
-            i_b += 1;
-        }
-        
-        while i_a < self.runs.len() && i_b < other.runs.len() {
-            run_a = self.runs[i_a];
-            run_b = other.runs[i_b];
-
-            let new_run = {
-                if run_a.value <= run_b.value {
-                    i_a += 1;
-                    run_a
-                }
-                else {
-                    i_b += 1;
-                    run_b
-                }
-            };
-
-            append(&mut result.runs, new_run, &mut prev);
-        }
-
-        while i_a < self.runs.len() {
-            append(&mut result.runs, self.runs[i_a], &mut prev);
-            i_a += 1;
-        }
-
-        while i_b < other.runs.len() {
-            append(&mut result.runs, other.runs[i_b], &mut prev);
-            i_b += 1;
-        }
-
-        Container::Run(result)
+        combine(self.intervals(), other.intervals(), |a, b| a || b).into_efficient_container()
     }
-    
-    fn inplace_or(mut self, other: &Self) -> Container {
-        // Self contains the final result
-        if self.is_full() || other.is_empty() {
-            return Container::Run(self);
-        }
 
-        // Other contians the final result
-        if other.is_full() || self.is_empty() {
-            self.runs.clear();
-            self.runs.reserve(other.runs.len());
-            self.runs.extend_from_slice(&other.runs);
-
-            return Container::Run(self);
-        }
-
-        // Check for and reserve enough space to hold the contents
-        let max_runs = self.num_runs() + other.num_runs();
-        self.runs.reserve(max_runs);
-
-        unsafe {
-            let num_runs = self.num_runs();
-    
-            // Move the current contents to the end of the array
-            let src = self.runs.as_ptr();
-            let dst = src.add(max_runs) as *mut _;
-
-            ptr::copy_nonoverlapping(src, dst, num_runs);
-
-            // Set the length to 0 to act as an unfilled vector
-            self.runs.set_len(0);
-
-            // At this point all the contents from 0..max_runs is random memory
-            // that will have the final result copied into it
-            // and the current values are at max_runs..len
-            
-            let ptr_old = src.add(max_runs);
-            let mut pos_0 = 0;
-            let mut pos_1 = 0;
-
-            let mut prev_run;
-            let self_run = *(ptr_old.add(pos_0));
-            let other_run = *other.get_unchecked(pos_1);
-
-            if self_run.value <= other_run.value { 
-                self.runs.push(self_run);
-                prev_run = self_run;
-
-                pos_0 += 1;
-            }
-            else {
-                self.runs.push(other_run);
-                prev_run = other_run;
-
-                pos_1 += 1;
-            }
-
-            while pos_1 < other.num_runs() && pos_0 < num_runs {
-                let self_run = *(ptr_old.add(pos_0));
-                let other_run = *other.get_unchecked(pos_1);
-
-                let new_run;
-                if self_run.value <= other_run.value {
-                    new_run = self_run;
-                    pos_0 += 1;
-                }
-                else {
-                    new_run = other_run;
-                    pos_1 += 1;
-                }
-
-                append(&mut self.runs, new_run, &mut prev_run);
-            }
-
-            while pos_1 < other.num_runs() {
-                append(&mut self.runs, other.runs[pos_1], &mut prev_run);
-                pos_1 += 1;
-            }
-
-            while pos_0 < num_runs {
-                append(&mut self.runs, *(ptr_old.add(pos_0)), &mut prev_run);
-                pos_0 += 1;
-            }
-
-            // After this point we don't care what happens with the values.
-            // There's also no need to drop them since they're `Copy` and 
-            // are guaranteed to not require dropping
-        }
-
-        Container::Run(self)
+    fn inplace_or(self, other: &Self) -> Container {
+        SetOr::or(&self, other)
     }
 }
 
 impl SetOr<ArrayContainer> for RunContainer {
     fn or(&self, other: &ArrayContainer) -> Container {
-        if self.is_full() {
-            return Container::Run(self.clone());
-        }
-
-        let mut result = RunContainer::with_capacity(other.cardinality() + self.runs.len());
-
-        let mut rle_index = 0;
-        let mut array_index = 0;
-        let mut prev_rle;
-
-        if self.runs[rle_index].value <= other[array_index] {
-            prev_rle = self.runs[rle_index];
-            result.runs.push(prev_rle);
-            rle_index += 1;
-        }
-        else {
-            prev_rle = Rle16::new(other[array_index], 0);
-            result.runs.push(prev_rle);
-            array_index += 1;
-        }
-
-        while rle_index < self.runs.len() && array_index < other.cardinality() {
-            if self.runs[rle_index].value <= other[array_index] {
-                append(&mut result.runs, self.runs[rle_index], &mut prev_rle);
-                rle_index += 1;
-            }
-            else {
-                append_value(&mut result.runs, other[array_index], &mut prev_rle);
-                array_index += 1;
-            }
-        }
-
-        if array_index < other.cardinality() {
-            while array_index < other.cardinality() {
-                append_value(&mut result.runs, other[array_index], &mut prev_rle);
-                array_index += 1;
-            }
-        }
-        else {
-            while rle_index < self.runs.len() {
-                append(&mut result.runs, self.runs[rle_index], &mut prev_rle);
-                rle_index += 1;
-            }
-        }
-
-        Container::Run(result)
+        combine(self.intervals(), value_intervals(other), |a, b| a || b).into_efficient_container()
     }
 
-    fn inplace_or(mut self, other: &ArrayContainer) -> Container {
-        if self.is_full() {
-            return Container::Run(self);
-        }
-
-        // Make sure there's enough room to fit the new runs
-        let max_runs = other.cardinality() + self.num_runs();
-        self.runs.reserve(max_runs);
-
-        unsafe {
-            // Move the original contents of the run to the end of the buffer
-            let len = self.runs.len();
-            let src = self.as_ptr();
-            let dst = (src as *mut Rle16).add(max_runs);
-
-            ptr::copy_nonoverlapping(src, dst, len);
-
-            self.runs.truncate(0);
-
-            let ptr_old = dst as *const Rle16;
-            
-            let mut pos_run = 0;
-            let mut pos_arr = 0;
-            let mut prev_rle;
-
-            let rle = *(ptr_old.add(pos_run));
-            let val = other[pos_arr];
-            if rle.value < val {
-                self.runs.push(rle);
-                
-                prev_rle = rle;
-                pos_run += 1;
-            }
-            else {
-                let new_rle = Rle16::new(val, 0);
-                self.runs.push(new_rle);
-
-                prev_rle = new_rle;
-                pos_arr += 1;
-            }
-
-            while pos_run < len && pos_arr < other.len() {
-                let rle = *(ptr_old.add(pos_run));
-                let val = other[pos_arr];
-
-                if rle.value < val {
-                    append(&mut self.runs, rle, &mut prev_rle);
-                    pos_run += 1;
-                }
-                else {
-                    append_value(&mut self.runs, val, &mut prev_rle);
-                    pos_arr += 1;
-                }
-            }
-
-            if pos_arr < other.len() {
-                while pos_arr < other.len() {
-                    append_value(&mut self.runs, other[pos_arr], &mut prev_rle);
-                    pos_arr += 1;
-                }
-            }
-            else {
-                while pos_run < len {
-                    append(&mut self.runs, *(ptr_old.add(pos_run)), &mut prev_rle);
-                    pos_run += 1;
-                }
-            }
-        }
-
-        Container::Run(self)
+    fn inplace_or(self, other: &ArrayContainer) -> Container {
+        SetOr::or(&self, other)
     }
 }
 
@@ -1001,10 +744,7 @@ impl SetOr<BitsetContainer> for RunContainer {
         let mut result = other.clone();
 
         for rle in self.iter_runs() {
-            let min = u32::from(rle.value);
-            let max = u32::from(rle.end() + 1);
-
-            result.set_range(min..max);
+            result.set_range(rle.into_range());
         }
 
         Container::Bitset(result)
@@ -1026,171 +766,11 @@ impl SetOr<BitsetContainer> for RunContainer {
 
 impl SetAnd<Self> for RunContainer {
     fn and(&self, other: &Self) -> Container {
-        if self.is_full() {
-            return Container::Run(other.clone());
-        }
-
-        if other.is_full() {
-            return Container::Run(self.clone());
-        }
-
-        let req_cap = self.num_runs() + other.num_runs();
-        let mut result = RunContainer::with_capacity(req_cap);
-        
-        let mut i0 = 0;
-        let mut i1 = 0;
-
-        let mut start0 = self.runs[i0].value;
-        let mut start1 = other.runs[i1].value;
-        let mut end0 = self.runs[i0].end() + 1;
-        let mut end1 = other.runs[i1].end() + 1;
-
-        while i0 < self.num_runs() && i1 < other.num_runs() {
-            // Runs don't overlap, advance either or
-            if end0 <= start1 {
-                i0 += 1;
-
-                if i0 < self.num_runs() {
-                    start0 = self.runs[i0].value;
-                    end0 = self.runs[i0].end() + 1;
-                }
-            }
-            else if end1 <= start0 {
-                i1 += 1;
-
-                if i1 < other.num_runs() {
-                    start1 = other.runs[i1].value;
-                    end1 = other.runs[i1].end() + 1;
-                }
-            }
-            // Runs overlap, try to merge if possible
-            else {
-                let last_start = start0.max(start1);
-                let first_end;
-
-                if end0 == end1 {
-                    first_end = end0;
-                    i0 += 1;
-                    i1 += 1;
-
-                    if i0 < self.num_runs() {
-                        start0 = self.runs[i0].value;
-                        end0 = self.runs[i0].end() + 1;
-                    }
-
-                    if i1 < other.num_runs() {
-                        start1 = other.runs[i1].value;
-                        end1 = other.runs[i1].end() + 1;
-                    }
-                }
-                else if end0 < end1 {
-                    first_end = end0;
-
-                    i0 += 1;
-                    if i0 < self.num_runs() {
-                        start0 = self.runs[i0].value;
-                        end0 = self.runs[i0].end() + 1;
-                    }
-                }
-                else {
-                    first_end = end1;
-
-                    i1 += 1;
-                    if i1 < other.num_runs() {
-                        start1 = other.runs[i1].value;
-                        end1 = other.runs[i1].end() + 1;
-                    }
-                }
-
-                let run = Rle16::new(last_start, first_end - last_start - 1);
-                result.runs.push(run);
-            }
-        }
-
-        result.into_efficient_container()
+        combine(self.intervals(), other.intervals(), |a, b| a && b).into_efficient_container()
     }
 
     fn and_cardinality(&self, other: &Self) -> usize {
-        if self.is_full() {
-            return other.cardinality();
-        }
-        
-        if other.is_full() {
-            return self.cardinality();
-        }
-
-        let mut card = 0;
-        
-        let mut i0 = 0;
-        let mut i1 = 0;
-
-        let mut start0 = self.runs[i0].value;
-        let mut start1 = other.runs[i1].value;
-        let mut end0 = self.runs[i0].end() + 1;
-        let mut end1 = other.runs[i1].end() + 1;
-
-        while i0 < self.num_runs() && i1 < other.num_runs() {
-            // Runs don't overlap, advance either or
-            if end0 <= start1 {
-                i0 += 1;
-
-                if i0 < self.num_runs() {
-                    start0 = self.runs[i0].value;
-                    end0 = self.runs[i0].end() + 1;
-                }
-            }
-            else if end1 <= start0 {
-                i1 += 1;
-
-                if i1 < other.num_runs() {
-                    start1 = other.runs[i1].value;
-                    end1 = other.runs[i1].end() + 1;
-                }
-            }
-            // Runs overlap, try to merge if possible
-            else {
-                let last_start = start0.max(start1);
-                let first_end;
-
-                if end0 == end1 {
-                    first_end = end0;
-                    i0 += 1;
-                    i1 += 1;
-
-                    if i0 < self.num_runs() {
-                        start0 = self.runs[i0].value;
-                        end0 = self.runs[i0].end() + 1;
-                    }
-
-                    if i1 < other.num_runs() {
-                        start1 = other.runs[i1].value;
-                        end1 = other.runs[i1].end() + 1;
-                    }
-                }
-                else if end0 < end1 {
-                    first_end = end0;
-
-                    i0 += 1;
-                    if i0 < self.num_runs() {
-                        start0 = self.runs[i0].value;
-                        end0 = self.runs[i0].end() + 1;
-                    }
-                }
-                else {
-                    first_end = end1;
-
-                    i1 += 1;
-                    if i1 < other.num_runs() {
-                        start1 = other.runs[i1].value;
-                        end1 = other.runs[i1].end() + 1;
-                    }
-                }
-
-                card += (first_end - last_start) as usize;
-            }
-        }
-
-        card
+        combined_cardinality(self.intervals(), other.intervals(), |a, b| a && b)
     }
 
     fn inplace_and(self, other: &Self) -> Container {
@@ -1200,91 +780,11 @@ impl SetAnd<Self> for RunContainer {
 
 impl SetAnd<ArrayContainer> for RunContainer {
     fn and(&self, other: &ArrayContainer) -> Container {
-        if self.is_full() {
-            return Container::Array(other.clone());
-        }
-
-        if self.runs.is_empty() {
-            return Container::Array(ArrayContainer::new());
-        }
-
-        let mut result = ArrayContainer::with_capacity(other.cardinality());
-
-        let mut rle_index = 0;
-        let mut array_index = 0;
-        let mut rle = self.runs[rle_index];
-
-        while array_index < other.cardinality() {
-            let value = other[array_index];
-            
-            while rle.end() < value {
-                rle_index += 1;
-
-                if rle_index == self.runs.len() {
-                    break;
-                }
-
-                rle = self.runs[rle_index];
-            }
-
-            if rle.value > value {
-                array_index = array_ops::advance_until(
-                    &other,
-                    array_index,
-                    rle.value
-                );
-            }
-            else {
-                result.push(value);
-                array_index += 1;
-            }
-        }
-
-        Container::Array(result)
+        combine(self.intervals(), value_intervals(other), |a, b| a && b).into_efficient_container()
     }
 
     fn and_cardinality(&self, other: &ArrayContainer) -> usize {
-        if self.is_full() {
-            return other.cardinality();
-        }
-
-        if self.runs.is_empty() {
-            return 0;
-        }
-
-        let mut card = 0;
-
-        let mut rle_index = 0;
-        let mut array_index = 0;
-        let mut rle = self.runs[rle_index];
-
-        while array_index < other.cardinality() {
-            let value = other[array_index];
-            
-            while rle.end() < value {
-                rle_index += 1;
-
-                if rle_index == self.runs.len() {
-                    break;
-                }
-
-                rle = self.runs[rle_index];
-            }
-
-            if rle.value > value {
-                array_index = array_ops::advance_until(
-                    &other,
-                    array_index,
-                    rle.value
-                );
-            }
-            else {
-                card += 1;
-                array_index += 1;
-            }
-        }
-
-        card
+        combined_cardinality(self.intervals(), value_intervals(other), |a, b| a && b)
     }
 
     fn inplace_and(self, other: &ArrayContainer) -> Container {
@@ -1361,80 +861,7 @@ impl SetAnd<BitsetContainer> for RunContainer {
 
 impl SetAndNot<Self> for RunContainer {
     fn and_not(&self, other: &Self) -> Container {
-        // Self or other is the empty set, by definition the and_not is the same as self
-        if self.is_empty() || other.is_empty() {
-            return Container::Run(self.clone());
-        }
-
-        let mut result = RunContainer::with_capacity(self.runs.len() + other.runs.len());
-
-        let mut i_a = 0;
-        let mut i_b = 0;
-
-        let (mut start_a, mut start_b, mut end_a, mut end_b) = {
-            let run_a = self.runs[i_a];
-            let run_b = other.runs[i_b];
-
-            (
-                run_a.value,
-                run_b.value,
-                run_a.end() + 1,
-                run_b.end() + 1
-            )
-        };
-
-        while i_a < self.runs.len() && i_b < other.runs.len() {
-            if end_a <= start_b {
-                result.runs.push(
-                    Rle16::new(start_a, end_a - start_a - 1)
-                );
-
-                i_a += 1;
-                if i_a < self.runs.len() {
-                    let run = self.runs[i_a];
-                    start_a = run.value;
-                    end_a = run.end() + 1;
-                }
-            }
-            else if end_b <= start_a {
-                i_b += 1;
-                if i_b < other.runs.len() {
-                    let run = other.runs[i_b];
-                    start_b = run.value;
-                    end_b = run.end() + 1;
-                }
-            }
-            else {
-                if start_a < start_b {
-                    result.runs.push(
-                        Rle16::new(start_a, start_b - start_a - 1)
-                    );
-                }
-                
-                if end_b < end_a {
-                    start_a = end_b;
-                }
-                else {
-                    i_a += 1;
-                    if i_a < self.runs.len() {
-                        let run = self.runs[i_a];
-                        start_a = run.value;
-                        end_a = run.end() + 1;
-                    }
-                }
-            }
-        }
-
-        if i_a < self.runs.len() {
-            result.runs.push(Rle16::new(start_a, end_a - start_a - 1));
-
-            i_a += 1;
-            if i_a < self.runs.len() {
-                result.runs.extend_from_slice(&self.runs[i_a..]);
-            }
-        }
-
-        result.into_efficient_container()
+        combine(self.intervals(), other.intervals(), |a, b| a && !b).into_efficient_container()
     }
 
     fn inplace_and_not(self, other: &Self) -> Container {
@@ -1444,130 +871,7 @@ impl SetAndNot<Self> for RunContainer {
 
 impl SetAndNot<ArrayContainer> for RunContainer {
     fn and_not(&self, other: &ArrayContainer) -> Container {
-        const ARBITRARY_THRESHOLD: usize = 32;
-
-        let cardinality = self.cardinality();
-
-        if cardinality <= ARBITRARY_THRESHOLD {
-            if other.cardinality() == 0 {
-                return Container::Run(self.clone());
-            }
-
-            let mut result = RunContainer::with_capacity(cardinality + other.cardinality());
-            let mut rle0_pos = 0;
-            let mut rle1_pos = 0;
-
-            let rle = self.runs[rle0_pos];
-            let mut rle0_start = rle.value;
-            let mut rle0_end = rle.end();
-            let mut rle1_start = other[rle1_pos];
-
-            while rle0_pos < self.num_runs() && rle1_pos < other.cardinality() {
-                if rle0_end == rle1_start {
-                    result.runs.push(Rle16::new(rle0_start, rle0_end - rle0_start - 1));
-                    rle0_pos += 1;
-
-                    if rle0_pos < self.num_runs() {
-                        let r = self.runs[rle0_pos];
-
-                        rle0_start = r.value;
-                        rle0_end = r.end();
-                    }
-                }
-                else if rle1_start < rle0_start {
-                    rle1_pos += 1;
-
-                    if rle1_pos < other.cardinality() {
-                        rle1_start = other[rle1_pos];
-                    }
-                }
-                else {
-                    if rle0_start < rle1_start {
-                        result.runs.push(Rle16::new(rle0_start, rle1_start - rle0_start - 1));
-                    }
-
-                    if rle1_start + 1 < rle0_end {
-                        rle0_start = rle1_start + 1;
-                    }
-                    else {
-                        rle0_pos += 1;
-
-                        if rle0_pos < self.num_runs() {
-                            let r = self.runs[rle0_pos];
-
-                            rle0_start = r.value;
-                            rle0_end = r.end();
-                        }
-                    }
-                }
-
-                if rle0_pos < self.num_runs() {
-                    result.runs.push(Rle16::new(rle0_start, rle0_end - rle0_start - 1));
-                    rle0_pos += 1;
-
-                    if rle0_pos < self.num_runs() {
-                        let len = self.num_runs() - rle0_pos;
-                        result.copy_from_slice(&self.runs[rle0_pos..len]);
-                    }
-                }
-            }
-
-            return result.into_efficient_container();
-        }
-
-        if cardinality <= DEFAULT_MAX_SIZE {
-            let mut array = ArrayContainer::with_capacity(cardinality);
-            
-            let mut index = 0;
-            for run in self.runs.iter() {
-                let start = run.value;
-                let end = run.end() + 1;
-
-                index = array_ops::advance_until(&other, index, start);
-
-                if index >= other.cardinality() {
-                    for i in start..end {
-                        array.push(i as u16);
-                    }
-                }
-                else {
-                    let mut next = other[index];
-                    if next >= end {
-                        for i in start..end {
-                            array.push(i as u16);
-                        }
-
-                        index -= 1;
-                    }
-                    else {
-                        for i in start..end {
-                            if i != next {
-                                array.push(i as u16);
-                            }
-                            else {
-                                next = {
-                                    if index + 1 >= other.cardinality() {
-                                        0
-                                    }
-                                    else {
-                                        index += 1;
-                                        
-                                        other[index]
-                                    }
-                                };
-                            }
-                        }
-
-                        index -= 1;
-                    }
-                }
-            }
-            
-            return Container::Array(array);
-        }
-
-        let bitset: BitsetContainer = self.into();
-        bitset.inplace_and_not(other)
+        combine(self.intervals(), value_intervals(other), |a, b| a && !b).into_efficient_container()
     }
 
     fn inplace_and_not(self, other: &ArrayContainer) -> Container {
@@ -1583,7 +887,7 @@ impl SetAndNot<BitsetContainer> for RunContainer {
         if cardinality <= DEFAULT_MAX_SIZE {
             let mut array = ArrayContainer::with_capacity(cardinality);
             for run in self.runs.iter() {
-                for value in run.value..(run.end() + 1) {
+                for value in run.value..=run.end() {
                     if !other.get(value) {
                         array.push(value);
                     }
@@ -1627,52 +931,7 @@ impl SetAndNot<BitsetContainer> for RunContainer {
 
 impl SetXor<Self> for RunContainer {
     fn xor(&self, other: &Self) -> Container {
-        if self.is_empty() {
-            return Container::Run(other.clone());
-        }
-
-        if other.is_empty() {
-            return Container::Run(self.clone());
-        }
-
-        let mut result = RunContainer::with_capacity(
-            self.runs.len() + other.runs.len()
-        );
-
-        let mut i_a = 0;
-        let mut i_b = 0;
-        let mut v_a;
-        let mut v_b;
-
-        while i_a < self.runs.len() && i_b < other.runs.len() {
-            v_a = self.runs[i_a];
-            v_b = other.runs[i_b];
-
-            if v_a.value <= v_b.value {
-                append_exclusive(&mut result.runs, v_a.value, v_a.length);
-                i_a += 1;
-            }
-            else {
-                append_exclusive(&mut result.runs, v_b.value, v_b.length);
-                i_b += 1;
-            }
-        }
-
-        while i_a < self.runs.len() {
-            v_a = self.runs[i_a];
-
-            append_exclusive(&mut result.runs, v_a.value, v_a.length);
-            i_a += 1;
-        }
-
-        while i_b < other.runs.len() {
-            v_b = other.runs[i_b];
-
-            append_exclusive(&mut result.runs, v_b.value, v_b.length);
-            i_b += 1;
-        }
-
-        Container::Run(result)
+        combine(self.intervals(), other.intervals(), |a, b| a != b).into_efficient_container()
     }
 
     fn inplace_xor(self, other: &Self) -> Container {
@@ -1682,42 +941,7 @@ impl SetXor<Self> for RunContainer {
 
 impl SetXor<ArrayContainer> for RunContainer {
     fn xor(&self, other: &ArrayContainer) -> Container {
-        let req_cap = self.num_runs() + other.len();
-        let mut result = RunContainer::with_capacity(req_cap);
-
-        let mut pos_run = 0;
-        let mut pos_arr = 0;
-
-        while pos_run < self.num_runs() && pos_arr < other.len() {
-            let run = self.runs[pos_run];
-            let val = other[pos_arr];
-
-            if run.value < val {
-                append_exclusive(&mut result.runs, run.value, run.length);
-
-                pos_run += 1;
-            }
-            else {
-                append_exclusive(&mut result.runs, val, 0);
-
-                pos_arr += 1;
-            }
-        }
-
-        while pos_arr < other.len() {
-            append_exclusive(&mut result.runs, other[pos_arr], 0);
-
-            pos_arr += 1;
-        }
-
-        while pos_run < self.num_runs() {
-            let run = self.runs[pos_run];
-            append_exclusive(&mut result.runs, run.value, run.length);
-
-            pos_run += 1;
-        }
-
-        result.into_efficient_container()
+        combine(self.intervals(), value_intervals(other), |a, b| a != b).into_efficient_container()
     }
 
     fn inplace_xor(self, other: &ArrayContainer) -> Container {
@@ -1747,37 +971,7 @@ impl SetXor<BitsetContainer> for RunContainer {
 
 impl Subset<Self> for RunContainer {
     fn subset_of(&self, other: &Self) -> bool {
-        if self.cardinality() > other.cardinality() {
-            return false;
-        }
-
-        let mut i_0 = 0;
-        let mut i_1 = 0;
-
-        while i_0 < self.runs.len() && i_1 < other.runs.len() {
-            let start_0 = self.runs[i_0].value;
-            let start_1 = other.runs[i_1].value;
-            let stop_0 = start_0 + self.runs[i_0].length;
-            let stop_1 = start_1 + other.runs[i_1].length;
-
-            if start_0 < start_1 {
-                return false;
-            }
-            else {
-                if stop_0 < stop_1 {
-                    i_0 += 1;
-                }
-                else if stop_0 == stop_1 {
-                    i_0 += 1;
-                    i_1 += 1;
-                }
-                else {
-                    i_1 += 1;
-                }
-            }
-        }
-
-        i_0 == self.runs.len()
+        combined_cardinality(self.intervals(), other.intervals(), |a, b| a && !b) == 0
     }
 }
 
@@ -1787,30 +981,7 @@ impl Subset<ArrayContainer> for RunContainer {
             return false;
         }
 
-        let mut start_pos;
-        let mut stop_pos = 0;
-        for rle in self.iter_runs() {
-            let start = rle.value;
-            let stop = rle.end();
-
-            start_pos = array_ops::advance_until(&other, stop_pos, start);
-            stop_pos = array_ops::advance_until(&other, stop_pos, stop);
-
-            if start_pos == other.cardinality() {
-                return false;
-            }
-            else {
-                let not_same = || stop_pos - start_pos != (stop - start) as usize;
-                let not_start = || other[start_pos] != start;
-                let not_stop = || other[stop_pos] != stop;
-                
-                if not_same() || not_start() || not_stop() {
-                    return false;
-                }
-            }
-        }
-
-        true
+        combined_cardinality(self.intervals(), value_intervals(other), |a, b| a && !b) == 0
     }
 }
 
@@ -1832,87 +1003,11 @@ impl Subset<BitsetContainer> for RunContainer {
 
 impl SetNot for RunContainer {
     fn not(&self, range: Range<u32>) -> Container {
-        if range.is_empty() {
-            return Container::Run(self.clone());
-        }
-
-        let mut result = RunContainer::with_capacity(self.num_runs() + 1);
-        let mut k = 0;
-        while k < self.num_runs() && u32::from(self.runs[k].value) < range.start {
-            result.runs[k] = self.runs[k];
-
-            k += 1;
-        }
-
-        let min = range.start as u16;
-        let max = (range.end - 1) as u16;
-
-        append_exclusive(&mut result.runs, min, max - min);
-
-        while k < self.num_runs() {
-            let rle = self.runs[k];
-
-            append_exclusive(&mut result.runs, rle.value, rle.length);
-
-            k += 1;
-        }
-
-        result.into_efficient_container()
+        combine(self.intervals(), iter::once(range), |a, b| a != b).into_efficient_container()
     }
 
-    fn inplace_not(mut self, range: Range<u32>) -> Container {
-        // Check to see if the result will fit in the currently allocated container
-        // if not fallback to the allocating version
-        if self.runs.capacity() == self.runs.len() {
-            let last_before_range = {
-                if range.start > 0 { 
-                    self.contains((range.start - 1) as u16) 
-                }
-                else { 
-                    false
-                }
-            };
-
-            let first_in_range = self.contains(range.start as u16);
-
-            if last_before_range == first_in_range {
-                let last_in_range = self.contains((range.end - 1) as u16);
-                let first_after_range = self.contains(range.end as u16);
-
-                // Contents won't fit in the current allocation
-                if last_in_range == first_after_range {
-                    return SetNot::not(&self, range);
-                }
-            }
-        }
-
-        // Perform the not in place with the current allocation
-        let mut k = 0;
-        while k < self.num_runs() && u32::from(self.runs[k].value) < range.start {
-            k += 1;
-        }
-
-        let mut buffered = Rle16::new(0, 0);
-        let mut next = buffered;
-        if k < self.num_runs() {
-            buffered = self.runs[k];
-        }
-
-        append_exclusive(&mut self.runs, range.start as u16, (range.end - range.start - 1) as u16);
-
-        while k < self.num_runs() {
-            if k + 1 < self.num_runs() {
-                next = self.runs[k + 1];
-            }
-
-            append_exclusive(&mut self.runs, buffered.value, buffered.length);
-
-            buffered = next;
-            k += 1;
-        }
-
-        self.runs.truncate(k);
-        self.into_efficient_container()
+    fn inplace_not(self, range: Range<u32>) -> Container {
+        SetNot::not(&self, range)
     }
 }
 
@@ -1963,94 +1058,93 @@ impl<'a> Iterator for Iter<'a> {
     }
 }
 
-fn append_exclusive(runs: &mut Vec<Rle16>, start: u16, length: u16) {
-    let is_empty = runs.is_empty();
-    let old_end = runs.last_mut()
-        .and_then(|x| Some(x.end().saturating_add(1)));
+/// The values of a sorted array as half-open intervals of one value each
+pub(crate) fn value_intervals(values: &[u16]) -> impl Iterator<Item = Range<u32>> + '_ {
+    values.iter().map(|&value| u32::from(value)..(u32::from(value) + 1))
+}
 
-    let last_run = runs.last_mut();
+/// Walk two ascending lists of half-open intervals together and call `emit` with each maximal
+/// interval whose values satisfy `keep(in_a, in_b)`. Intervals within a list are disjoint but may
+/// touch. Ends are `u32` so that 65 536 can close an interval
+fn sweep<A, B, K, E>(a: A, b: B, keep: K, mut emit: E)
+    where A: Iterator<Item = Range<u32>>,
+          B: Iterator<Item = Range<u32>>,
+          K: Fn(bool, bool) -> bool,
+          E: FnMut(Range<u32>)
+{
+    // Values in neither list are never kept, so the sweep can stop when both lists are done
+    debug_assert!(!keep(false, false));
 
-    if is_empty || (old_end.is_some() && start > old_end.unwrap()) {
-        runs.push(Rle16::new(start, length));
-        return;
-    }
+    let mut a = a.peekable();
+    let mut b = b.peekable();
+    let mut position = 0;
+    let mut pending: Option<Range<u32>> = None;
 
-    let last_run = last_run.unwrap();
-    let old_end = old_end.unwrap();
-
-    if old_end == start {
-        last_run.length += length + 1;
-        return;
-    }
-
-    let new_end = start + length + 1;
-    if start == last_run.value {
-        if new_end < old_end {
-            *last_run = Rle16::new(new_end, old_end - new_end - 1);
-            return;
+    loop {
+        while a.peek().map_or(false, |r| r.end <= position) {
+            a.next();
         }
-        else if new_end > old_end {
-            *last_run = Rle16::new(old_end, new_end - old_end - 1);
-            return;
+        while b.peek().map_or(false, |r| r.end <= position) {
+            b.next();
         }
-        else {
-            runs.pop();
-            return;
+
+        let (next_a, next_b) = (a.peek().cloned(), b.peek().cloned());
+        if next_a.is_none() && next_b.is_none() {
+            break;
         }
+
+        let in_a = next_a.as_ref().map_or(false, |r| r.start <= position);
+        let in_b = next_b.as_ref().map_or(false, |r| r.start <= position);
+
+        // The next position where membership in either list can change
+        let boundary = |r: &Option<Range<u32>>, inside: bool| {
+            r.as_ref().map_or(1 << 16, |r| if inside { r.end } else { r.start })
+        };
+        let next = boundary(&next_a, in_a).min(boundary(&next_b, in_b));
+
+        if keep(in_a, in_b) {
+            pending = match pending {
+                Some(kept) if kept.end == position => Some(kept.start..next),
+                Some(kept) => {
+                    emit(kept);
+                    Some(position..next)
+                },
+                None => Some(position..next)
+            };
+        }
+
+        position = next;
     }
 
-    // Checked version of `start - last_run.value - 1`
-    last_run.length = start
-        .saturating_sub(last_run.value)
-        .saturating_sub(1);
-
-    if new_end < old_end {
-        runs.push(Rle16::new(new_end, old_end - new_end - 1));
-    }
-    else if new_end > old_end {
-        runs.push(Rle16::new(old_end, new_end - old_end - 1));
+    if let Some(kept) = pending {
+        emit(kept);
     }
 }
 
-/// Appends a run to `runs` or merges it with `previous_run`
-/// 
-/// # Notes
-/// Expects `runs` to have at least 1 element and `previous_run` to point to that last element. 
-fn append(runs: &mut Vec<Rle16>, run: Rle16, previous_run: &mut Rle16) {
-    let prev_end = previous_run.end();
+/// The run container holding the values of two interval lists that satisfy `keep(in_a, in_b)`
+pub(crate) fn combine<A, B, K>(a: A, b: B, keep: K) -> RunContainer
+    where A: Iterator<Item = Range<u32>>,
+          B: Iterator<Item = Range<u32>>,
+          K: Fn(bool, bool) -> bool
+{
+    let mut result = RunContainer::new();
+    sweep(a, b, keep, |range| {
+        result.runs.push(Rle16::new(range.start as u16, (range.end - range.start - 1) as u16));
+    });
 
-    // Add a new run
-    if run.value > prev_end + 1 {
-        runs.push(run);
-
-        *previous_run = run;
-    }
-    // Merge runs
-    else {
-        let new_end = run.value + run.length + 1;
-        if new_end > prev_end {
-            previous_run.length = new_end - 1 - previous_run.value;
-
-            let len = runs.len();
-            runs[len - 1] = *previous_run;
-        }
-    }
+    result
 }
 
-fn append_value(runs: &mut Vec<Rle16>, value: u16, prev_rle: &mut Rle16) {
-    let prev_end = prev_rle.end();
-    if value > prev_end + 1 {
-        let rle = Rle16::new(value, 0);
-        runs.push(rle);
+/// The number of values of two interval lists that satisfy `keep(in_a, in_b)`
+pub(crate) fn combined_cardinality<A, B, K>(a: A, b: B, keep: K) -> usize
+    where A: Iterator<Item = Range<u32>>,
+          B: Iterator<Item = Range<u32>>,
+          K: Fn(bool, bool) -> bool
+{
+    let mut cardinality = 0;
+    sweep(a, b, keep, |range| cardinality += (range.end - range.start) as usize);
 
-        *prev_rle = rle;
-    }
-    else if value == prev_end + 1 {
-        prev_rle.length += 1;
-
-        let len = runs.len();
-        runs[len - 1] = *prev_rle;
-    }
+    cardinality
 }
 
 #[cfg(test)]
@@ -2303,7 +1397,7 @@ mod test {
 
         assert_eq!(
             not_a.cardinality(), 
-            usize::from(std::u16::MAX) - a.cardinality()
+            (1 << 16) - a.cardinality()
         );
 
         // Ensure that `not_a` contains no elements of A

@@ -5,7 +5,7 @@ use std::ops::{RangeBounds, Range, RangeInclusive};
 use std::fmt;
 use std::mem;
 
-use crate::IntoBound;
+use crate::{inclusive_bounds, write_counted};
 use crate::container::{self, *, array_ops};
 
 // TODO: Add support for custom allocators
@@ -98,9 +98,11 @@ impl RoaringBitmap {
     /// The limit governs [`add`](Self::add), [`add_slice`](Self::add_slice),
     /// [`add_range`](Self::add_range), [`remove`](Self::remove),
     /// [`remove_slice`](Self::remove_slice), [`remove_range`](Self::remove_range) and
-    /// [`pop_min`](Self::pop_min), and survives [`clear`](Self::clear) and cloning. Every other
-    /// operation uses the standard limit, as does any bitmap it returns, except that a set
-    /// operation with an empty operand may return a clone of the other operand, limit included.
+    /// [`pop_min`](Self::pop_min), the containers [`not`](Self::not) and
+    /// [`inplace_not`](Self::inplace_not) create for keys the bitmap lacks, and the bitmap `not`
+    /// returns. It survives [`clear`](Self::clear) and cloning. Every other operation uses the
+    /// standard limit, as does any bitmap it returns, except that a set operation with an empty
+    /// operand may return a clone of the other operand, limit included.
     /// Serialization writes the standard format, so a deserialized bitmap has the standard limit.
     ///
     /// # Panics
@@ -137,14 +139,11 @@ impl RoaringBitmap {
 
     /// Create a new roaring bitmap with the specified range and step
     pub fn from_range<R: RangeBounds<u32>>(range: R) -> Self {
-        let (min, max) = range.into_bound();
-        let min = u64::from(min);
-        let max = u64::from(max);
-
         // No elements, just return an empty bitmap
-        if max - min == 0 {
-            return Self::new();
-        }
+        let (min, max) = match inclusive_bounds(range) {
+            Some((first, last)) => (u64::from(first), u64::from(last) + 1),
+            None => return Self::new()
+        };
 
         let mut bitmap = Self::new();
 
@@ -158,7 +157,7 @@ impl RoaringBitmap {
             bitmap.containers.push(container);
             bitmap.keys.push(key as u16);
 
-            value += container_max as u64;
+            value = (key + 1) << 16;
         }
 
         bitmap
@@ -237,13 +236,12 @@ impl RoaringBitmap {
 
     /// Add a range of values to the bitmap. An empty or inverted range adds nothing
     pub fn add_range<R: RangeBounds<u32>>(&mut self, range: R) {
-        let (min, max) = range.into_bound();
-        if min >= max {
-            return;
-        }
+        let (min, last) = match inclusive_bounds(range) {
+            Some(bounds) => bounds,
+            None => return
+        };
 
-        let last = max - 1;
-        let min_key = min >> 16;
+let min_key = min >> 16;
         let max_key = last >> 16;
 
         let mut index = self.keys.partition_point(|&key| u32::from(key) < min_key);
@@ -329,13 +327,12 @@ impl RoaringBitmap {
 
     /// Remove a range of values from the bitmap
     pub fn remove_range<R: RangeBounds<u32>>(&mut self, range: R) {
-        let (min, max) = range.into_bound();
-        if min >= max {
-            return;
-        }
+        let (min, last) = match inclusive_bounds(range) {
+            Some(bounds) => bounds,
+            None => return
+        };
 
-        let last = max - 1;
-        let min_key = (min >> 16) as u16;
+let min_key = (min >> 16) as u16;
         let max_key = (last >> 16) as u16;
 
         let mut i = array_ops::count_less(&self.keys, min_key);
@@ -397,21 +394,19 @@ impl RoaringBitmap {
     
     /// Check if the bitmap contains a range of values
     pub fn contains_range<R: RangeBounds<u32>>(&self, range: R) -> bool {
-        let (min, max) = range.into_bound();
-        
         // We always contain the empty set
-        if min >= max {
-            return true;
-        }
+        let (min, last) = match inclusive_bounds(range) {
+            Some(bounds) => bounds,
+            None => return true
+        };
 
         // Do an optimized single value contains if there's only one element in the set
-        if max - min == 1 {
+        if min == last {
             return self.contains(min);
         }
 
         // Do a ranged contains operation
-        let last = max - 1;
-        let key_min = min >> 16;
+let key_min = min >> 16;
         let key_max = last >> 16;
         let key_span = (key_max - key_min) as usize;
 
@@ -853,84 +848,41 @@ impl RoaringBitmap {
 
     /// Negate all elements within `range` in this bitmap
     pub fn not<R: RangeBounds<u32>>(&self, range: R) -> Self {
-        let (min, max) = range.into_bound();
-        if min == max {
-            return Self::new();
-        }
+        let (first, last) = match inclusive_bounds(range) {
+            Some(bounds) => bounds,
+            None => return self.clone()
+        };
+        let (first_key, last_key) = (first >> 16, last >> 16);
 
-        let mut start_high = min >> 16;
-        let start_low = min & 0xFFFF;
-
-        let mut end_high = max >> 16;
-        let end_low = max & 0xFFFF;
+        let start = self.keys.partition_point(|&key| u32::from(key) < first_key);
+        let end = self.keys.partition_point(|&key| u32::from(key) <= last_key);
 
         let mut result = Self::new();
+        result.array_limit = self.array_limit;
+        result.keys.extend_from_slice(&self.keys[..start]);
+        result.containers.extend_from_slice(&self.containers[..start]);
 
-        // Append all preceding elements that are not to be flipped
-        let end = array_ops::advance_until(&self.keys, 0, start_high as u16);
-        result.containers.extend_from_slice(&self.containers[..end]);
-        result.keys.extend_from_slice(&self.keys[..end]);
-
-        // Range occupies the same container, just flip that
-        if start_high == end_high {
-            result.append_flipped(self, start_high as u16, start_low..end_low);
-        }
-        // Else flip a cross container range
-        else {
-            // Handle a partial start container
-            if start_low > 0 {
-                result.append_flipped(self, start_high as u16, start_low..(1 << 16));
-
-                start_high += 1;
+        let mut index = start;
+        for key in first_key..=last_key {
+            let range = key_range(key, first, last);
+            let flipped = if index < end && u32::from(self.keys[index]) == key {
+                index += 1;
+                self.containers[index - 1].not(range)
             }
-
-            if end_low != 0xFFFF {
-                end_high -= 1;
-            }
-
-            // Handle all containers in the middle of the range skipping the last container
-            for bound in start_high..=end_high {
-                result.append_flipped(self, bound as u16, 0..(1 << 16));
-            }
-
-            // Handle a partial final container
-            if end_low != 0xFFFF {
-                end_high += 1;
-
-                result.append_flipped(self, end_high as u16, 0..end_low);
-            }
-        }
-
-        // Append any remaining containers
-        if let Ok(mut i_last) = self.get_index(end_high as u16) {
-            i_last += 1; // Increment to get the next container after the last flipped one
-
-            if i_last < self.containers.len() {
-                result.containers.extend_from_slice(&self.containers[i_last..]);
-                result.keys.extend_from_slice(&self.keys[i_last..]);
-            }
-        }
-
-        result
-    }
-
-    /// Insert the negation of the container within `range` with the given key.
-    /// Creates a new full container if no container is found
-    fn append_flipped(&mut self, other: &Self, key: u16, range: Range<u32>) {
-        if let Ok(i) = other.get_index(key) {
-            let unflipped = &other.containers[i];
-            let flipped = unflipped.not(range);
+            else {
+                Container::from_range_with_limit(range, self.array_limit)
+            };
 
             if !flipped.is_empty() {
-                self.containers.push(flipped);
-                self.keys.push(key);
+                result.keys.push(key as u16);
+                result.containers.push(flipped);
             }
         }
-        else {
-            let c = Container::from_range(range);
-            self.containers.push(c);
-            self.keys.push(key);
-        }
+
+        result.keys.extend_from_slice(&self.keys[end..]);
+        result.containers.extend_from_slice(&self.containers[end..]);
+
+        result
     }
 
     /// Same as [`or`] but operates in place on `self`
@@ -1034,12 +986,11 @@ impl RoaringBitmap {
             }
             // Remove any elements in self not shared between the bitmaps
             else if k0 < k1 {
+                // The containers after the drained ones move down to `i0`
                 let iend = array_ops::advance_until(&self.keys, i0, k1);
 
                 self.containers.drain(i0..iend);
                 self.keys.drain(i0..iend);
-
-                i0 = iend;
             }
             // Skip past all elements not in ourself
             else {
@@ -1049,12 +1000,8 @@ impl RoaringBitmap {
 
         // Other ran out of elements, remove the remainder from self since
         // they obviously don't intersect
-        while i0 < self.keys.len() {
-            self.containers.drain(i0..self.keys.len());
-            self.keys.drain(i0..self.keys.len());
-
-            i0 += 1;
-        }
+        self.containers.truncate(i0);
+        self.keys.truncate(i0);
     }
 
     /// Same as [`and_not`] but operates in place on `self`
@@ -1177,55 +1124,42 @@ impl RoaringBitmap {
     }
 
     /// Same as [`not`] but operates in place on `self`
-    /// 
+    ///
     /// [`not`]: RoaringBitmap::not
     pub fn inplace_not<R: RangeBounds<u32>>(&mut self, range: R) {
-        let (min, max) = range.into_bound();
-        let mut high_start = (min >> 16) as u16;
-        let mut high_end = (max >> 16) as u16;
-        let low_start = min & 0xFFFF;
-        let low_end = max & 0xFFFF;
+        let (first, last) = match inclusive_bounds(range) {
+            Some(bounds) => bounds,
+            None => return
+        };
+        let (first_key, last_key) = (first >> 16, last >> 16);
 
-        // Keys are the same, just do it in place
-        if high_start == high_end {
-            self.inplace_flip(high_start, low_start..low_end);
+        // Rebuild the key and container lists, moving the containers outside the range and
+        // flipping the ones inside it in place
+        let keys = mem::take(&mut self.keys);
+        let containers = mem::take(&mut self.containers);
+        let mut existing = keys.into_iter().zip(containers).peekable();
+
+        while let Some((key, container)) = existing.next_if(|(key, _)| u32::from(*key) < first_key) {
+            self.keys.push(key);
+            self.containers.push(container);
         }
-        else {
-            // First container is a partial one, flip in place
-            if low_start > 0 {
-                self.inplace_flip(high_start, low_start..(1 << 16));
-                high_start += 1;
-            }
 
-            if low_end != 0xFFFF {
-                high_end -= 1;
-            }
+        for key in first_key..=last_key {
+            let range = key_range(key, first, last);
+            let flipped = match existing.next_if(|(existing, _)| u32::from(*existing) == key) {
+                Some((_, container)) => container.inplace_not(range),
+                None => Container::from_range_with_limit(range, self.array_limit)
+            };
 
-            for bound in high_start..=high_end {
-                self.inplace_flip(bound, 0..(1 << 16));
-            }
-
-            // End is a partial container, flip in place
-            if low_end != 0xFFFF {
-                self.inplace_flip(high_end + 1, 0..low_end);
+            if !flipped.is_empty() {
+                self.keys.push(key as u16);
+                self.containers.push(flipped);
             }
         }
-    }
 
-    fn inplace_flip(&mut self, key: u16, range: Range<u32>) {
-        match self.get_index(key) {
-            Ok(index) => {
-                // Swap the container at `index` for `None`
-                let c = mem::replace(&mut self.containers[index], Container::None);
-
-                // Operate on the container and swap back into the slot at `index`
-                let c = c.inplace_not(range);
-                self.containers[index] = c;
-            },
-            Err(index) => {
-                self.keys.insert(index, key);
-                self.containers.insert(index, Container::from_range(range));
-            }
+        for (key, container) in existing {
+            self.keys.push(key);
+            self.containers.push(container);
         }
     }
 
@@ -1483,7 +1417,7 @@ impl RoaringBitmap {
             let len       = self.containers.len();
             let len_bytes = (Self::SERIAL_COOKIE | (((len - 1) << 16) as u32)).to_le_bytes();
 
-            bytes_written += buf.write(&len_bytes)?;
+            bytes_written += write_counted(buf, &len_bytes)?;
 
             let s = (len + 7) / 8;
             let mut bitmap: Vec<u8> = vec![0; s];
@@ -1494,7 +1428,7 @@ impl RoaringBitmap {
                 }
             }
 
-            bytes_written += buf.write(&bitmap)?;
+            bytes_written += write_counted(buf, &bitmap)?;
 
             if (len as u32) < Self::NO_OFFSET_THRESHOLD {
                 start_offset = 4 + 4 * len + s;
@@ -1504,8 +1438,8 @@ impl RoaringBitmap {
             }
         }
         else {
-            bytes_written += buf.write(&Self::SERIAL_COOKIE_NO_RUNCONTAINER.to_le_bytes())?;
-            bytes_written += buf.write(&(self.containers.len() as u32).to_le_bytes())?;
+            bytes_written += write_counted(buf, &Self::SERIAL_COOKIE_NO_RUNCONTAINER.to_le_bytes())?;
+            bytes_written += write_counted(buf, &(self.containers.len() as u32).to_le_bytes())?;
 
             let len = self.containers.len();
             start_offset = 4 + 4 + 4 * len + 4 * len;
@@ -1516,14 +1450,14 @@ impl RoaringBitmap {
 
         // Write the keys and cardinality
         for (key, c) in pass {
-            bytes_written += buf.write(&key.to_le_bytes())?;
-            bytes_written += buf.write(&((c.cardinality() - 1) as u16).to_le_bytes())?;
+            bytes_written += write_counted(buf, &key.to_le_bytes())?;
+            bytes_written += write_counted(buf, &((c.cardinality() - 1) as u16).to_le_bytes())?;
         }
 
         // Write the container offsets if there's no run containers or we're above the no offset threshold
         if !has_run || (self.containers.len() as u32) >= Self::NO_OFFSET_THRESHOLD {
             for c in self.containers.iter() {
-                bytes_written += buf.write(&(start_offset as u32).to_le_bytes())?;
+                bytes_written += write_counted(buf, &(start_offset as u32).to_le_bytes())?;
                 start_offset  += c.serialized_size();
             }
         }
@@ -1578,18 +1512,13 @@ impl RoaringBitmap {
 
         // Read out the bitmap if present
         let mut bitmap: Vec<u8> = Vec::new();
-        
+
         let has_run = (cookie & 0xFFFF) == Self::SERIAL_COOKIE;
         if has_run {
-            let s = ((size + 7) / 8) as usize;
+            // Initialized, as a reader may read the buffer it fills
+            bitmap.resize(((size + 7) / 8) as usize, 0);
 
-            // Reserve the space for the data to be deserialized into
-            unsafe {
-                bitmap.reserve_exact(s);
-                bitmap.set_len(s);
-            }
-
-            buf.read(&mut bitmap)
+            buf.read_exact(&mut bitmap)
                 .map_err(DeserializeError::IoError)?;
         }
 
@@ -1734,6 +1663,14 @@ impl<'a> Iterator for Iter<'a> {
             (u32::from(key) << 16) | u32::from(low)
         })
     }
+}
+
+/// The low bits of the values from `first` to `last` that fall in the container with `key`
+fn key_range(key: u32, first: u32, last: u32) -> Range<u32> {
+    let start = if key == first >> 16 { first & 0xFFFF } else { 0 };
+    let end = if key == last >> 16 { (last & 0xFFFF) + 1 } else { 1 << 16 };
+
+    start..end
 }
 
 #[cfg(test)]
@@ -2743,5 +2680,476 @@ mod test {
         bitmap.remove_range(0..800);
         assert!(matches!(bitmap.containers[0], Container::Array(_)));
         assert!(bitmap.iter().eq(800..1_000));
+    }
+
+    #[test]
+    fn range_apis_reach_u32_max() {
+        let top = u32::MAX - 2..=u32::MAX;
+
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_range(top.clone());
+        assert!(bitmap.iter().eq(top.clone()));
+        assert!(bitmap.contains_range(top.clone()));
+        assert!(bitmap.contains_range(u32::MAX..));
+        assert!(!bitmap.contains_range(u32::MAX - 3..));
+
+        assert!(RoaringBitmap::from_range(top.clone()).iter().eq(top.clone()));
+        assert_eq!(RoaringBitmap::from_range(u32::MAX - 70_000..).cardinality(), 70_001);
+        assert!(RoaringBitmap::from_range(100..200_000).iter().eq(100..200_000));
+
+        bitmap.remove_range(u32::MAX..);
+        assert!(bitmap.iter().eq(u32::MAX - 2..u32::MAX));
+
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.add_range(u32::MAX - 1..);
+        assert!(bitmap.iter().eq(u32::MAX - 1..=u32::MAX));
+
+        bitmap.remove_range(..);
+        assert!(bitmap.is_empty());
+    }
+
+    #[test]
+    fn not_flips_only_the_range() {
+        let mut bitmap = RoaringBitmap::new();
+        for value in [1, (1 << 16) | 5, (3 << 16) | 7] {
+            bitmap.add(value);
+        }
+
+        let expected: Vec<u32> = std::iter::once(1)
+            .chain((1 << 16)..(2 << 16)).filter(|&v| v != (1 << 16) | 5)
+            .chain(std::iter::once((3 << 16) | 7))
+            .collect();
+
+        // The end key is absent from the bitmap, the containers after it stay
+        let not = bitmap.not((1 << 16)..(2 << 16));
+        assert!(not.iter().eq(expected.iter().cloned()));
+
+        let mut inplace = bitmap.clone();
+        inplace.inplace_not((1 << 16)..(2 << 16));
+        assert!(inplace.iter().eq(expected.iter().cloned()));
+
+        // An empty range changes nothing
+        assert!(bitmap.not(5..5).iter().eq(bitmap.iter()));
+
+        // Flipping a container's only values removes it
+        let mut inplace = bitmap.clone();
+        inplace.inplace_not(1..2);
+        assert_eq!(inplace.keys, [1, 3]);
+        assert!(bitmap.not(1..2).iter().eq(bitmap.iter().skip(1)));
+
+        // Ranges that reach u32::MAX
+        let mut top = RoaringBitmap::new();
+        top.add(u32::MAX);
+        assert!(top.not(u32::MAX - 1..).iter().eq(std::iter::once(u32::MAX - 1)));
+        top.inplace_not(u32::MAX - 1..=u32::MAX);
+        assert!(top.iter().eq(std::iter::once(u32::MAX - 1)));
+    }
+
+    #[test]
+    fn serialize_round_trips_through_byte_at_a_time_streams() {
+        use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+
+        // Takes at most one byte per call, as a pipe or socket may
+        struct Trickle<T>(T);
+
+        impl<T: Write> Write for Trickle<T> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.write(&buf[..buf.len().min(1)])
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.0.flush()
+            }
+        }
+
+        impl<T: Read> Read for Trickle<T> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let len = buf.len().min(1);
+                self.0.read(&mut buf[..len])
+            }
+        }
+
+        impl<T: Seek> Seek for Trickle<T> {
+            fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+                self.0.seek(position)
+            }
+        }
+
+        // A bitmap with a run container: cookie with one container, the run flag, key 0 with
+        // cardinality 6, and one run of 10..=15
+        let mut runs = Vec::new();
+        for word in [12_347_u16, 0, 1, 0, 5, 1, 10, 5] {
+            runs.extend_from_slice(&word.to_le_bytes());
+        }
+        runs.remove(5);
+
+        let mut bitmap = RoaringBitmap::deserialize(&mut Trickle(Cursor::new(&runs))).unwrap();
+        assert!(bitmap.iter().eq(10..16));
+
+        bitmap.add_range(1 << 16..(1 << 16) + 5_000);
+        bitmap.add_range(3 << 16..(3 << 16) + 50);
+
+        let mut output = Vec::new();
+        let num_written = bitmap.serialize(&mut Trickle(&mut output)).unwrap();
+        assert_eq!(num_written, bitmap.serialized_size());
+        assert_eq!(output.len(), num_written);
+
+        let read = RoaringBitmap::deserialize(&mut Trickle(Cursor::new(&output))).unwrap();
+        assert!(read.iter().eq(bitmap.iter()));
+    }
+
+    #[test]
+    fn inplace_and_keeps_shared_keys_after_unshared_ones() {
+        let mut a = RoaringBitmap::new();
+        let mut b = RoaringBitmap::new();
+        for key in [0, 1, 2, 5, 7] {
+            a.add(key << 16);
+            a.add((key << 16) | 1);
+        }
+        for key in [2, 5, 9] {
+            b.add(key << 16);
+        }
+
+        a.inplace_and(&b);
+        assert!(a.iter().eq([2 << 16, 5 << 16]));
+    }
+
+    /// Random bitmaps of array, bitset and run containers against a set of the values they
+    /// hold, operation by operation. Values sit in a few low keys and the two highest keys, and
+    /// cluster at container and word edges
+    #[test]
+    fn bitmap_ops_match_a_model() {
+        use rand::prelude::*;
+        use std::collections::BTreeSet;
+        use std::io::Cursor;
+        use std::panic::{self, AssertUnwindSafe};
+
+        type Model = BTreeSet<u32>;
+        const KEYS: [u32; 6] = [0, 1, 2, 3, 0xFFFE, 0xFFFF];
+
+        fn edge_low(rng: &mut SmallRng) -> u32 {
+            match rng.random_range(0..4) {
+                0 => rng.random_range(0..64),
+                1 => 0xFFFF - rng.random_range(0..64),
+                2 => rng.random_range(0..1024) * 64 + rng.random_range(0..2) * 63,
+                _ => rng.random_range(0..(1 << 16))
+            }
+        }
+
+        fn edge_value(rng: &mut SmallRng) -> u32 {
+            (KEYS[rng.random_range(0..KEYS.len())] << 16) | edge_low(rng)
+        }
+
+        fn keys(rng: &mut SmallRng) -> Vec<u32> {
+            KEYS.iter().copied().filter(|_| rng.random_bool(0.6)).collect()
+        }
+
+        // Up to 4 096 values per key make arrays, more make bitsets
+        fn sets(rng: &mut SmallRng) -> (RoaringBitmap, Model) {
+            let mut model = Model::new();
+            for key in keys(rng) {
+                let count = match rng.random_range(0..3) {
+                    0 => rng.random_range(1..100),
+                    1 => rng.random_range(3_800..4_400),
+                    _ => rng.random_range(4_000..30_000)
+                };
+                for _ in 0..count {
+                    model.insert((key << 16) | if rng.random_bool(0.3) { edge_low(rng) } else { rng.random_range(0..(1 << 16)) });
+                }
+            }
+
+            let mut bitmap = RoaringBitmap::new();
+            for &value in &model {
+                bitmap.add(value);
+            }
+
+            (bitmap, model)
+        }
+
+        // Run containers only come from deserializing, so write the portable format by hand
+        fn runs(rng: &mut SmallRng) -> (RoaringBitmap, Model) {
+            let mut model = Model::new();
+            let mut containers = Vec::new();
+            for key in keys(rng) {
+                let mut runs = Vec::new();
+                let mut start = if rng.random_bool(0.3) { 0 } else { rng.random_range(0..2_000) };
+                while start < (1 << 16) {
+                    let len = rng.random_range(1..3_000).min((1 << 16) - start);
+                    let len = if rng.random_range(0..6) == 0 { (1 << 16) - start } else { len };
+                    runs.push((start as u16, (len - 1) as u16));
+                    model.extend(((key << 16) | start)..=((key << 16) | (start + len - 1)));
+                    start += len + rng.random_range(1..5_000);
+                }
+                containers.push((key as u16, runs));
+            }
+
+            let mut bytes = Vec::new();
+            if containers.is_empty() {
+                bytes.extend_from_slice(&12_346_u32.to_le_bytes());
+                bytes.extend_from_slice(&0_u32.to_le_bytes());
+            }
+            else {
+                let n = containers.len();
+                bytes.extend_from_slice(&(12_347 | ((n as u32 - 1) << 16)).to_le_bytes());
+                bytes.extend((0..(n + 7) / 8).map(|i| if i == n / 8 { (1_u16 << (n % 8)) as u8 - 1 } else { 0xFF }));
+                for (key, runs) in &containers {
+                    let card: u32 = runs.iter().map(|&(_, len)| u32::from(len) + 1).sum();
+                    bytes.extend_from_slice(&key.to_le_bytes());
+                    bytes.extend_from_slice(&((card - 1) as u16).to_le_bytes());
+                }
+                if n >= 4 {
+                    bytes.extend(std::iter::repeat(0).take(4 * n));
+                }
+                for (_, runs) in &containers {
+                    bytes.extend_from_slice(&(runs.len() as u16).to_le_bytes());
+                    for &(value, len) in runs {
+                        bytes.extend_from_slice(&value.to_le_bytes());
+                        bytes.extend_from_slice(&len.to_le_bytes());
+                    }
+                }
+            }
+
+            (RoaringBitmap::deserialize(&mut Cursor::new(&bytes)).unwrap(), model)
+        }
+
+        fn any(rng: &mut SmallRng, kind: usize) -> (RoaringBitmap, Model) {
+            match kind {
+                0 => sets(rng),
+                _ => runs(rng)
+            }
+        }
+
+        // First and last value, possibly crossing keys or reaching u32::MAX
+        fn range(rng: &mut SmallRng) -> (u32, u32) {
+            let first = if rng.random_range(0..5) == 0 { u32::MAX - rng.random_range(0..70_000) } else { edge_value(rng) };
+            let len = match rng.random_range(0..4) {
+                0 => 0,
+                1 => 0x1_0000 - (first & 0xFFFF) - 1,
+                2 => rng.random_range(0..200_000),
+                _ => rng.random_range(0..100)
+            };
+
+            (first, first.saturating_add(len))
+        }
+
+        fn same(bitmap: &RoaringBitmap, model: &Model) -> Result<(), String> {
+            if !bitmap.iter().eq(model.iter().copied()) || bitmap.cardinality() != model.len() {
+                return Err(format!("{} values, expected {}", bitmap.cardinality(), model.len()));
+            }
+            if bitmap.containers.iter().any(|c| c.is_empty()) {
+                return Err("holds an empty container".to_string());
+            }
+            Ok(())
+        }
+
+        const KINDS: [&str; 2] = ["sets", "runs"];
+        let mut failures: Vec<String> = Vec::new();
+        let mut check = |name: String, f: &mut dyn FnMut() -> Result<(), String>| {
+            match panic::catch_unwind(AssertUnwindSafe(|| f())) {
+                Ok(Ok(())) => (),
+                Ok(Err(message)) => failures.push(format!("{}: {}", name, message)),
+                Err(_) => failures.push(format!("{}: panicked", name))
+            }
+        };
+
+        let mut rng = SmallRng::seed_from_u64(0xb17_5e7);
+        for round in 0..12 {
+            for k0 in 0..2 {
+                for k1 in 0..2 {
+                    let (a, ma) = any(&mut rng, k0);
+                    let (b, mb) = any(&mut rng, k1);
+                    let pair = format!("round {} {} {}", round, KINDS[k0], KINDS[k1]);
+
+                    let expected: [(&str, Model); 4] = [
+                        ("or", ma.union(&mb).copied().collect()),
+                        ("and", ma.intersection(&mb).copied().collect()),
+                        ("and_not", ma.difference(&mb).copied().collect()),
+                        ("xor", ma.symmetric_difference(&mb).copied().collect())
+                    ];
+
+                    for (op, expected) in expected.iter() {
+                        let (a, b) = (&a, &b);
+                        check(format!("{} {}", op, pair), &mut || {
+                            let result = match *op {
+                                "or" => a.or(b),
+                                "and" => a.and(b),
+                                "and_not" => a.and_not(b),
+                                _ => a.xor(b)
+                            };
+                            same(&result, expected)
+                        });
+
+                        check(format!("inplace_{} {}", op, pair), &mut || {
+                            let mut result = a.clone();
+                            match *op {
+                                "or" => result.inplace_or(b),
+                                "and" => result.inplace_and(b),
+                                "and_not" => result.inplace_and_not(b),
+                                _ => result.inplace_xor(b)
+                            }
+                            same(&result, expected)
+                        });
+
+                        check(format!("{}_cardinality {}", op, pair), &mut || {
+                            let found = match *op {
+                                "or" => a.or_cardinality(b),
+                                "and" => a.and_cardinality(b),
+                                "and_not" => a.and_not_cardinality(b),
+                                _ => a.xor_cardinality(b)
+                            };
+                            if found != expected.len() { Err(format!("{}, expected {}", found, expected.len())) } else { Ok(()) }
+                        });
+                    }
+
+                    let subsets = (ma.is_subset(&mb), mb.is_subset(&ma));
+                    check(format!("subset_of {}", pair), &mut || {
+                        let found = (a.subset_of(&b), b.subset_of(&a));
+                        if found != subsets { Err(format!("{:?}, expected {:?}", found, subsets)) } else { Ok(()) }
+                    });
+                }
+            }
+
+            for kind in 0..2 {
+                let (bitmap, model) = any(&mut rng, kind);
+                let name = format!("round {} {}", round, KINDS[kind]);
+
+                for _ in 0..3 {
+                    let (first, last) = range(&mut rng);
+                    let in_range: Model = (first..=last).collect();
+                    let r = format!("{}..={}", first, last);
+
+                    let flipped: Model = model.symmetric_difference(&in_range).copied().collect();
+                    check(format!("not {} {}", r, name), &mut || same(&bitmap.not(first..=last), &flipped));
+                    check(format!("inplace_not {} {}", r, name), &mut || {
+                        let mut result = bitmap.clone();
+                        result.inplace_not(first..=last);
+                        same(&result, &flipped)
+                    });
+
+                    let added: Model = model.union(&in_range).copied().collect();
+                    check(format!("add_range {} {}", r, name), &mut || {
+                        let mut result = bitmap.clone();
+                        result.add_range(first..=last);
+                        same(&result, &added)
+                    });
+
+                    let removed: Model = model.difference(&in_range).copied().collect();
+                    check(format!("remove_range {} {}", r, name), &mut || {
+                        let mut result = bitmap.clone();
+                        result.remove_range(first..=last);
+                        same(&result, &removed)
+                    });
+
+                    let contained = in_range.is_subset(&model);
+                    check(format!("contains_range {} {}", r, name), &mut || {
+                        let found = bitmap.contains_range(first..=last);
+                        if found != contained { Err(format!("{}, expected {}", found, contained)) } else { Ok(()) }
+                    });
+
+                    // The exclusive form of the same range
+                    check(format!("not exclusive {} {}", r, name), &mut || match last.checked_add(1) {
+                        Some(end) => same(&bitmap.not(first..end), &flipped),
+                        None => same(&bitmap.not(first..), &flipped)
+                    });
+                }
+
+                check(format!("empty range {}", name), &mut || {
+                    let mut result = bitmap.not(5..5);
+                    result.inplace_not(7..7);
+                    result.add_range(9..9);
+                    result.remove_range(11..11);
+                    if !bitmap.contains_range(13..13) { return Err("does not contain the empty range".to_string()); }
+                    same(&result, &model)
+                });
+
+                for _ in 0..20 {
+                    let value = edge_value(&mut rng);
+                    let rank = model.range(..=value).count();
+                    check(format!("rank {} {}", value, name), &mut || {
+                        let found = bitmap.rank(value);
+                        if found != rank { Err(format!("{}, expected {}", found, rank)) } else { Ok(()) }
+                    });
+
+                    let contains = model.contains(&value);
+                    check(format!("contains {} {}", value, name), &mut || {
+                        if bitmap.contains(value) != contains { Err(format!("expected {}", contains)) } else { Ok(()) }
+                    });
+
+                    let mut without = model.clone();
+                    let was_present = without.remove(&value);
+                    check(format!("remove {} {}", value, name), &mut || {
+                        let mut result = bitmap.clone();
+                        if result.remove(value) != was_present { return Err(format!("returned {}", !was_present)); }
+                        same(&result, &without)
+                    });
+                }
+
+                if !model.is_empty() {
+                    for _ in 0..10 {
+                        let rank = rng.random_range(0..model.len());
+                        let expected = model.iter().nth(rank).copied();
+                        check(format!("select {} {}", rank, name), &mut || {
+                            let found = bitmap.select(rank as u32);
+                            if found != expected { Err(format!("{:?}, expected {:?}", found, expected)) } else { Ok(()) }
+                        });
+                    }
+                }
+
+                let bounds = (model.iter().next().copied(), model.iter().next_back().copied());
+                check(format!("min max {}", name), &mut || {
+                    let found = (bitmap.min(), bitmap.max());
+                    if found != bounds { Err(format!("{:?}, expected {:?}", found, bounds)) } else { Ok(()) }
+                });
+
+                check(format!("pop_min {}", name), &mut || {
+                    let mut result = bitmap.clone();
+                    let mut rest = model.clone();
+                    for _ in 0..50 {
+                        let expected = rest.iter().next().copied();
+                        if let Some(value) = expected {
+                            rest.remove(&value);
+                        }
+                        let found = result.pop_min();
+                        if found != expected { return Err(format!("{:?}, expected {:?}", found, expected)); }
+                    }
+                    same(&result, &rest)
+                });
+
+                check(format!("serialize {}", name), &mut || {
+                    let mut bytes = Vec::new();
+                    let written = bitmap.serialize(&mut bytes).map_err(|e| e.to_string())?;
+                    if written != bytes.len() || written != bitmap.serialized_size() {
+                        return Err(format!("wrote {}, {} bytes, size {}", written, bytes.len(), bitmap.serialized_size()));
+                    }
+                    let read = RoaringBitmap::deserialize(&mut Cursor::new(&bytes)).map_err(|e| format!("{:?}", e))?;
+                    same(&read, &model)
+                });
+            }
+        }
+
+        let mut kinds: Vec<String> = Vec::new();
+        for failure in &failures {
+            let head = failure.split(':').next().unwrap();
+            let words: Vec<&str> = head.split(' ').collect();
+            let mut key = vec![words[0]];
+            key.extend(words.iter().skip(1).filter(|w| KINDS.contains(*w) || **w == "exclusive"));
+            let key = key.join(" ") + ":";
+            if !kinds.iter().any(|k| k.starts_with(&key)) {
+                kinds.push(format!("{} -- e.g. {}", key, failure));
+            }
+        }
+        assert!(failures.is_empty(), "{} failures, by operation:\n{}", failures.len(), kinds.join("\n"));
+    }
+
+    #[test]
+    fn array_limit_governs_containers_not_creates() {
+        let flipped = RoaringBitmap::with_array_limit(256).not(0..1_000);
+        assert!(matches!(flipped.containers[0], Container::Bitset(_)));
+        assert_eq!(flipped.array_limit, 256);
+
+        let mut flipped = RoaringBitmap::with_array_limit(256);
+        flipped.inplace_not(0..1_000);
+        assert!(matches!(flipped.containers[0], Container::Bitset(_)));
+        assert!(flipped.iter().eq(0..1_000));
     }
 }
