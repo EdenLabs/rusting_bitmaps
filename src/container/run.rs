@@ -222,62 +222,51 @@ impl RunContainer {
         let min = range.start as u16;
         let max = (range.end - 1) as u16;
 
-        let mut si0 = None;
-        let mut si1 = None;
-
-        // Update the left-most run
-        match self.find_run(min) {
-            SearchResult::ExactMatch(mut index) => {
-                let run = self.runs[index as usize];
+        // Trim the run holding `min`, then drop the runs from `first` up to `end`
+        let first = match self.find_run(min) {
+            SearchResult::ExactMatch(index) => {
+                let run = self.runs[index];
                 if min > run.value && max < run.end() {
                     // Split into two runs
 
                     // Right interval
-                    self.runs.insert(index as usize + 1, Rle16::new(max + 1, run.end() - (max + 1)));
+                    self.runs.insert(index + 1, Rle16::new(max + 1, run.end() - (max + 1)));
 
                     // Left interval
-                    self.runs[index as usize].length = (min - 1) - run.value;
+                    self.runs[index].length = (min - 1) - run.value;
                     return;
                 }
 
                 if min > run.value {
-                    self.runs[index as usize].length = (min - 1) - run.value;
-                    index += 1;
+                    self.runs[index].length = (min - 1) - run.value;
+                    index + 1
                 }
-
-                si0 = Some(index);
-            },
-            SearchResult::PossibleMatch(index) => {
-                si0 = Some(index);
-            },
-            _ => ()
-        }
-
-        // Update the right-most run
-        match self.find_run(max) {
-            SearchResult::ExactMatch(mut index) => {
-                let run_max = self.runs[index as usize].end();
-                if run_max > max {
-                    self.runs[index as usize] = Rle16::new(max + 1, run_max - (max + 1));
-                    index = index.checked_sub(1)
-                        .unwrap_or(0);
+                else {
+                    index
                 }
-
-                si1 = Some(index);
             },
-            SearchResult::PossibleMatch(index) => {
-                si1 = Some(index);                
+            SearchResult::PossibleMatch(index) => index + 1,
+            SearchResult::NoMatch => 0
+        };
+
+        // Trim the run holding `max`
+        let end = match self.find_run(max) {
+            SearchResult::ExactMatch(index) => {
+                let run_end = self.runs[index].end();
+                if run_end > max {
+                    self.runs[index] = Rle16::new(max + 1, run_end - (max + 1));
+                    index
+                }
+                else {
+                    index + 1
+                }
             },
-            _ => ()
-        }
+            SearchResult::PossibleMatch(index) => index + 1,
+            SearchResult::NoMatch => 0
+        };
 
-        if let (Some(si0), Some(si1)) = (si0, si1) {
-            let start = si0 + 1;
-            let end = start + (si1 + 1);
-
-            if end < self.runs.len() {
-                self.runs.splice(start..end, iter::empty());
-            }
+        if first < end {
+            self.runs.drain(first..end);
         }
     }
     
@@ -2591,5 +2580,41 @@ mod test {
         b.runs.extend_from_slice(&[super::Rle16::new(0, 9), super::Rle16::new(10, 9)]);
         assert!(b.contains_range(5..20));
         assert!(!b.contains_range(5..21));
+    }
+
+    #[test]
+    fn remove_range_across_runs() {
+        let runs = || {
+            let mut a = RunContainer::new();
+            a.add_range(0..10);
+            a.add_range(20..30);
+            a.add_range(40..50);
+            a
+        };
+
+        // Trims the runs at both ends and drops the one between
+        let mut a = runs();
+        a.remove_range(5..45);
+        assert!(a.iter().eq((0..5).chain(45..50)));
+
+        // Starts and ends in gaps
+        let mut a = runs();
+        a.remove_range(15..35);
+        assert!(a.iter().eq((0..10).chain(40..50)));
+
+        // Splits one run
+        let mut a = runs();
+        a.remove_range(22..25);
+        assert!(a.iter().eq((0..10).chain(20..22).chain(25..30).chain(40..50)));
+
+        // Removes the last runs
+        let mut a = runs();
+        a.remove_range(25..(1 << 16));
+        assert!(a.iter().eq((0..10).chain(20..25)));
+
+        // Removes every run
+        let mut a = runs();
+        a.remove_range(0..50);
+        assert!(a.is_empty());
     }
 }
