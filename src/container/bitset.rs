@@ -250,7 +250,7 @@ impl BitsetContainer {
         true
     }
 
-/// Flip all bits in the range [min-max)
+    /// Flip all bits in the range [min-max)
     pub fn flip_range(&mut self, range: Range<u32>) {
         if range.start == range.end {
             return;

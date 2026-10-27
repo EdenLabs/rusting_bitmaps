@@ -168,7 +168,7 @@ impl RoaringBitmap {
             None => return
         };
 
-let min_key = min >> 16;
+        let min_key = min >> 16;
         let max_key = last >> 16;
 
         let mut index = self.keys.partition_point(|&key| u32::from(key) < min_key);
@@ -258,7 +258,7 @@ let min_key = min >> 16;
             None => return
         };
 
-let min_key = (min >> 16) as u16;
+        let min_key = (min >> 16) as u16;
         let max_key = (last >> 16) as u16;
 
         let mut i = array_ops::count_less(&self.keys, min_key);
@@ -332,7 +332,7 @@ let min_key = (min >> 16) as u16;
         }
 
         // Do a ranged contains operation
-let key_min = min >> 16;
+        let key_min = min >> 16;
         let key_max = last >> 16;
         let key_span = (key_max - key_min) as usize;
 
