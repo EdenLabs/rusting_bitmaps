@@ -300,63 +300,25 @@ impl RunContainer {
     
     /// Check if the container contains all the values in [min-max)
     pub fn contains_range(&self, range: Range<u32>) -> bool {
-        let mut count = 0;
-        let index;
-
         let min = range.start as u16;
-        let max = (range.end - 1) as u16;
+        let last = (range.end - 1) as u16;
 
-        match self.binary_search(min) {
-            SearchResult::ExactMatch(i) => {
-                index = i;
-            },
-            SearchResult::PossibleMatch(i) => {
-                let v = self.runs[i];
-
-                if min - v.value > v.length {
-                    return false;
-                }
-                else {
-                    index = i;
-                }
-            },
-            SearchResult::NoMatch => {
-                return false;
-            }
+        let mut index = match self.find_run(min) {
+            SearchResult::ExactMatch(i) => i,
+            _ => return false
         };
 
-        for run in &self.runs[index..self.runs.len()] {
-            let stop = run.value + run.length;
-            if run.value >= max {
-                break;
-            }
-
-            if stop >= max {
-                if max > run.value {
-                    count += max - run.value;
-                }
-
-                break;
-            }
-
-            let min_length = {
-                if stop > min { 
-                    stop - min 
-                }
-                else {
-                    0
-                }
-            };
-
-            if min_length < run.length {
-                count += min_length;
-            }
-            else {
-                count += run.length;
+        // Stored runs may touch, a range can span several of them
+        let mut end = self.runs[index].end();
+        while end < last {
+            index += 1;
+            match self.runs.get(index) {
+                Some(run) if run.value == end + 1 => end = run.end(),
+                _ => return false
             }
         }
 
-        count >= max - min - 1
+        true
     }
     
     /// The cardinality of the run container
@@ -2609,5 +2571,25 @@ mod test {
         // A range ending at the end of the container
         a.add_range(65_000..(1 << 16));
         assert!(a.iter().eq((0..60).chain(65_000..=65_535)));
+    }
+
+    #[test]
+    fn contains_range_needs_every_value() {
+        let mut a = RunContainer::new();
+        a.add_range(0..10);
+        a.add_range(20..30);
+
+        assert!(a.contains_range(0..10));
+        assert!(a.contains_range(22..25));
+        assert!(!a.contains_range(0..11));
+        assert!(!a.contains_range(5..25));
+        assert!(!a.contains_range(10..20));
+        assert!(!a.contains_range(25..31));
+
+        // Touching stored runs hold a range across them
+        let mut b = RunContainer::new();
+        b.runs.extend_from_slice(&[super::Rle16::new(0, 9), super::Rle16::new(10, 9)]);
+        assert!(b.contains_range(5..20));
+        assert!(!b.contains_range(5..21));
     }
 }
