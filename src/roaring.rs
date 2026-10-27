@@ -2763,4 +2763,19 @@ mod test {
         }
         assert!(failures.is_empty(), "{} failures, by operation:\n{}", failures.len(), kinds.join("\n"));
     }
+
+    #[test]
+    fn contains_range_across_a_full_container_of_touching_runs() {
+        // Keys 0, 1 and 2, all run containers: 65 535 in key 0, all of key 1 as the touching runs
+        // 0..=99 and 100..=65 535, and 0 in key 2
+        let mut bytes = Vec::new();
+        for word in [12_347_u16, 2, 0b111, 0, 0, 1, 65_535, 2, 0, 1, 65_535, 0, 2, 0, 99, 100, 65_435, 1, 0, 0] {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        bytes.remove(5);
+
+        let bitmap = RoaringBitmap::deserialize(&mut std::io::Cursor::new(&bytes)).unwrap();
+        assert!(bitmap.iter().eq(0xFFFF..=0x2_0000));
+        assert!(bitmap.contains_range(0xFFFF..=0x2_0000));
+    }
 }

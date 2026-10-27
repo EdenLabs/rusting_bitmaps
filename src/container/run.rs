@@ -336,14 +336,8 @@ impl RunContainer {
     
     /// Check whether the container is full
     pub fn is_full(&self) -> bool {
-        if self.runs.is_empty() {
-            return false;
-        }
-
-        let run = self.runs[0];
-        let len = self.runs.len();
-
-        len == 1 && run.value == 0 && run.length == std::u16::MAX
+        // Stored runs may touch, so a full container can hold more than one
+        self.cardinality() == 1 << 16
     }
 
     /// Get the minimum value of this container
