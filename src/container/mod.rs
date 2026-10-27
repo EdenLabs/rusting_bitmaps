@@ -702,4 +702,16 @@ mod test {
             assert_eq!(array.rank(value), rank, "array rank of {}", value);
         }
     }
+
+    #[test]
+    fn cardinality_range_counts_ranges_from_zero() {
+        let mut bitset = BitsetContainer::new();
+        for value in [0, 63, 64, 99, 100, 65_535] {
+            bitset.set(value);
+        }
+
+        assert_eq!(bitset.cardinality_range(0..100), 4);
+        assert_eq!(bitset.cardinality_range(0..(1 << 16)), 6);
+        assert_eq!(bitset.cardinality_range(64..(1 << 16)), 4);
+    }
 }

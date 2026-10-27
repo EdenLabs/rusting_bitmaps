@@ -374,7 +374,9 @@ impl BitsetContainer {
             result += self.bitset[i].count_ones();
         }
 
-        result += (self.bitset[last_word] & (!0 >> (((!start + 1) - len_minus_one - 1) % 64)))
+        // Keep the bits up to the last value of the range in its word
+        let end = start + len_minus_one + 1;
+        result += (self.bitset[last_word] & (!0 >> (end.wrapping_neg() % 64)))
             .count_ones();
 
         result as usize
