@@ -4,6 +4,7 @@ use std::slice::Iter;
 
 use crate::container::*;
 use crate::container::slack::SlackVec;
+use crate::container::run::{combine, combined_cardinality, value_intervals};
 
 /// An array container. Elements are sorted numerically and represented as individual values in the array
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -720,57 +721,11 @@ impl SetAndNot<BitsetContainer> for ArrayContainer {
 
 impl SetAndNot<RunContainer> for ArrayContainer {
     fn and_not(&self, other: &RunContainer) -> Container {
-        if other.is_empty() {
-            return Container::Array(self.clone());
-        }
+        let keep = |a: bool, b: bool| a && !b;
 
-        let mut result = ArrayContainer::with_capacity(self.cardinality());
- 
-        let runs = other.deref();
-        let run = runs[0];
-        let mut run_start: usize = usize::from(run.value);
-        let mut run_end: usize = usize::from(run.end());
-        let mut which_run = 0;
-
-        let mut i: isize = 0;
-        while (i as usize) < self.cardinality() {
-            let value = usize::from(self.array[i as usize]);
-
-            if value < run_start {
-                result.push(value as u16);
-            } else if value <= run_end {
-                ()
-            }
-            else {
-                loop {
-                    if which_run + 1 < runs.len() {
-                        which_run += 1;
-
-                        let run = runs[which_run];
-                        run_start = usize::from(run.value);
-                        run_end = usize::from(run.end());
-                    }
-                    else {
-                        run_end = (1 << 16) + 1;
-                        run_start = run_end;
-                    }
-
-                    if value <= run_end {
-                        break;
-                    }
-                }
-
-                i -= 1;
-            }
-
-            i += 1;
-        }
-
-        Container::Array(result)
+        combine(value_intervals(self), other.intervals(), keep).into_efficient_container()
     }
-    
-    // TODO: Find a way to do this inplace
-    #[inline]
+
     fn inplace_and_not(self, other: &RunContainer) -> Container {
         SetAndNot::and_not(&self, other)
     }
@@ -925,29 +880,7 @@ impl Subset<BitsetContainer> for ArrayContainer {
 
 impl Subset<RunContainer> for ArrayContainer {
     fn subset_of(&self, other: &RunContainer) -> bool {
-        if self.len() > other.len() {
-            return false;
-        }
-
-        let mut i_a = 0;
-        let mut i_r = 0;
-        
-        while i_a < self.len() && i_r < other.len() {
-            let (start, end) = other[i_r].range();
-            let value = self[i_a];
-            
-            if value < start {
-                return false;
-            }
-            else if value > end {
-                i_r += 1;
-            }
-            else {
-                i_a += 1;
-            }
-        }
-        
-        i_a == self.len()
+        combined_cardinality(value_intervals(self), other.intervals(), |a, b| a && !b) == 0
     }
 }
 

@@ -646,4 +646,45 @@ mod test {
             self.cardinality()
         }
     }
+
+    #[test]
+    fn run_set_ops_cover_every_value() {
+        use std::iter::once;
+
+        let run = |ranges: &[std::ops::Range<u32>]| {
+            let mut run = RunContainer::new();
+            for range in ranges {
+                run.add_range(range.clone());
+            }
+            Container::Run(run)
+        };
+        let array = |values: &[u16]| {
+            let mut array = ArrayContainer::new();
+            for &value in values {
+                array.add(value);
+            }
+            Container::Array(array)
+        };
+
+        // Array values after the last run are not in the intersection
+        assert!(run(&[0..10]).and(&array(&[5, 100])).iter().eq(once(5)));
+        assert_eq!(run(&[0..10]).and_cardinality(&array(&[5, 100])), 1);
+
+        // Runs that end at the last value of the container
+        let high = run(&[60_000..(1 << 16)]);
+        let edges = run(&[0..10, 65_000..(1 << 16)]);
+        assert!(high.and(&edges).iter().eq(65_000..=65_535));
+        assert_eq!(high.and_cardinality(&edges), 536);
+        assert!(high.or(&edges).iter().eq((0..10).chain(60_000..=65_535)));
+        assert!(high.and_not(&edges).iter().eq(60_000..65_000));
+        assert!(high.xor(&edges).iter().eq((0..10).chain(60_000..65_000)));
+        assert!(high.or(&array(&[5, 65_535])).iter().eq(once(5).chain(60_000..=65_535)));
+        assert!(high.xor(&array(&[5, 65_535])).iter().eq(once(5).chain(60_000..65_535)));
+        assert!(array(&[5, 65_535]).and_not(&high).iter().eq(once(5)));
+        assert!(high.not(50_000..(1 << 16)).iter().eq(50_000..60_000));
+        assert!(edges.subset_of(&run(&[0..(1 << 16)])));
+        assert!(!high.subset_of(&edges));
+        assert!(array(&[3, 65_535]).subset_of(&edges));
+        assert!(!array(&[3, 10]).subset_of(&edges));
+    }
 }

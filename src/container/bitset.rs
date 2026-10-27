@@ -626,7 +626,7 @@ impl<'a> From<&'a RunContainer> for BitsetContainer {
         let mut bitset = BitsetContainer::new();
         for run in container.iter_runs() {
             let min = u32::from(run.value);
-            let max = u32::from(run.end() + 1);
+            let max = u32::from(run.end()) + 1;
 
             bitset.set_range(min..max);
         }
