@@ -324,19 +324,19 @@ impl RoaringBitmap {
         let (min, max) = range.into_bound();
         
         // We always contain the empty set
-        let len = max - min;
-        if len == 0 {
+        if min >= max {
             return true;
         }
 
         // Do an optimized single value contains if there's only one element in the set
-        if len == 1 {
+        if max - min == 1 {
             return self.contains(min);
         }
 
         // Do a ranged contains operation
+        let last = max - 1;
         let key_min = min >> 16;
-        let key_max = max >> 16;
+        let key_max = last >> 16;
         let key_span = (key_max - key_min) as usize;
 
         // Key range exceeds those stored in this bitmap, can't possibly contain the set
@@ -362,11 +362,11 @@ impl RoaringBitmap {
 
         let container = &self.containers[ci_min];
         let value_min = min & 0xFFFF;
-        let value_max = max >> 16;
+        let value_end = (last & 0xFFFF) + 1;
 
         // Min and max are the same, do contains on the single container
         if key_min == key_max {
-            return container.contains_range(value_min..value_max);
+            return container.contains_range(value_min..value_end);
         }
 
         // Check if the min container contains [val_min-container_max]
@@ -376,12 +376,12 @@ impl RoaringBitmap {
 
         // Check if the max container contains [container_min-val_max]
         let container = &self.containers[ci_max];
-        if !container.contains_range(0..value_max) {
+        if !container.contains_range(0..value_end) {
             return false;
         }
 
         // Check if all containers in between are full
-        for container in self.containers[(ci_min + 1)..(ci_max - 1)].iter() {
+        for container in self.containers[(ci_min + 1)..ci_max].iter() {
             if !container.is_full() {
                 return false;
             }
@@ -2329,5 +2329,25 @@ mod test {
         assert!(bitmap.contains(5) && bitmap.contains((1 << 16) | 3) && bitmap.contains((2 << 16) | 1));
         assert_eq!(bitmap.min(), Some(5));
         assert_eq!(bitmap.max(), Some((2 << 16) | 1));
+    }
+
+    #[test]
+    fn contains_range_across_containers() {
+        let mut full = RoaringBitmap::from_range(0..(4 << 16));
+        assert!(full.contains_range(10..(2 << 16) + 10));
+        assert!(full.contains_range(0..(1 << 16)));
+        assert!(full.contains_range(5..(4 << 16)));
+        assert!(!full.contains_range(5..(4 << 16) + 1));
+        assert!(full.contains_range(7..7));
+
+        // A hole in the second of two middle containers
+        full.remove((2 << 16) | 5);
+        assert!(!full.contains_range(10..(3 << 16) + 10));
+        assert!(full.contains_range(10..(2 << 16) + 5));
+
+        // The last container ends inside the range
+        let partial = RoaringBitmap::from_range(0..(1 << 16) + 100);
+        assert!(partial.contains_range(10..(1 << 16) + 50));
+        assert!(!partial.contains_range(10..(1 << 16) + 200));
     }
 }
