@@ -23,10 +23,14 @@ use crate::{Iter, RoaringBitmap};
 ///
 /// - [`add`](Self::add), [`remove`](Self::remove) and [`contains`](Self::contains) cost one tree
 ///   lookup, O(log buckets), plus the bitmap's own cost.
-/// - [`len`](Self::len) sums the bitmaps' lengths, O(buckets) calls to [`RoaringBitmap::len`], which
-///   is itself O(containers of that bucket). The count is not cached.
-/// - A range walks the buckets it spans. [`add_range`](Self::add_range) creates one per upper half
-///   the range crosses, so a range of the whole universe creates 2^32 of them.
+/// - [`len`](Self::len) is [`cardinality`](Self::cardinality): it sums [`RoaringBitmap::cardinality`]
+///   over the buckets, O(buckets) calls, each O(containers of that bucket). The count is not cached.
+/// - [`add_range`](Self::add_range) creates a bucket for every upper half the range crosses and
+///   fills it, so its time and memory are O(buckets spanned x 2^16 containers). A range is not a
+///   cheap way to name a huge set: a range of the whole universe asks for 2^32 buckets. It is
+///   not guarded.
+/// - [`remove_range`](Self::remove_range) walks only the buckets the treemap holds within the
+///   range, so it is bounded by those and not by the width of the range.
 /// - The set operations merge the two bucket lists and run the bitmap operation on the buckets
 ///   both sets hold, or clone or skip the ones only one holds. They cost O(buckets) plus the
 ///   bitmap operations. Each bucket lookup is O(log buckets).
@@ -68,6 +72,7 @@ impl RoaringTreemap {
     ///
     /// assert!(set.contains(1 << 40));
     /// ```
+    #[inline]
     pub fn add(&mut self, value: u64) {
         let (high, low) = split(value);
 
@@ -75,6 +80,10 @@ impl RoaringTreemap {
     }
 
     /// Add a range of values to the treemap. An empty or inverted range adds nothing
+    ///
+    /// Creates a bucket for every upper half the range crosses, so the time and memory are
+    /// O(buckets spanned x 2^16 containers), however few values the range names per bucket. A range
+    /// is not a cheap way to name a huge set. Nothing guards a range that spans billions of buckets.
     ///
     /// # Examples
     /// ```
@@ -160,12 +169,13 @@ impl RoaringTreemap {
     pub fn contains(&self, value: u64) -> bool {
         let (high, low) = split(value);
 
-        self.buckets.get(&high).map_or(false, |bucket| bucket.contains(low))
+        self.buckets.get(&high).is_some_and(|bucket| bucket.contains(low))
     }
 
     /// Get the length of the treemap
     ///
-    /// This is the same as cardinality
+    /// This is the same as [`cardinality`](Self::cardinality) and costs the same: O(buckets) calls
+    /// of [`RoaringBitmap::cardinality`], each O(containers of that bucket), with nothing cached.
     #[inline]
     pub fn len(&self) -> usize {
         self.cardinality()
@@ -186,6 +196,7 @@ impl RoaringTreemap {
     }
 
     /// Remove every value from the treemap
+    #[inline]
     pub fn clear(&mut self) {
         self.buckets.clear();
     }
@@ -406,8 +417,25 @@ mod test {
         set
     }
 
+    /// The first 64 values of a set that is expected to hold fewer. A set a regression made huge fails the
+    /// comparison it is in rather than exhausting memory first
     fn to_vec(set: &RoaringTreemap) -> Vec<u64> {
-        set.iter().collect()
+        set.iter().take(64).collect()
+    }
+
+    /// Check `set` holds exactly the values of `expected`. The length is compared first and the
+    /// values lazily, so a set of the wrong size fails here without being collected
+    fn assert_holds<I>(set: &RoaringTreemap, expected: I)
+        where I: Iterator<Item = u64> + Clone
+    {
+        assert_eq!(set.len(), expected.clone().count());
+        assert!(set.iter().eq(expected), "the values differ");
+    }
+
+    /// Check two sets hold the same values, length first and then lazily
+    fn assert_same(set: &RoaringTreemap, expected: &RoaringTreemap) {
+        assert_eq!(set.len(), expected.len());
+        assert!(set.iter().eq(expected.iter()), "the values differ");
     }
 
     /// Values at the edges of a bucket are stored, found and iterated in order
@@ -662,15 +690,14 @@ mod test {
             }
 
             if step % 500 == 499 {
-                assert_eq!(to_vec(&set), model.iter().copied().collect::<Vec<_>>());
-                assert_eq!(set.len(), model.len());
+                assert_holds(&set, model.iter().copied());
 
                 let and = set.and(&other);
                 let or = set.or(&other);
                 let not = set.and_not(&other);
-                assert_eq!(to_vec(&and), model.intersection(&other_model).copied().collect::<Vec<_>>());
-                assert_eq!(to_vec(&or), model.union(&other_model).copied().collect::<Vec<_>>());
-                assert_eq!(to_vec(&not), model.difference(&other_model).copied().collect::<Vec<_>>());
+                assert_holds(&and, model.intersection(&other_model).copied());
+                assert_holds(&or, model.union(&other_model).copied());
+                assert_holds(&not, model.difference(&other_model).copied());
                 assert_eq!(set.and_cardinality(&other), and.len());
 
                 for result in [&and, &or, &not] {
@@ -679,13 +706,13 @@ mod test {
 
                 let mut x = set.clone();
                 x.inplace_and(&other);
-                assert_eq!(to_vec(&x), to_vec(&and));
+                assert_same(&x, &and);
                 let mut x = set.clone();
                 x.inplace_or(&other);
-                assert_eq!(to_vec(&x), to_vec(&or));
+                assert_same(&x, &or);
                 let mut x = set.clone();
                 x.inplace_and_not(&other);
-                assert_eq!(to_vec(&x), to_vec(&not));
+                assert_same(&x, &not);
                 for x in [&x] {
                     assert!(x.buckets.values().all(|bucket| !bucket.is_empty()), "no bucket may be empty");
                 }
