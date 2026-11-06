@@ -18,10 +18,12 @@
 
 mod container;
 mod roaring;
+mod treemap;
 
 #[cfg(test)] mod test;
 
 pub use roaring::*;
+pub use treemap::*;
 
 use std::ops::{RangeBounds, Bound};
 
