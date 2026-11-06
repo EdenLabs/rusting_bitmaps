@@ -16,3 +16,7 @@ harness = false
 [[bench]]
 name    = "churn"
 harness = false
+
+[[bench]]
+name    = "treemap"
+harness = false
