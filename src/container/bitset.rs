@@ -70,8 +70,6 @@ impl BitsetContainer {
     /// Create a bitset from up to 1024 words, the rest being zero. Bit `i` of word `w` is the
     /// value `w * 64 + i`
     pub fn from_lsb0_words(words: &[u64]) -> Self {
-        assert!(words.len() <= BITSET_SIZE_IN_WORDS);
-
         let mut bitset = Self::new();
         bitset.bitset.words[..words.len()].copy_from_slice(words);
         bitset.bitset.cardinality = words.iter().map(|word| word.count_ones()).sum();

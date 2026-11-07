@@ -107,12 +107,11 @@ impl RoaringTreemap {
     }
 
     /// Create a treemap of the values whose bits are set in `words`, bit `i` of word `w` being
-    /// the value `base + w * 64 + i`. It is the `from_lsb0_bytes` constructor of `roaring-rs` on
-    /// 64 bit words
+    /// the value `base + w * 64 + i`
     ///
-    /// The cost is O(`words`) however few bits are set, plus one tree insert per bucket, so it
-    /// beats [`add`](Self::add) per value once a word holds more than a few of them. Words with
-    /// no bit set create no bucket.
+    /// The cost is O(`words`) however few bits are set, plus one tree insert per bucket: a pass
+    /// over 1024 words for each 65536 values the words cover. It replaces [`add`](Self::add) per
+    /// value only where the words are densely set. Words with no bit set create no bucket.
     ///
     /// # Panics
     /// Panics if `base` is not a multiple of 65536, the values of a container, or if `words`

@@ -245,7 +245,7 @@ impl RoaringBitmap {
     pub(crate) fn from_lsb0_words(first_key: u16, words: &[u64]) -> Self {
         let mut bitmap = Self::new();
 
-        for (index, chunk) in words.chunks(1024).enumerate() {
+        for (index, chunk) in words.chunks(BITSET_SIZE_IN_WORDS).enumerate() {
             let bitset = BitsetContainer::from_lsb0_words(chunk);
             let cardinality = bitset.cardinality();
             if cardinality == 0 {
@@ -3273,6 +3273,11 @@ mod test {
         assert!(bitmap.and_not(&other).iter().eq(expected.and_not(&other).iter()));
         assert!(bitmap.xor(&other).iter().eq(expected.xor(&other).iter()));
         assert!(other.and_not(bitmap).iter().eq(other.and_not(expected).iter()));
+
+        let (mut found, mut wanted) = (Vec::new(), Vec::new());
+        bitmap.serialize(&mut found).unwrap();
+        expected.serialize(&mut wanted).unwrap();
+        assert_eq!(found, wanted);
 
         assert_round_trips(bitmap);
     }
