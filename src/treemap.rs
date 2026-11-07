@@ -106,11 +106,11 @@ impl RoaringTreemap {
         }
     }
 
-    /// Add the values whose bits are set in `words`, bit `i` of word `w` being the value
-    /// `base + w * 64 + i`. It is `from_lsb0_bytes` of `roaring-rs` with 64 bit words, merging
-    /// into the set
+    /// Create a treemap of the values whose bits are set in `words`, bit `i` of word `w` being
+    /// the value `base + w * 64 + i`. It is the `from_lsb0_bytes` constructor of `roaring-rs` on
+    /// 64 bit words
     ///
-    /// The cost is O(`words`) however few bits are set, plus one tree lookup per container, so it
+    /// The cost is O(`words`) however few bits are set, plus one tree insert per bucket, so it
     /// beats [`add`](Self::add) per value once a word holds more than a few of them. Words with
     /// no bit set create no bucket.
     ///
@@ -122,28 +122,36 @@ impl RoaringTreemap {
     /// ```
     /// use rusting_bitmaps::RoaringTreemap;
     ///
-    /// let mut set = RoaringTreemap::new();
-    /// set.add_lsb0_words(1 << 32, &[0b101, 1 << 63]);
+    /// let set = RoaringTreemap::from_lsb0_words(1 << 32, &[0b101, 1 << 63]);
     ///
     /// assert_eq!(set.iter().collect::<Vec<_>>(), [1 << 32, (1 << 32) + 2, (1 << 32) + 127]);
     /// ```
-    pub fn add_lsb0_words(&mut self, base: u64, words: &[u64]) {
+    pub fn from_lsb0_words(base: u64, words: &[u64]) -> Self {
         assert_eq!(base % 65536, 0, "base is not a multiple of 65536");
         assert!(
-            base / 65536 + words.chunks(1024).len() as u64 <= 1 << 48,
+            base / 65536 + words.len().div_ceil(1024) as u64 <= 1 << 48,
             "words reach past u64::MAX"
         );
 
-        for (index, container) in words.chunks(1024).enumerate() {
-            if container.iter().all(|&word| word == 0) {
-                continue;
+        let mut set     = Self::new();
+        let mut key     = base / 65536;
+        let mut rest    = words;
+
+        while !rest.is_empty() {
+            // A bucket holds the containers up to its last key, and the words go on in the next.
+            let room            = (65536 - (key & 0xFFFF)) as usize * 1024;
+            let (now, later)    = rest.split_at(room.min(rest.len()));
+            let bitmap          = RoaringBitmap::from_lsb0_words(key as u16, now);
+
+            if !bitmap.is_empty() {
+                set.buckets.insert((key >> 16) as u32, bitmap);
             }
 
-            let key = base / 65536 + index as u64;
-            let (high, low) = ((key >> 16) as u32, key as u16);
-
-            self.buckets.entry(high).or_default().add_lsb0_words(low, container);
+            key  += now.len().div_ceil(1024) as u64;
+            rest  = later;
         }
+
+        set
     }
 
     /// Remove a value from the treemap, returning whether it was present
@@ -808,11 +816,10 @@ mod test {
 
     /// A base above 2^32 puts the values in a later bucket
     #[test]
-    fn treemap_add_lsb0_words_above_the_first_bucket() {
+    fn treemap_from_lsb0_words_above_the_first_bucket() {
         for base in [1 << 32, (5 << 32) + 3 * 65_536, u64::MAX - 65_535] {
             let words = words_with_density(base, 1024, 3);
-            let mut set = RoaringTreemap::new();
-            set.add_lsb0_words(base, &words);
+            let set = RoaringTreemap::from_lsb0_words(base, &words);
 
             assert_equivalent(&set, &from_words_by_add(base, &words));
             assert_eq!(set.iter().next().unwrap() >> 32, base >> 32);
@@ -821,11 +828,10 @@ mod test {
 
     /// A last chunk shorter than 1024 words adds only its bits
     #[test]
-    fn treemap_add_lsb0_words_partial_last_chunk() {
+    fn treemap_from_lsb0_words_partial_last_chunk() {
         for count in [1, 63, 1023, 1025, 2048, 2049, 3000] {
             let words = words_with_density(count as u64, count, 6);
-            let mut set = RoaringTreemap::new();
-            set.add_lsb0_words(7 * 65_536, &words);
+            let set = RoaringTreemap::from_lsb0_words(7 * 65_536, &words);
 
             assert_equivalent(&set, &from_words_by_add(7 * 65_536, &words));
             assert!(set.iter().last().unwrap() < 7 * 65_536 + count as u64 * 64);
@@ -834,11 +840,10 @@ mod test {
 
     /// A run of words that crosses from one bucket into the next
     #[test]
-    fn treemap_add_lsb0_words_crosses_a_bucket() {
+    fn treemap_from_lsb0_words_crosses_a_bucket() {
         let base = (1 << 32) - 65_536;
         let words = words_with_density(9, 2048 + 5, 4);
-        let mut set = RoaringTreemap::new();
-        set.add_lsb0_words(base, &words);
+        let set = RoaringTreemap::from_lsb0_words(base, &words);
 
         assert_eq!(set.buckets.len(), 2);
         assert_equivalent(&set, &from_words_by_add(base, &words));
@@ -846,62 +851,22 @@ mod test {
 
     /// The words reach the last value of the universe
     #[test]
-    fn treemap_add_lsb0_words_at_the_end_of_the_universe() {
+    fn treemap_from_lsb0_words_at_the_end_of_the_universe() {
         let mut words = vec![0u64; 1024];
         words[0] = 1;
         words[1023] = 1 << 63;
 
-        let mut set = RoaringTreemap::new();
-        set.add_lsb0_words(u64::MAX - 65_535, &words);
+        let set = RoaringTreemap::from_lsb0_words(u64::MAX - 65_535, &words);
 
         assert_eq!(to_vec(&set), [u64::MAX - 65_535, u64::MAX]);
     }
 
-    /// Values already in the set stay, in the container the words land in and in the others
-    #[test]
-    fn treemap_add_lsb0_words_merges_into_existing_values() {
-        let base = (2 << 32) + 4 * 65_536;
-        let words = words_with_density(21, 1030, 5);
-        let present = [0, base - 1, base, base + 1, base + 70_000, base + 65_536 * 20, 1 << 40];
-
-        let mut set = from_values(&present);
-        set.add_lsb0_words(base, &words);
-
-        let mut expected = from_words_by_add(base, &words);
-        for value in present {
-            expected.add(value);
-        }
-
-        assert_equivalent(&set, &expected);
-        for value in present {
-            assert!(set.contains(value), "{} must stay", value);
-        }
-    }
-
-    /// Adding the same words twice, or words over a full container, changes nothing
-    #[test]
-    fn treemap_add_lsb0_words_is_idempotent() {
-        let words = words_with_density(3, 1500, 7);
-        let mut set = RoaringTreemap::new();
-        set.add_lsb0_words(1 << 33, &words);
-        let once = set.clone();
-        set.add_lsb0_words(1 << 33, &words);
-        assert_same(&set, &once);
-
-        let mut full = RoaringTreemap::new();
-        full.add_range(1 << 33..(1 << 33) + 65_536);
-        let before = full.clone();
-        full.add_lsb0_words(1 << 33, &words[..1024]);
-        assert_same(&full, &before);
-    }
-
     /// Empty words and words with no bit set create no bucket
     #[test]
-    fn treemap_add_lsb0_words_without_bits_creates_nothing() {
-        let mut set = RoaringTreemap::new();
-        set.add_lsb0_words(1 << 40, &[]);
-        set.add_lsb0_words(1 << 40, &[0; 3000]);
+    fn treemap_from_lsb0_words_without_bits_creates_nothing() {
+        assert!(RoaringTreemap::from_lsb0_words(1 << 40, &[]).is_empty());
 
+        let set = RoaringTreemap::from_lsb0_words(1 << 40, &[0; 3000]);
         assert!(set.is_empty());
         assert_eq!(set.buckets.len(), 0);
 
@@ -909,15 +874,14 @@ mod test {
         let mut words = vec![0u64; 3 * 1024];
         words[0] = 1;
         words[2 * 1024] = 1;
-        set.add_lsb0_words(1 << 40, &words);
+        let set = RoaringTreemap::from_lsb0_words(1 << 40, &words);
         assert_eq!(to_vec(&set), [1 << 40, (1 << 40) + 2 * 65_536]);
     }
 
     /// Full chunks match `add_range`
     #[test]
-    fn treemap_add_lsb0_words_full() {
-        let mut set = RoaringTreemap::new();
-        set.add_lsb0_words(3 << 32, &vec![u64::MAX; 3 * 1024 + 2]);
+    fn treemap_from_lsb0_words_full() {
+        let set = RoaringTreemap::from_lsb0_words(3 << 32, &vec![u64::MAX; 3 * 1024 + 2]);
 
         let mut expected = RoaringTreemap::new();
         expected.add_range(3 << 32..(3 << 32) + 3 * 65_536 + 128);
@@ -926,26 +890,15 @@ mod test {
         assert_eq!(set.len(), 3 * 65_536 + 128);
     }
 
-    /// Values come out in ascending order whatever order the words were added in
-    #[test]
-    fn treemap_add_lsb0_words_iterates_in_order() {
-        let mut set = RoaringTreemap::new();
-        set.add_lsb0_words(2 << 32, &[1 << 63]);
-        set.add_lsb0_words(0, &[1]);
-        set.add_lsb0_words(1 << 32, &[0b110]);
-
-        assert_eq!(to_vec(&set), [0, (1 << 32) + 1, (1 << 32) + 2, (2 << 32) + 63]);
-    }
-
     #[test]
     #[should_panic(expected = "multiple of 65536")]
-    fn treemap_add_lsb0_words_rejects_an_unaligned_base() {
-        RoaringTreemap::new().add_lsb0_words(65_537, &[1]);
+    fn treemap_from_lsb0_words_rejects_an_unaligned_base() {
+        RoaringTreemap::from_lsb0_words(65_537, &[1]);
     }
 
     #[test]
     #[should_panic(expected = "past u64::MAX")]
-    fn treemap_add_lsb0_words_rejects_words_past_the_universe() {
-        RoaringTreemap::new().add_lsb0_words(u64::MAX - 65_535, &[1; 1025]);
+    fn treemap_from_lsb0_words_rejects_words_past_the_universe() {
+        RoaringTreemap::from_lsb0_words(u64::MAX - 65_535, &[1; 1025]);
     }
 }

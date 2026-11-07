@@ -237,32 +237,29 @@ impl RoaringBitmap {
         }
     }
 
-    /// Add to the container `key` the values whose bits are set in `words`, at most the 1024 words
-    /// of a container. Bit `i` of word `w` is the value `key << 16 | w * 64 + i`
+    /// Create a bitmap from the values whose bits are set in `words`: bit `i` of word `w` is the
+    /// value `first_key << 16 | w * 64 + i`, so each 1024 words are the container at the next key.
+    /// A container with no bit set is not created, and the words must not reach past the last key
     ///
-    /// The container is an array when it holds at most `array_limit` values. A container with no bit
-    /// set adds nothing
-    pub(crate) fn add_lsb0_words(&mut self, key: u16, words: &[u64]) {
-        let bitset = BitsetContainer::from_lsb0_words(words);
-        let cardinality = bitset.cardinality();
-        if cardinality == 0 {
-            return;
-        }
+    /// A container is an array when it holds at most the default array limit of values
+    pub(crate) fn from_lsb0_words(first_key: u16, words: &[u64]) -> Self {
+        let mut bitmap = Self::new();
 
-        let container = if cardinality <= self.array_limit {
-            Container::Array(bitset.into())
-        }
-        else {
-            Container::Bitset(bitset)
-        };
-
-        match self.get_index(key) {
-            Ok(i)  => self.containers[i].inplace_or(&container),
-            Err(i) => {
-                self.containers.insert(i, container);
-                self.keys.insert(i, key);
+        for (index, chunk) in words.chunks(1024).enumerate() {
+            let bitset = BitsetContainer::from_lsb0_words(chunk);
+            let cardinality = bitset.cardinality();
+            if cardinality == 0 {
+                continue;
             }
+
+            bitmap.keys.push(first_key + index as u16);
+            bitmap.containers.push(match cardinality <= bitmap.array_limit {
+                true  => Container::Array(bitset.into()),
+                false => Container::Bitset(bitset)
+            });
         }
+
+        bitmap
     }
 
     /// Add a range of values to the bitmap. An empty or inverted range adds nothing
@@ -3281,10 +3278,9 @@ mod test {
     }
 
     #[test]
-    fn add_lsb0_words_matches_add() {
+    fn from_lsb0_words_matches_add() {
         let values: Vec<u16> = (0..3_000).map(|i| (i * 21) as u16).collect();
-        let mut bitmap = RoaringBitmap::new();
-        bitmap.add_lsb0_words(3, &words_of(values.iter().copied()));
+        let bitmap = RoaringBitmap::from_lsb0_words(3, &words_of(values.iter().copied()));
 
         let mut expected = RoaringBitmap::new();
         for value in &values {
@@ -3295,41 +3291,29 @@ mod test {
     }
 
     #[test]
-    fn add_lsb0_words_sparse_chunk_is_an_array() {
-        let mut bitmap = RoaringBitmap::new();
-        bitmap.add_lsb0_words(1, &words_of([0, 1, 63, 64, 65_535]));
+    fn from_lsb0_words_sparse_chunk_is_an_array() {
+        let bitmap = RoaringBitmap::from_lsb0_words(1, &words_of([0, 1, 63, 64, 65_535]));
 
         assert!(matches!(bitmap.containers[0], Container::Array(_)));
         assert!(bitmap.iter().eq([65_536, 65_537, 65_536 + 63, 65_536 + 64, 131_071]));
     }
 
     #[test]
-    fn add_lsb0_words_array_limit_picks_the_container() {
+    fn from_lsb0_words_array_limit_picks_the_container() {
         let at_limit = words_of((0..DEFAULT_MAX_SIZE as u32).map(|i| (i * 3) as u16));
-        let mut bitmap = RoaringBitmap::new();
-        bitmap.add_lsb0_words(0, &at_limit);
+        let bitmap = RoaringBitmap::from_lsb0_words(0, &at_limit);
         assert!(matches!(bitmap.containers[0], Container::Array(_)));
         assert_eq!(bitmap.len(), DEFAULT_MAX_SIZE);
 
         let past_limit = words_of((0..DEFAULT_MAX_SIZE as u32 + 1).map(|i| (i * 3) as u16));
-        let mut bitmap = RoaringBitmap::new();
-        bitmap.add_lsb0_words(0, &past_limit);
+        let bitmap = RoaringBitmap::from_lsb0_words(0, &past_limit);
         assert!(matches!(bitmap.containers[0], Container::Bitset(_)));
         assert_eq!(bitmap.len(), DEFAULT_MAX_SIZE + 1);
-
-        // A bitmap with a lower limit keeps the same values in a bitset
-        let mut limited = RoaringBitmap::with_array_limit(256);
-        limited.add_lsb0_words(0, &words_of(0..257));
-        assert!(matches!(limited.containers[0], Container::Bitset(_)));
-        let mut limited = RoaringBitmap::with_array_limit(256);
-        limited.add_lsb0_words(0, &words_of(0..256));
-        assert!(matches!(limited.containers[0], Container::Array(_)));
     }
 
     #[test]
-    fn add_lsb0_words_full_chunk() {
-        let mut bitmap = RoaringBitmap::new();
-        bitmap.add_lsb0_words(2, &[u64::MAX; 1024]);
+    fn from_lsb0_words_full_chunk() {
+        let bitmap = RoaringBitmap::from_lsb0_words(2, &[u64::MAX; 1024]);
 
         let expected = RoaringBitmap::from_range(2 << 16..3 << 16);
         assert!(bitmap.containers[0].is_full());
@@ -3337,9 +3321,8 @@ mod test {
     }
 
     #[test]
-    fn add_lsb0_words_partial_chunk_leaves_the_rest_clear() {
-        let mut bitmap = RoaringBitmap::new();
-        bitmap.add_lsb0_words(0, &[u64::MAX, 1]);
+    fn from_lsb0_words_partial_chunk_leaves_the_rest_clear() {
+        let bitmap = RoaringBitmap::from_lsb0_words(0, &[u64::MAX, 1]);
 
         assert!(bitmap.iter().eq(0..65));
         assert!(!bitmap.contains(65));
@@ -3347,73 +3330,30 @@ mod test {
     }
 
     #[test]
-    fn add_lsb0_words_empty_adds_nothing() {
-        let mut bitmap = RoaringBitmap::new();
-        bitmap.add_lsb0_words(4, &[]);
-        bitmap.add_lsb0_words(4, &[0; 1024]);
+    fn from_lsb0_words_empty_creates_nothing() {
+        assert!(RoaringBitmap::from_lsb0_words(4, &[]).is_empty());
 
+        let bitmap = RoaringBitmap::from_lsb0_words(4, &[0; 1024]);
         assert!(bitmap.is_empty());
         assert!(bitmap.keys.is_empty());
     }
 
     #[test]
-    fn add_lsb0_words_keys_stay_ordered() {
-        let mut bitmap = RoaringBitmap::new();
-        for key in [5, 2, 9, 0, 7] {
-            bitmap.add_lsb0_words(key, &words_of([key]));
-        }
+    fn from_lsb0_words_skips_a_chunk_with_no_bit_and_keeps_the_keys_ascending() {
+        let mut words = vec![0u64; 3 * 1024];
+        words[0] = 1;
+        words[2 * 1024 + 1023] = 1 << 63;
+        let bitmap = RoaringBitmap::from_lsb0_words(5, &words);
 
-        assert_eq!(bitmap.keys, [0, 2, 5, 7, 9]);
-        assert!(bitmap.iter().eq([0, 2 << 16 | 2, 5 << 16 | 5, 7 << 16 | 7, 9 << 16 | 9]));
+        assert_eq!(bitmap.keys, [5, 7]);
+        assert!(bitmap.iter().eq([5 << 16, (8 << 16) - 1]));
     }
 
     #[test]
-    fn add_lsb0_words_merges_into_each_container_type() {
-        let words = words_of((0..100).map(|i| i * 5));
-        let cases: [(&str, RoaringBitmap); 3] = [
-            ("array", RoaringBitmap::from_slice(&[1, 2, 3, 500, 40_000])),
-            ("bitset", RoaringBitmap::from_slice(&(0..5_000).map(|i| i * 3).collect::<Vec<_>>())),
-            ("run", {
-                let mut run = RoaringBitmap::new();
-                let mut container = crate::container::RunContainer::new();
-                container.add_range(1_000..9_000);
-                run.keys.push(0);
-                run.containers.push(Container::Run(container));
-                run
-            })
-        ];
+    fn from_lsb0_words_ends_at_the_last_key() {
+        let bitmap = RoaringBitmap::from_lsb0_words(u16::MAX, &[1, 0, 1 << 63]);
 
-        for (name, existing) in cases {
-            let mut bitmap = existing.clone();
-            bitmap.add_lsb0_words(0, &words);
-
-            let mut expected = existing;
-            for i in 0..100 {
-                expected.add(i * 5);
-            }
-
-            assert!(bitmap.iter().eq(expected.iter()), "{} must merge", name);
-            assert_eq!(bitmap.len(), expected.len(), "{} must merge", name);
-            assert_eq!(bitmap.keys, expected.keys);
-        }
-    }
-
-    #[test]
-    fn add_lsb0_words_merge_past_the_limit_becomes_a_bitset() {
-        let mut bitmap = RoaringBitmap::from_slice(&(0..3_000).map(|i| i * 2).collect::<Vec<_>>());
-        bitmap.add_lsb0_words(0, &words_of((0..3_000).map(|i| i * 2 + 1)));
-
-        assert!(matches!(bitmap.containers[0], Container::Bitset(_)));
-        assert!(bitmap.iter().eq(0..6_000));
-        assert_round_trips(&bitmap);
-    }
-
-    #[test]
-    fn add_lsb0_words_merge_keeps_neighbouring_containers() {
-        let mut bitmap = RoaringBitmap::from_slice(&[7, 1 << 16 | 8, 3 << 16 | 9]);
-        bitmap.add_lsb0_words(1, &words_of([1, 8]));
-
-        assert_eq!(bitmap.keys, [0, 1, 3]);
-        assert!(bitmap.iter().eq([7, 1 << 16 | 1, 1 << 16 | 8, 3 << 16 | 9]));
+        assert_eq!(bitmap.keys, [u16::MAX]);
+        assert!(bitmap.iter().eq([0xFFFF_0000, 0xFFFF_0000 + 191]));
     }
 }
