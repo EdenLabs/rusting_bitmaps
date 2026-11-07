@@ -237,6 +237,31 @@ impl RoaringBitmap {
         }
     }
 
+    /// Create a bitmap from the values whose bits are set in `words`: bit `i` of word `w` is the
+    /// value `first_key << 16 | w * 64 + i`, so each 1024 words are the container at the next key.
+    /// A container with no bit set is not created, and the words must not reach past the last key
+    ///
+    /// A container is an array when it holds at most the default array limit of values
+    pub(crate) fn from_lsb0_words(first_key: u16, words: &[u64]) -> Self {
+        let mut bitmap = Self::new();
+
+        for (index, chunk) in words.chunks(BITSET_SIZE_IN_WORDS).enumerate() {
+            let bitset = BitsetContainer::from_lsb0_words(chunk);
+            let cardinality = bitset.cardinality();
+            if cardinality == 0 {
+                continue;
+            }
+
+            bitmap.keys.push(first_key + index as u16);
+            bitmap.containers.push(match cardinality <= bitmap.array_limit {
+                true  => Container::Array(bitset.into()),
+                false => Container::Bitset(bitset)
+            });
+        }
+
+        bitmap
+    }
+
     /// Add a range of values to the bitmap. An empty or inverted range adds nothing
     pub fn add_range<R: RangeBounds<u32>>(&mut self, range: R) {
         let (min, last) = match inclusive_bounds(range) {
@@ -3215,5 +3240,125 @@ mod test {
         let bitmap = RoaringBitmap::deserialize(&mut std::io::Cursor::new(&bytes)).unwrap();
         assert!(bitmap.iter().eq(0xFFFF..=0x2_0000));
         assert!(bitmap.contains_range(0xFFFF..=0x2_0000));
+    }
+
+    /// The words of one container holding `values`
+    fn words_of(values: impl IntoIterator<Item = u16>) -> Vec<u64> {
+        let mut words = vec![0u64; 1024];
+        for value in values {
+            words[usize::from(value / 64)] |= 1 << (value % 64);
+        }
+
+        words
+    }
+
+    /// Check `bitmap` is the bitmap `expected` built with `add`, in every way the rest of the
+    /// crate relies on: the keys, the container types, the values, the cardinality, membership, the
+    /// set operations and the serialized form
+    fn assert_same_bitmap(bitmap: &RoaringBitmap, expected: &RoaringBitmap) {
+        assert_eq!(bitmap.keys, expected.keys);
+        for (found, wanted) in bitmap.containers.iter().zip(&expected.containers) {
+            assert_eq!(std::mem::discriminant(found), std::mem::discriminant(wanted));
+        }
+
+        assert_eq!(bitmap.cardinality(), expected.cardinality());
+        assert!(bitmap.iter().eq(expected.iter()));
+        for value in expected.iter().step_by(7) {
+            assert!(bitmap.contains(value));
+        }
+
+        let other = RoaringBitmap::from_slice(&[0, 5, 70_000, 200_000, 1_000_000]);
+        assert!(bitmap.or(&other).iter().eq(expected.or(&other).iter()));
+        assert!(bitmap.and(&other).iter().eq(expected.and(&other).iter()));
+        assert!(bitmap.and_not(&other).iter().eq(expected.and_not(&other).iter()));
+        assert!(bitmap.xor(&other).iter().eq(expected.xor(&other).iter()));
+        assert!(other.and_not(bitmap).iter().eq(other.and_not(expected).iter()));
+
+        let (mut found, mut wanted) = (Vec::new(), Vec::new());
+        bitmap.serialize(&mut found).unwrap();
+        expected.serialize(&mut wanted).unwrap();
+        assert_eq!(found, wanted);
+
+        assert_round_trips(bitmap);
+    }
+
+    #[test]
+    fn from_lsb0_words_matches_add() {
+        let values: Vec<u16> = (0..3_000).map(|i| (i * 21) as u16).collect();
+        let bitmap = RoaringBitmap::from_lsb0_words(3, &words_of(values.iter().copied()));
+
+        let mut expected = RoaringBitmap::new();
+        for value in &values {
+            expected.add(3 << 16 | u32::from(*value));
+        }
+
+        assert_same_bitmap(&bitmap, &expected);
+    }
+
+    #[test]
+    fn from_lsb0_words_sparse_chunk_is_an_array() {
+        let bitmap = RoaringBitmap::from_lsb0_words(1, &words_of([0, 1, 63, 64, 65_535]));
+
+        assert!(matches!(bitmap.containers[0], Container::Array(_)));
+        assert!(bitmap.iter().eq([65_536, 65_537, 65_536 + 63, 65_536 + 64, 131_071]));
+    }
+
+    #[test]
+    fn from_lsb0_words_array_limit_picks_the_container() {
+        let at_limit = words_of((0..DEFAULT_MAX_SIZE as u32).map(|i| (i * 3) as u16));
+        let bitmap = RoaringBitmap::from_lsb0_words(0, &at_limit);
+        assert!(matches!(bitmap.containers[0], Container::Array(_)));
+        assert_eq!(bitmap.len(), DEFAULT_MAX_SIZE);
+
+        let past_limit = words_of((0..DEFAULT_MAX_SIZE as u32 + 1).map(|i| (i * 3) as u16));
+        let bitmap = RoaringBitmap::from_lsb0_words(0, &past_limit);
+        assert!(matches!(bitmap.containers[0], Container::Bitset(_)));
+        assert_eq!(bitmap.len(), DEFAULT_MAX_SIZE + 1);
+    }
+
+    #[test]
+    fn from_lsb0_words_full_chunk() {
+        let bitmap = RoaringBitmap::from_lsb0_words(2, &[u64::MAX; 1024]);
+
+        let expected = RoaringBitmap::from_range(2 << 16..3 << 16);
+        assert!(bitmap.containers[0].is_full());
+        assert_same_bitmap(&bitmap, &expected);
+    }
+
+    #[test]
+    fn from_lsb0_words_partial_chunk_leaves_the_rest_clear() {
+        let bitmap = RoaringBitmap::from_lsb0_words(0, &[u64::MAX, 1]);
+
+        assert!(bitmap.iter().eq(0..65));
+        assert!(!bitmap.contains(65));
+        assert!(!bitmap.contains(65_535));
+    }
+
+    #[test]
+    fn from_lsb0_words_empty_creates_nothing() {
+        assert!(RoaringBitmap::from_lsb0_words(4, &[]).is_empty());
+
+        let bitmap = RoaringBitmap::from_lsb0_words(4, &[0; 1024]);
+        assert!(bitmap.is_empty());
+        assert!(bitmap.keys.is_empty());
+    }
+
+    #[test]
+    fn from_lsb0_words_skips_a_chunk_with_no_bit_and_keeps_the_keys_ascending() {
+        let mut words = vec![0u64; 3 * 1024];
+        words[0] = 1;
+        words[2 * 1024 + 1023] = 1 << 63;
+        let bitmap = RoaringBitmap::from_lsb0_words(5, &words);
+
+        assert_eq!(bitmap.keys, [5, 7]);
+        assert!(bitmap.iter().eq([5 << 16, (8 << 16) - 1]));
+    }
+
+    #[test]
+    fn from_lsb0_words_ends_at_the_last_key() {
+        let bitmap = RoaringBitmap::from_lsb0_words(u16::MAX, &[1, 0, 1 << 63]);
+
+        assert_eq!(bitmap.keys, [u16::MAX]);
+        assert!(bitmap.iter().eq([0xFFFF_0000, 0xFFFF_0000 + 191]));
     }
 }

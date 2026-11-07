@@ -6,6 +6,7 @@ mod slack;
 
 pub use self::array::ArrayContainer;
 pub use self::bitset::BitsetContainer;
+pub(crate) use self::bitset::BITSET_SIZE_IN_WORDS;
 pub use self::run::RunContainer;
 
 use self::run::Rle16;
