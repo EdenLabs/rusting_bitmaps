@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::collections::btree_map;
+use std::mem;
 use std::ops::{Bound, RangeBounds};
 
 use crate::{Iter, RoaringBitmap};
@@ -16,6 +17,11 @@ use crate::{Iter, RoaringBitmap};
 /// bucket's bitmap. A bucket exists only while it holds a value: removing the last value of a
 /// bucket, or an operation that leaves a bucket empty, drops the bucket. [`is_empty`](Self::is_empty)
 /// and the cost of every walk over the buckets rely on that.
+///
+/// The treemap keeps the bitmap of one dropped bucket, emptied, and gives it to the next bucket it
+/// creates, so a set that empties and refills, like an id free list, does not allocate a bucket's
+/// bitmap each time: its two vectors and its first array. It holds at most one, with the
+/// capacity its vectors reached, and [`shrink_to_fit`](Self::shrink_to_fit) releases it.
 ///
 /// # Performance Remarks
 /// A set whose values sit in few upper halves, such as keys counted up from 0, is one bucket and
@@ -48,17 +54,30 @@ use crate::{Iter, RoaringBitmap};
 /// assert!(set.contains(u64::MAX));
 /// assert_eq!(set.iter().collect::<Vec<_>>(), [7, 1 << 32, u64::MAX]);
 /// ```
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct RoaringTreemap {
     /// The bitmap of each upper half that holds a value. None is empty.
-    buckets: BTreeMap<u32, RoaringBitmap>
+    buckets: BTreeMap<u32, RoaringBitmap>,
+
+    /// The bitmap of a bucket the treemap dropped, emptied, for the next bucket it creates. It
+    /// is no bucket and holds no values: only the adds that take it and the operations that
+    /// drop a bucket look at it
+    spare: Option<RoaringBitmap>
+}
+
+/// A clone holds the same values and no spare bucket: a clone of the spare has no allocation,
+/// and would keep the clone from taking a real one until an add used it up
+impl Clone for RoaringTreemap {
+    fn clone(&self) -> Self {
+        Self { buckets: self.buckets.clone(), spare: None }
+    }
 }
 
 impl RoaringTreemap {
     /// Create a new empty roaring treemap
     #[inline]
     pub fn new() -> Self {
-        Self { buckets: BTreeMap::new() }
+        Self { buckets: BTreeMap::new(), spare: None }
     }
 
     /// Add a value to the treemap
@@ -76,7 +95,7 @@ impl RoaringTreemap {
     pub fn add(&mut self, value: u64) {
         let (high, low) = split(value);
 
-        self.buckets.entry(high).or_default().add(low);
+        bucket(&mut self.buckets, &mut self.spare, high).add(low);
     }
 
     /// Add a range of values to the treemap. An empty or inverted range adds nothing
@@ -102,7 +121,7 @@ impl RoaringTreemap {
         };
 
         for (high, low) in bucket_ranges(first, last) {
-            self.buckets.entry(high).or_default().add_range(low);
+            bucket(&mut self.buckets, &mut self.spare, high).add_range(low);
         }
     }
 
@@ -179,7 +198,9 @@ impl RoaringTreemap {
         };
 
         if emptied {
-            self.buckets.remove(&high);
+            if let Some(bucket) = self.buckets.remove(&high) {
+                keep_as_spare(&mut self.spare, bucket);
+            }
         }
 
         removed
@@ -196,19 +217,25 @@ impl RoaringTreemap {
 
         let (first_high, last_high) = ((first >> 32) as u32, (last >> 32) as u32);
 
-        let mut emptied = Vec::new();
-        for (high, bucket) in self.buckets.range_mut(first_high..=last_high) {
-            let start = if *high == first_high { first as u32 } else { 0 };
-            let end = if *high == last_high { last as u32 } else { u32::MAX };
+        // A bucket the range empties is dropped as it is found, so no list of them is allocated.
+        // Only the first and last bucket of the range can be left holding values
+        let mut from = first_high;
+        while let Some((&high, bucket)) = self.buckets.range_mut(from..=last_high).next() {
+            let start = if high == first_high { first as u32 } else { 0 };
+            let end = if high == last_high { last as u32 } else { u32::MAX };
 
             bucket.remove_range(start..=end);
             if bucket.is_empty() {
-                emptied.push(*high);
+                if let Some(bucket) = self.buckets.remove(&high) {
+                    keep_as_spare(&mut self.spare, bucket);
+                }
             }
-        }
 
-        for high in emptied {
-            self.buckets.remove(&high);
+            if high == last_high {
+                break;
+            }
+
+            from = high + 1;
         }
     }
 
@@ -243,9 +270,27 @@ impl RoaringTreemap {
     }
 
     /// Remove every value from the treemap
-    #[inline]
+    ///
+    /// Keeps the bitmap of the first bucket for the next one the treemap creates, with the
+    /// capacity its vectors reached, until [`shrink_to_fit`](Self::shrink_to_fit).
     pub fn clear(&mut self) {
-        self.buckets.clear();
+        // Dropping the iterator drops the buckets after the first, as `BTreeMap::clear` does
+        let mut buckets = mem::take(&mut self.buckets).into_iter();
+        if let Some((_, bucket)) = buckets.next() {
+            keep_as_spare(&mut self.spare, bucket);
+        }
+    }
+
+    /// Shrink the memory used by the treemap to fit its contents
+    ///
+    /// Releases the emptied bucket the treemap keeps for the next one it creates, and shrinks
+    /// every bucket's bitmap as [`RoaringBitmap::shrink_to_fit`] does.
+    pub fn shrink_to_fit(&mut self) {
+        self.spare = None;
+
+        for bucket in self.buckets.values_mut() {
+            bucket.shrink_to_fit();
+        }
     }
 
     /// And this treemap with `other` (intersect)
@@ -297,15 +342,26 @@ impl RoaringTreemap {
 
     /// And this treemap with `other` in place. Buckets the result leaves empty are dropped
     pub fn inplace_and(&mut self, other: &Self) {
-        self.buckets.retain(|high, bucket| match other.buckets.get(high) {
-            Some(other)
-                => {
-                    bucket.inplace_and(other);
+        let spare = &mut self.spare;
 
-                    !bucket.is_empty()
-                },
-            None
-                => false
+        self.buckets.retain(|high, bucket| {
+            let keep = match other.buckets.get(high) {
+                Some(other)
+                    => {
+                        bucket.inplace_and(other);
+
+                        !bucket.is_empty()
+                    },
+                None
+                    => false
+            };
+
+            if !keep && spare.is_none() {
+                // `retain` does not hand over the bucket it drops
+                keep_as_spare(spare, mem::take(bucket));
+            }
+
+            keep
         });
     }
 
@@ -334,7 +390,9 @@ impl RoaringTreemap {
             };
 
             if emptied {
-                self.buckets.remove(high);
+                if let Some(bucket) = self.buckets.remove(high) {
+                    keep_as_spare(&mut self.spare, bucket);
+                }
             }
         }
     }
@@ -395,6 +453,26 @@ impl<'a> Iterator for TreemapIter<'a> {
             self.high = u64::from(*high) << 32;
             self.iter = Some(bucket.iter());
         }
+    }
+}
+
+/// The bucket of `high`, created from the spare if there is no such bucket
+#[inline]
+fn bucket<'a>(
+    buckets: &'a mut BTreeMap<u32, RoaringBitmap>,
+    spare: &mut Option<RoaringBitmap>,
+    high: u32
+) -> &'a mut RoaringBitmap {
+    buckets.entry(high).or_insert_with(|| spare.take().unwrap_or_default())
+}
+
+/// Keep the bitmap of a bucket the treemap is dropping as its spare if it has none, emptied:
+/// a bucket can be dropped with its values
+#[inline]
+fn keep_as_spare(spare: &mut Option<RoaringBitmap>, mut bucket: RoaringBitmap) {
+    if spare.is_none() {
+        bucket.clear();
+        *spare = Some(bucket);
     }
 }
 

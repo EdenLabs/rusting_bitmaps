@@ -1,16 +1,19 @@
 //! Single-threaded id-allocator churn workloads for `RoaringBitmap`.
 //!
-//! Usage: `churn <workload> <set> <ops>` prints the ns per op. `churn mem <set>` prints the
-//! heap bytes per element. A plain binary rather than criterion so that `perf stat` can count
+//! Usage: `churn <workload> <set> <ops>` prints the ns and allocator calls per op. `churn mem
+//! <set>` prints the heap bytes per element, `churn sizes` the size of the structs. A plain binary rather than criterion so that `perf stat` can count
 //! instructions: the instructions per op are the difference between two op counts, which
 //! cancels the set construction cost.
+//!
+//! The `refill_*` workloads empty the set every op and report the heap bytes the emptied set
+//! still holds too: `churn <workload> <ops>`.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-use rusting_bitmaps::RoaringBitmap;
+use rusting_bitmaps::{RoaringBitmap, RoaringTreemap};
 
 /// Live heap bytes, for the bytes per element report.
 struct Counting;
@@ -19,6 +22,7 @@ static LIVE: AtomicUsize = AtomicUsize::new(0);
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        CALLS.fetch_add(1, Ordering::Relaxed);
         LIVE.fetch_add(layout.size(), Ordering::Relaxed);
         System.alloc(layout)
     }
@@ -29,11 +33,13 @@ unsafe impl GlobalAlloc for Counting {
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        CALLS.fetch_add(1, Ordering::Relaxed);
         LIVE.fetch_add(layout.size(), Ordering::Relaxed);
         System.alloc_zeroed(layout)
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        CALLS.fetch_add(1, Ordering::Relaxed);
         LIVE.fetch_add(new_size, Ordering::Relaxed);
         LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
         System.realloc(ptr, layout, new_size)
@@ -58,6 +64,9 @@ impl Rng {
         (self.next() >> 11) % n
     }
 }
+
+/// Allocator calls, for the allocations per op report.
+static CALLS: AtomicUsize = AtomicUsize::new(0);
 
 /// Number of ids acquired then released per churn round.
 const BATCH: usize = 16;
@@ -98,6 +107,8 @@ fn build(set: &str) -> RoaringBitmap {
             let data: Vec<u32> = (0..4096u32).map(|i| i * 2).collect();
             RoaringBitmap::from_slice(&data)
         },
+        // nothing, the state of an id allocator with no live ids
+        "empty" => RoaringBitmap::new(),
         other => panic!("unknown set {}", other)
     }
 }
@@ -215,8 +226,177 @@ fn run_add_range(bitmap: &mut RoaringBitmap, ops: usize) -> u64 {
     bitmap.len() as u64
 }
 
+/// Empty, one id, empty again: a free list that never holds more than one id. `fused` selects
+/// `pop_min` over `remove`.
+fn run_cycle(bitmap: &mut RoaringBitmap, ops: usize, fused: bool) -> u64 {
+    let mut acc = 0u64;
+
+    for i in 0..ops as u32 {
+        bitmap.add(i & 0xFFFF);
+        if fused {
+            acc += u64::from(bitmap.pop_min().unwrap());
+        }
+        else {
+            acc += u64::from(bitmap.remove(i & 0xFFFF));
+        }
+    }
+
+    acc
+}
+
+/// The measurements of a `refill_*` workload: the allocator calls and time of its loop, and the heap
+/// bytes its set still holds once the loop has left it empty.
+struct Cycle {
+    calls: usize,
+    live: usize,
+    start: Instant,
+    elapsed: std::time::Duration
+}
+
+impl Cycle {
+    /// Call it with the operands built and the set not yet created, so the heap bytes the set
+    /// holds at the end include what its first op allocated.
+    fn new() -> Self {
+        Self {
+            calls: 0,
+            live: LIVE.load(Ordering::Relaxed),
+            start: Instant::now(),
+            elapsed: std::time::Duration::ZERO
+        }
+    }
+
+    /// Start timing and counting calls, with the set emptied once.
+    fn begin(&mut self) {
+        self.calls = CALLS.load(Ordering::Relaxed);
+        self.start = Instant::now();
+    }
+
+    /// Stop measuring with the emptied set still alive.
+    fn end(&mut self) {
+        self.elapsed = self.start.elapsed();
+        self.calls = CALLS.load(Ordering::Relaxed) - self.calls;
+        self.live = LIVE.load(Ordering::Relaxed) - self.live;
+    }
+}
+
+/// A key other than 0 for the operands to put values in
+const FAR: u32 = 1 << 20;
+
+fn cycle_bitmap(ops: usize, run: impl Fn(&mut RoaringBitmap, &RoaringBitmap, u32), operand: &[u32]) -> Cycle {
+    let operand = RoaringBitmap::from_slice(operand);
+    let mut cycle = Cycle::new();
+    let mut bitmap = RoaringBitmap::new();
+    run(&mut bitmap, &operand, 0);
+
+    cycle.begin();
+    for i in 0..ops as u32 {
+        run(&mut bitmap, &operand, i);
+    }
+    cycle.end();
+    black_box(&bitmap);
+    assert!(bitmap.is_empty());
+
+    cycle
+}
+
+fn cycle_treemap(ops: usize, keep: &[u64], run: impl Fn(&mut RoaringTreemap, &RoaringTreemap, u64)) -> Cycle {
+    let mut operand = RoaringTreemap::new();
+    for &value in keep {
+        operand.add(value);
+    }
+    let mut cycle = Cycle::new();
+    let mut set = RoaringTreemap::new();
+    run(&mut set, &operand, 0);
+
+    cycle.begin();
+    for i in 0..ops as u64 {
+        run(&mut set, &operand, i);
+    }
+    cycle.end();
+    black_box(&set);
+    assert!(set.is_empty());
+
+    cycle
+}
+
+/// Fill one container past the array limit, so it is a bitset.
+fn fill_bitset(bitmap: &mut RoaringBitmap, count: u32) {
+    for value in 0..count {
+        bitmap.add(value);
+    }
+}
+
+fn run_cycle_workload(name: &str, ops: usize) -> Cycle {
+    match name {
+        // add one value, then empty its container with each in-place op and removal
+        "refill_and_not" => cycle_bitmap(ops, |b, o, _| { b.add(7); b.inplace_and_not(o) }, &[7]),
+        "refill_and_shared_key" => cycle_bitmap(ops, |b, o, _| { b.add(7); b.inplace_and(o) }, &[9]),
+        "refill_and_other_key" => cycle_bitmap(ops, |b, o, _| { b.add(7); b.inplace_and(o) }, &[FAR]),
+        "refill_and_empty" => cycle_bitmap(ops, |b, o, _| { b.add(7); b.inplace_and(o) }, &[]),
+        "refill_xor" => cycle_bitmap(ops, |b, o, _| { b.add(7); b.inplace_xor(o) }, &[7]),
+        "refill_not" => cycle_bitmap(ops, |b, _, _| { b.add(7); b.inplace_not(7..=7) }, &[]),
+        "refill_add_remove" => cycle_bitmap(ops, |b, _, _| { b.add(7); b.remove(7); }, &[]),
+        // sixteen containers emptied at once, then sixteen new keys
+        "refill_and_not_16" => {
+            let keys: Vec<u32> = (0..16).map(|k| k << 16 | 7).collect();
+            cycle_bitmap(ops, |b, o, _| { for &k in &keys { b.add(k) } b.inplace_and_not(o) }, &keys.clone())
+        },
+        "refill_and_16" => {
+            let keys: Vec<u32> = (0..16).map(|k| k << 16 | 7).collect();
+            cycle_bitmap(ops, |b, o, _| { for &k in &keys { b.add(k) } b.inplace_and(o) }, &[FAR])
+        },
+        // a bitset container filled past the array limit then emptied
+        "refill_bitset_remove_range" => cycle_bitmap(ops, |b, _, _| { fill_bitset(b, 5000); b.remove_range(..) }, &[]),
+        "refill_bitset_and_not" => {
+            let all: Vec<u32> = (0..5000).collect();
+            cycle_bitmap(ops, |b, o, _| { fill_bitset(b, 5000); b.inplace_and_not(o) }, &all)
+        },
+        // a run container, which a range the size of a container makes
+        "refill_run_remove_range" => cycle_bitmap(ops, |b, _, _| { b.add_range(0..60_000); b.remove_range(..) }, &[]),
+        "refill_run_and_not" => {
+            let all: Vec<u32> = (0..60_000).collect();
+            cycle_bitmap(ops, |b, o, _| { b.add_range(0..60_000); b.inplace_and_not(o) }, &all)
+        },
+        // a treemap that holds a single value, in a bucket of its own
+        "refill_tm_remove" => cycle_treemap(ops, &[], |t, _, _| { t.add(7); t.remove(7); }),
+        "refill_tm_remove_neighbor" => {
+            // another bucket keeps the tree itself alive
+            cycle_treemap(ops, &[], |t, _, _| { t.add(1 << 40); t.add(7); t.remove(7); t.remove(1 << 40); })
+        },
+        "refill_tm_clear" => cycle_treemap(ops, &[], |t, _, _| { t.add(7); t.add(1 << 33); t.clear() }),
+        "refill_tm_remove_range" => cycle_treemap(ops, &[], |t, _, _| { t.add(7); t.add(1 << 33); t.remove_range(..) }),
+        "refill_tm_and_not" => cycle_treemap(ops, &[7, 1 << 33], |t, o, _| { t.add(7); t.add(1 << 33); t.inplace_and_not(o) }),
+        "refill_tm_and_other_bucket" => cycle_treemap(ops, &[1 << 40], |t, o, _| { t.add(7); t.add(1 << 33); t.inplace_and(o) }),
+        "refill_tm_and_shared_bucket" => cycle_treemap(ops, &[9, (1 << 33) + 9], |t, o, _| { t.add(7); t.add(1 << 33); t.inplace_and(o) }),
+        other => panic!("unknown workload {}", other)
+    }
+}
+
+/// Copy a small set over one that is already filled, which the in-place ops do for an empty `self`.
+fn run_copy_from(ops: usize) -> u64 {
+    let source = RoaringBitmap::from_slice(&[1, 2, 3, 1 << 20]);
+    let mut bitmap = RoaringBitmap::from_slice(&[4, 5, 1 << 18]);
+    let mut acc = 0;
+
+    for _ in 0..ops {
+        bitmap.copy_from(&source);
+        acc += bitmap.len() as u64;
+    }
+
+    acc
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    if args[0] == "sizes" {
+        println!(
+            "RoaringBitmap {} B, RoaringTreemap {} B",
+            std::mem::size_of::<RoaringBitmap>(), std::mem::size_of::<RoaringTreemap>()
+        );
+
+        return;
+    }
 
     if args[0] == "mem" {
         let before = LIVE.load(Ordering::Relaxed);
@@ -235,9 +415,35 @@ fn main() {
         return;
     }
 
+    if args[0].starts_with("refill_") {
+        let ops: usize = args[1].parse().unwrap();
+        let cycle = run_cycle_workload(&args[0], ops);
+
+        println!(
+            "{} {:.2} ns/op {:.4} allocs/op {} B retained",
+            args[0], cycle.elapsed.as_nanos() as f64 / ops as f64, cycle.calls as f64 / ops as f64, cycle.live
+        );
+
+        return;
+    }
+
+    if args[0] == "copy_from" {
+        let ops: usize = args[1].parse().unwrap();
+        let calls = CALLS.load(Ordering::Relaxed);
+        let start = Instant::now();
+        black_box(run_copy_from(ops));
+        let elapsed = start.elapsed();
+        let calls = CALLS.load(Ordering::Relaxed) - calls;
+
+        println!("copy_from {:.2} ns/op {:.4} allocs/op", elapsed.as_nanos() as f64 / ops as f64, calls as f64 / ops as f64);
+
+        return;
+    }
+
     let ops: usize = args[2].parse().unwrap();
     let mut bitmap = build(&args[1]);
 
+    let calls = CALLS.load(Ordering::Relaxed);
     let start = Instant::now();
     let acc = match args[0].as_str() {
         "churn" => run_churn(&mut bitmap, ops, false),
@@ -249,10 +455,17 @@ fn main() {
         "min_api" => run_min(&mut bitmap, ops, true),
         "edge" => run_edge(&mut bitmap, ops),
         "add_range" => run_add_range(&mut bitmap, ops),
+        "cycle" => run_cycle(&mut bitmap, ops, true),
+        "cycle_remove" => run_cycle(&mut bitmap, ops, false),
         other => panic!("unknown workload {}", other)
     };
     let elapsed = start.elapsed();
     black_box(acc);
 
-    println!("{} {} {:.2} ns/op", args[0], args[1], elapsed.as_nanos() as f64 / ops as f64);
+    let calls = CALLS.load(Ordering::Relaxed) - calls;
+
+    println!(
+        "{} {} {:.2} ns/op {:.4} allocs/op",
+        args[0], args[1], elapsed.as_nanos() as f64 / ops as f64, calls as f64 / ops as f64
+    );
 }

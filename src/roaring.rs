@@ -36,6 +36,14 @@ use crate::container::{self, *, array_ops};
 /// 
 /// Roaring Bitmap:
 ///  - Nonlinear growable vectors to store a 16 bit key and container pointer + data for each bucket
+///  - One spare array container once a removal, an in-place set operation, `copy_from` or `clear`
+///    has emptied or discarded one. The bitmap keeps its allocation (the capacity the array
+///    reached, up to 16 KiB after an in-place `or` or `xor` reserved room) for the next key an
+///    `add` or `add_slice` creates, so a set that empties and refills, like an id free list, does
+///    not allocate each time. Further containers dropped while the spare is held are freed, and
+///    so is every bitset and run container: a bitset refills as an array, and at the default array
+///    limit the 8 KiB allocation of its conversion is under 1% of the adds that fill it, which a
+///    much lower `with_array_limit` gives up. `shrink_to_fit` releases the spare
 /// 
 /// Containers:
 ///  - Arrays require a maximum of `4096 * 2` bytes (grown with contents). Removing from the front of
@@ -49,7 +57,7 @@ use crate::container::{self, *, array_ops};
 /// Queries using the normal ops will create a new bitmap for every operation.
 /// 
 /// `cardinality()` (`len()`) queries may lazily evaluate the cardinality of some containers if they are determined to be out of date
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct RoaringBitmap {
     /// List of containers in this roaring bitmap
     containers: Vec<Container>,
@@ -58,7 +66,26 @@ pub struct RoaringBitmap {
     keys: Vec<u16>,
 
     /// The most values an array container holds before an add turns it into a bitset
-    array_limit: usize
+    array_limit: usize,
+
+    /// An emptied array container, allocation intact, for the next key the bitmap adds. It is
+    /// never part of the contents: it holds no values and only the adds that take it and the
+    /// operations that drop a container look at it. Without it a set that drops to empty and
+    /// refills allocates the container's array each time
+    spare: Option<ArrayContainer>
+}
+
+/// A clone holds the same values and no spare: a clone of the spare has no allocation, and
+/// would keep the clone from taking a real one until an add used it up
+impl Clone for RoaringBitmap {
+    fn clone(&self) -> Self {
+        Self {
+            containers: self.containers.clone(),
+            keys: self.keys.clone(),
+            array_limit: self.array_limit,
+            spare: None
+        }
+    }
 }
 
 impl Default for RoaringBitmap {
@@ -72,7 +99,12 @@ impl RoaringBitmap {
     /// Create a new empty roaring bitmap
     #[inline]
     pub fn new() -> Self {
-        Self::with_capacity(0)
+        Self {
+            containers: Vec::new(),
+            keys: Vec::new(),
+            array_limit: DEFAULT_MAX_SIZE,
+            spare: None
+        }
     }
     
     /// Create a new roaring bitmap with the specified capacity for storing containers
@@ -80,7 +112,8 @@ impl RoaringBitmap {
         Self {
             containers: Vec::with_capacity(capacity),
             keys: Vec::with_capacity(capacity),
-            array_limit: DEFAULT_MAX_SIZE
+            array_limit: DEFAULT_MAX_SIZE,
+            spare: None
         }
     }
 
@@ -176,8 +209,7 @@ impl RoaringBitmap {
 
     /// Copy the contents of `other` into self overwriting any existing values
     pub fn copy_from(&mut self, other: &RoaringBitmap) {
-        self.containers.clear();
-        self.keys.clear();
+        self.clear();
 
         self.containers.extend_from_slice(&other.containers);
         self.keys.extend_from_slice(&other.keys);
@@ -201,7 +233,7 @@ impl RoaringBitmap {
                 self.containers[i].add(value as u16, self.array_limit)
             },
             Err(i) => {
-                let mut array = ArrayContainer::new();
+                let mut array = self.spare.take().unwrap_or_else(ArrayContainer::new);
                 array.add(value as u16);
 
                 self.containers.insert(i, Container::Array(array));
@@ -226,7 +258,7 @@ impl RoaringBitmap {
                 i
             },
             Err(i) => {
-                let mut array = ArrayContainer::new();
+                let mut array = self.spare.take().unwrap_or_else(ArrayContainer::new);
                 array.add(value as u16);
 
                 self.containers.insert(i, Container::Array(array));
@@ -327,8 +359,7 @@ impl RoaringBitmap {
                 let removed = self.containers[i].remove(value as u16, self.array_limit);
 
                 if removed && self.containers[i].is_empty() {
-                    self.containers.remove(i);
-                    self.keys.remove(i);
+                    self.remove_emptied(i);
                 }
 
                 removed
@@ -346,8 +377,7 @@ impl RoaringBitmap {
         let low = self.containers[0].pop_min(self.array_limit)?;
 
         if self.containers[0].is_empty() {
-            self.containers.remove(0);
-            self.keys.remove(0);
+            self.remove_emptied(0);
         }
 
         Some(u32::from(low) | (u32::from(key) << 16))
@@ -375,8 +405,7 @@ impl RoaringBitmap {
                 i += 1;
             }
             else {
-                self.keys.remove(i);
-                self.containers.remove(i);
+                self.remove_emptied(i);
             }
         }
     }
@@ -401,8 +430,7 @@ impl RoaringBitmap {
                 container.remove(*value as u16, self.array_limit);
 
                 if container.is_empty() {
-                    self.containers.remove(index);
-                    self.keys.remove(index);
+                    self.remove_emptied(index);
                     c_index = None;
                 }
             }
@@ -517,12 +545,15 @@ impl RoaringBitmap {
     /// Clear the contents of this bitmap
     #[inline]
     pub fn clear(&mut self) {
+        keep_first_array(&mut self.spare, &mut self.containers);
+
         self.containers.clear();
         self.keys.clear();
     }
     
     /// Shrink the memory used by the bitmap to fit it's contents
     pub fn shrink_to_fit(&mut self) {
+        self.spare = None;
         self.containers.shrink_to_fit();
 
         for container in self.containers.iter_mut() {
@@ -1005,8 +1036,7 @@ impl RoaringBitmap {
                 };
                 
                 if is_empty {
-                    self.containers.remove(i0);
-                    self.keys.remove(i0);
+                    self.remove_emptied(i0);
                 }
                 else {
                     i0 += 1;
@@ -1018,6 +1048,7 @@ impl RoaringBitmap {
                 // The containers after the drained ones move down to `i0`
                 let iend = array_ops::advance_until(&self.keys, i0, k1);
 
+                keep_first_array(&mut self.spare, &mut self.containers[i0..iend]);
                 self.containers.drain(i0..iend);
                 self.keys.drain(i0..iend);
             }
@@ -1029,6 +1060,7 @@ impl RoaringBitmap {
 
         // Other ran out of elements, remove the remainder from self since
         // they obviously don't intersect
+        keep_first_array(&mut self.spare, &mut self.containers[i0..]);
         self.containers.truncate(i0);
         self.keys.truncate(i0);
     }
@@ -1064,9 +1096,8 @@ impl RoaringBitmap {
                 
                 // Remove the container if it was emptied
                 if is_empty {
-                    self.containers.remove(i0);
-                    self.keys.remove(i0);
-                    
+                    self.remove_emptied(i0);
+
                     len0 -= 1;
                 }
                 else {
@@ -1120,8 +1151,7 @@ impl RoaringBitmap {
                 };
 
                 if is_empty {
-                    self.containers.remove(i0);
-                    self.keys.remove(i0);
+                    self.remove_emptied(i0);
 
                     len0 -= 1;
                 }
@@ -1177,6 +1207,13 @@ impl RoaringBitmap {
             for key in first_key..=last_key {
                 let range = key_range(key, first, last);
                 let flipped = match existing.next_if(|(&existing, _)| u32::from(existing) == key) {
+                    // Flipping an array builds a new container and drops the array, so one that
+                    // flipping empties is taken for the spare before it goes
+                    Some((_, container)) if is_exactly(&container, &range) => {
+                        keep_as_spare(&mut self.spare, container);
+
+                        continue;
+                    },
                     Some((_, container)) => container.inplace_not(range),
                     None => Container::from_range_with_limit(range, self.array_limit)
                 };
@@ -1261,6 +1298,16 @@ impl RoaringBitmap {
         let shared = self.and_cardinality(other);
 
         c0 + c1 - 2 * shared
+    }
+
+    /// Remove the container at `index` with its key, because it has no values left or is
+    /// being discarded. An empty array container's allocation is kept as the spare, so the
+    /// bitmap never holds an empty container and the next new key does not allocate
+    fn remove_emptied(&mut self, index: usize) {
+        self.keys.remove(index);
+
+        let container = self.containers.remove(index);
+        keep_as_spare(&mut self.spare, container);
     }
 
     /// Find the index for a given key
@@ -1692,6 +1739,47 @@ impl<'a> Iterator for Iter<'a> {
             (u32::from(key) << 16) | u32::from(low)
         })
     }
+}
+
+/// Keep the allocation of an array container the bitmap is discarding as its spare, emptied,
+/// if it has none. Any other container is dropped: a bitset or run container is refilled
+/// as an array, so only an array's allocation is ever taken back. At the default array limit
+/// a bitset's 8 KiB is a single allocation against the thousands of adds that make a container
+/// one, and a run container is a few words. An array with no allocation is no use as the spare and would
+/// keep a useful one out
+#[inline]
+fn keep_as_spare(spare: &mut Option<ArrayContainer>, container: Container) {
+    if spare.is_none() {
+        if let Container::Array(mut array) = container {
+            if array.capacity() > 0 {
+                array.clear();
+                *spare = Some(array);
+            }
+        }
+    }
+}
+
+/// Keep the allocation of the first array among `containers`, which the bitmap is about to drop,
+/// as its spare, emptied, if it has none. The array left in its place has no allocation
+fn keep_first_array(spare: &mut Option<ArrayContainer>, containers: &mut [Container]) {
+    if spare.is_none() {
+        *spare = containers.iter_mut().find_map(|container| match container {
+            Container::Array(array) if array.capacity() > 0 => {
+                array.clear();
+
+                Some(mem::replace(array, ArrayContainer::new()))
+            },
+            _ => None
+        });
+    }
+}
+
+/// Whether `container` is an array holding exactly the values of `range`
+fn is_exactly(container: &Container, range: &Range<u32>) -> bool {
+    matches!(container, Container::Array(_))
+        && container.cardinality() == range.len()
+        && container.min().map(u32::from) == Some(range.start)
+        && container.max().map(u32::from) == Some(range.end - 1)
 }
 
 /// The half-open range of the low 16 bits of the values from `first` to `last` that fall in the
