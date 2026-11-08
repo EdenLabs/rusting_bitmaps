@@ -60,7 +60,6 @@ impl ArrayContainer {
     }
 
     /// The capacity of the array container
-    #[allow(dead_code)]
     #[inline]
     pub fn capacity(&self) -> usize {
         self.array.capacity()

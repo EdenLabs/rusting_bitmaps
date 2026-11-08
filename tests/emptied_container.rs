@@ -4,55 +4,14 @@
 //! The allocation counter is per thread, so the tests run in parallel without seeing each
 //! other's allocations.
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::io::Cursor;
 
 use rusting_bitmaps::RoaringBitmap;
 
-struct Counting;
+mod common;
 
-thread_local! {
-    static CALLS: Cell<usize> = const { Cell::new(0) };
-}
-
-fn count_call() {
-    // A destroyed thread local only happens while a thread exits, which counts nothing
-    let _ = CALLS.try_with(|calls| calls.set(calls.get() + 1));
-}
-
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        count_call();
-        System.alloc(layout)
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        System.dealloc(ptr, layout)
-    }
-
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        count_call();
-        System.alloc_zeroed(layout)
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        count_call();
-        System.realloc(ptr, layout, new_size)
-    }
-}
-
-#[global_allocator]
-static ALLOC: Counting = Counting;
-
-/// The allocator calls `work` makes on this thread.
-fn allocations(work: impl FnOnce()) -> usize {
-    let before = CALLS.with(Cell::get);
-    work();
-
-    CALLS.with(Cell::get) - before
-}
+use common::{allocations, Rng};
 
 const CYCLES: u32 = 1_000;
 
@@ -265,17 +224,6 @@ fn emptied_bitset_leaves_no_container() {
     assert_holds(&bitmap, &[3].into());
 }
 
-struct Rng(u64);
-
-impl Rng {
-    fn next(&mut self) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0
-    }
-}
-
 /// Random removal and insertion across a few keys against a `BTreeSet`, checking the visible
 /// state after every step that can empty a container.
 #[test]
@@ -316,4 +264,266 @@ fn random_churn_matches_a_set() {
             assert_holds(&bitmap, &set);
         }
     }
+}
+
+/// A cycle of `work` on `bitmap`, which must leave it empty, allocates nothing once the first
+/// has run.
+fn assert_cycle_allocates_nothing(bitmap: &mut RoaringBitmap, mut work: impl FnMut(&mut RoaringBitmap)) {
+    work(bitmap);
+    assert_holds(bitmap, &BTreeSet::new());
+
+    let calls = allocations(|| {
+        for _ in 0..CYCLES {
+            work(bitmap);
+        }
+    });
+
+    assert_eq!(calls, 0);
+    assert_holds(bitmap, &BTreeSet::new());
+}
+
+#[test]
+fn inplace_and_not_cycle_allocates_nothing() {
+    let other = RoaringBitmap::from_slice(&[7]);
+
+    assert_cycle_allocates_nothing(&mut RoaringBitmap::new(), |bitmap| {
+        bitmap.add(7);
+        bitmap.inplace_and_not(&other);
+    });
+}
+
+#[test]
+fn inplace_xor_cycle_allocates_nothing() {
+    let other = RoaringBitmap::from_slice(&[7]);
+
+    assert_cycle_allocates_nothing(&mut RoaringBitmap::new(), |bitmap| {
+        bitmap.add(7);
+        bitmap.inplace_xor(&other);
+    });
+}
+
+/// The container is in both bitmaps and the operation empties it.
+#[test]
+fn inplace_and_of_a_shared_key_cycle_allocates_nothing() {
+    let other = RoaringBitmap::from_slice(&[9]);
+
+    assert_cycle_allocates_nothing(&mut RoaringBitmap::new(), |bitmap| {
+        bitmap.add(7);
+        bitmap.inplace_and(&other);
+    });
+}
+
+/// The container's key is in `other` nowhere, before its keys, between them and after them.
+#[test]
+fn inplace_and_of_other_keys_cycle_allocates_nothing() {
+    let after = RoaringBitmap::from_slice(&[5 << 16]);
+    assert_cycle_allocates_nothing(&mut RoaringBitmap::new(), |bitmap| {
+        bitmap.add(7);
+        bitmap.inplace_and(&after);
+    });
+
+    // The drained containers are the ones before a shared key
+    let between = RoaringBitmap::from_slice(&[5 << 16 | 1]);
+    let mut bitmap = RoaringBitmap::new();
+    bitmap.add(5 << 16 | 1);
+    bitmap.add(3 << 16 | 7);
+    bitmap.inplace_and(&between);
+    let calls = allocations(|| {
+        for _ in 0..CYCLES {
+            bitmap.add(3 << 16 | 7);
+            bitmap.inplace_and(&between);
+        }
+    });
+    assert_eq!(calls, 0);
+    assert_holds(&bitmap, &[5 << 16 | 1].into());
+
+    let before = RoaringBitmap::from_slice(&[1]);
+    let mut bitmap = RoaringBitmap::new();
+    bitmap.add(1);
+    bitmap.add(3 << 16 | 7);
+    bitmap.inplace_and(&before);
+    let calls = allocations(|| {
+        for _ in 0..CYCLES {
+            bitmap.add(3 << 16 | 7);
+            bitmap.inplace_and(&before);
+        }
+    });
+    assert_eq!(calls, 0);
+    assert_holds(&bitmap, &[1].into());
+
+    let none = RoaringBitmap::new();
+    assert_cycle_allocates_nothing(&mut RoaringBitmap::new(), |bitmap| {
+        bitmap.add(7);
+        bitmap.inplace_and(&none);
+    });
+}
+
+/// Flipping exactly the values a container holds leaves it empty. The flip allocates the
+/// vectors it splices in itself, so the add after it is the one counted.
+#[test]
+fn inplace_not_keeps_the_allocation_of_the_container_it_empties() {
+    let mut bitmap = RoaringBitmap::new();
+    bitmap.add(7);
+    bitmap.inplace_not(7..=7);
+    assert_holds(&bitmap, &BTreeSet::new());
+
+    let mut calls = 0;
+    for _ in 0..CYCLES {
+        calls += allocations(|| bitmap.add_slice(&[10, 11, 12, 13]));
+        bitmap.inplace_not(10..14);
+        assert_holds(&bitmap, &BTreeSet::new());
+    }
+
+    assert_eq!(calls, 0);
+}
+
+#[test]
+fn copy_from_keeps_the_allocation_it_overwrites() {
+    let mut bitmap = RoaringBitmap::from_slice(&[1, 2, 3]);
+    bitmap.copy_from(&RoaringBitmap::new());
+    assert_holds(&bitmap, &BTreeSet::new());
+
+    let calls = allocations(|| bitmap.add(9));
+
+    assert_eq!(calls, 0);
+    assert_holds(&bitmap, &[9].into());
+}
+
+/// The bitmap keeps one spare, so a set that empties many containers at once frees the rest.
+#[test]
+fn inplace_ops_keep_one_spare() {
+    let keys: Vec<u32> = (0..8).map(|key| key << 16 | 7).collect();
+    let mut bitmap = RoaringBitmap::from_slice(&keys);
+    bitmap.inplace_and_not(&RoaringBitmap::from_slice(&keys));
+    assert_holds(&bitmap, &BTreeSet::new());
+
+    // The vectors of the bitmap kept their capacity, so what is left is the array of each key but one
+    let calls = allocations(|| bitmap.add_slice(&keys));
+
+    assert_eq!(calls, keys.len() - 1);
+    assert_holds(&bitmap, &keys.iter().copied().collect());
+}
+
+/// A bitset or run container the in-place operations empty is gone, and the bitmap refills as arrays.
+#[test]
+fn emptied_bitset_and_run_by_inplace_ops_leave_no_container() {
+    let dense: Vec<u32> = (0..10_000).map(|i| i * 3).collect();
+    let bitset = RoaringBitmap::from_slice(&dense);
+    let run = RoaringBitmap::from_range(0..60_000);
+    let expected: BTreeSet<u32> = dense.iter().copied().collect();
+
+    for operand in [&bitset, &run] {
+        let mut bitmap = bitset.clone();
+        bitmap.inplace_and_not(operand);
+        assert_holds(&bitmap, &BTreeSet::new());
+    }
+
+    // A bitset and a run container, each emptied by `xor` with itself and by `and` with a key
+    // and a value it lacks
+    for start in [&bitset, &run] {
+        let mut bitmap = start.clone();
+        bitmap.inplace_xor(start);
+        assert_holds(&bitmap, &BTreeSet::new());
+
+        for lacking in [1u32 << 20, 60_000] {
+            let mut bitmap = start.clone();
+            bitmap.inplace_and(&RoaringBitmap::from_slice(&[lacking]));
+            let model: BTreeSet<u32> = start.iter().filter(|&v| v == lacking).collect();
+            assert_holds(&bitmap, &model);
+        }
+
+        let mut bitmap = start.clone();
+        bitmap.inplace_and(&RoaringBitmap::from_slice(&[1 << 20]));
+        bitmap.add(3);
+        assert_holds(&bitmap, &[3].into());
+    }
+
+    let mut bitmap = run.clone();
+    bitmap.inplace_and_not(&run);
+    assert_holds(&bitmap, &BTreeSet::new());
+    bitmap.inplace_or(&bitset);
+    assert_holds(&bitmap, &expected);
+
+    let mut bitmap = bitset.clone();
+    bitmap.inplace_not(..);
+    bitmap.inplace_not(..);
+    assert_holds(&bitmap, &expected);
+}
+
+/// The in-place operations on bitmaps of several array limits against a `BTreeSet`, checking
+/// the visible state after every step.
+#[test]
+fn random_inplace_ops_match_a_set() {
+    for limit in [1usize, 3, 4096] {
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15 ^ limit as u64);
+        let mut bitmap = RoaringBitmap::with_array_limit(limit);
+        let mut set = BTreeSet::new();
+
+        for step in 0..3_000 {
+            let mut operand_set = BTreeSet::new();
+            for _ in 0..rng.next() % 5 {
+                operand_set.insert(((rng.next() % 4) << 16 | (rng.next() % 6)) as u32);
+            }
+            let operand_values: Vec<u32> = operand_set.iter().copied().collect();
+            let operand = RoaringBitmap::from_slice(&operand_values);
+            let value = ((rng.next() % 4) << 16 | (rng.next() % 6)) as u32;
+
+            match rng.next() % 10 {
+                0 | 1 => {
+                    bitmap.add(value);
+                    set.insert(value);
+                },
+                2 => {
+                    bitmap.inplace_and(&operand);
+                    set = set.intersection(&operand_set).copied().collect();
+                },
+                3 | 4 => {
+                    bitmap.inplace_and_not(&operand);
+                    set = set.difference(&operand_set).copied().collect();
+                },
+                5 | 6 => {
+                    bitmap.inplace_xor(&operand);
+                    set = set.symmetric_difference(&operand_set).copied().collect();
+                },
+                7 => {
+                    bitmap.inplace_or(&operand);
+                    set = set.union(&operand_set).copied().collect();
+                },
+                8 => {
+                    let end = value + (rng.next() % 4) as u32;
+                    bitmap.inplace_not(value..=end);
+                    for v in value..=end {
+                        if !set.remove(&v) {
+                            set.insert(v);
+                        }
+                    }
+                },
+                _ => if step % 7 == 0 {
+                    bitmap.copy_from(&operand);
+                    set = operand_set;
+                }
+            }
+
+            assert_holds(&bitmap, &set);
+        }
+    }
+}
+
+/// A clone holds no spare, so removing its last value keeps that container's allocation for the next add.
+#[test]
+fn clone_of_a_bitmap_with_a_spare_keeps_the_allocation_it_empties() {
+    let mut bitmap = RoaringBitmap::from_slice(&[1, 2]);
+    bitmap.add(1 << 16);
+    bitmap.remove(1 << 16);
+
+    let mut clone = bitmap.clone();
+    assert_holds(&clone, &[1, 2].into());
+    clone.remove_slice(&[1, 2]);
+    assert_holds(&clone, &BTreeSet::new());
+
+    let calls = allocations(|| clone.add(5));
+
+    assert_eq!(calls, 0);
+    assert_holds(&clone, &[5].into());
+    assert_holds(&bitmap, &[1, 2].into());
 }
