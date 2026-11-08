@@ -8,6 +8,8 @@ pub use self::array::ArrayContainer;
 pub use self::bitset::BitsetContainer;
 pub use self::run::RunContainer;
 
+pub(crate) use self::bitset::BITSET_SIZE_IN_WORDS;
+
 use self::run::Rle16;
 
 use std::fmt;
