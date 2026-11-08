@@ -1,7 +1,7 @@
 //! Single-threaded id-allocator churn workloads for `RoaringBitmap`.
 //!
-//! Usage: `churn <workload> <set> <ops>` prints the ns per op. `churn mem <set>` prints the
-//! heap bytes per element. A plain binary rather than criterion so that `perf stat` can count
+//! Usage: `churn <workload> <set> <ops>` prints the ns and allocator calls per op. `churn mem
+//! <set>` prints the heap bytes per element. A plain binary rather than criterion so that `perf stat` can count
 //! instructions: the instructions per op are the difference between two op counts, which
 //! cancels the set construction cost.
 
@@ -19,6 +19,7 @@ static LIVE: AtomicUsize = AtomicUsize::new(0);
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        CALLS.fetch_add(1, Ordering::Relaxed);
         LIVE.fetch_add(layout.size(), Ordering::Relaxed);
         System.alloc(layout)
     }
@@ -34,6 +35,7 @@ unsafe impl GlobalAlloc for Counting {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        CALLS.fetch_add(1, Ordering::Relaxed);
         LIVE.fetch_add(new_size, Ordering::Relaxed);
         LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
         System.realloc(ptr, layout, new_size)
@@ -58,6 +60,9 @@ impl Rng {
         (self.next() >> 11) % n
     }
 }
+
+/// Allocator calls, for the allocations per op report.
+static CALLS: AtomicUsize = AtomicUsize::new(0);
 
 /// Number of ids acquired then released per churn round.
 const BATCH: usize = 16;
@@ -98,6 +103,8 @@ fn build(set: &str) -> RoaringBitmap {
             let data: Vec<u32> = (0..4096u32).map(|i| i * 2).collect();
             RoaringBitmap::from_slice(&data)
         },
+        // nothing, the state of an id allocator with no live ids
+        "empty" => RoaringBitmap::new(),
         other => panic!("unknown set {}", other)
     }
 }
@@ -215,6 +222,24 @@ fn run_add_range(bitmap: &mut RoaringBitmap, ops: usize) -> u64 {
     bitmap.len() as u64
 }
 
+/// Empty, one id, empty again: a free list that never holds more than one id. `fused` selects
+/// `pop_min` over `remove`.
+fn run_cycle(bitmap: &mut RoaringBitmap, ops: usize, fused: bool) -> u64 {
+    let mut acc = 0u64;
+
+    for i in 0..ops as u32 {
+        bitmap.add(i & 0xFFFF);
+        if fused {
+            acc += u64::from(bitmap.pop_min().unwrap());
+        }
+        else {
+            acc += u64::from(bitmap.remove(i & 0xFFFF));
+        }
+    }
+
+    acc
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -238,6 +263,7 @@ fn main() {
     let ops: usize = args[2].parse().unwrap();
     let mut bitmap = build(&args[1]);
 
+    let calls = CALLS.load(Ordering::Relaxed);
     let start = Instant::now();
     let acc = match args[0].as_str() {
         "churn" => run_churn(&mut bitmap, ops, false),
@@ -249,10 +275,17 @@ fn main() {
         "min_api" => run_min(&mut bitmap, ops, true),
         "edge" => run_edge(&mut bitmap, ops),
         "add_range" => run_add_range(&mut bitmap, ops),
+        "cycle" => run_cycle(&mut bitmap, ops, true),
+        "cycle_remove" => run_cycle(&mut bitmap, ops, false),
         other => panic!("unknown workload {}", other)
     };
     let elapsed = start.elapsed();
     black_box(acc);
 
-    println!("{} {} {:.2} ns/op", args[0], args[1], elapsed.as_nanos() as f64 / ops as f64);
+    let calls = CALLS.load(Ordering::Relaxed) - calls;
+
+    println!(
+        "{} {} {:.2} ns/op {:.4} allocs/op",
+        args[0], args[1], elapsed.as_nanos() as f64 / ops as f64, calls as f64 / ops as f64
+    );
 }
